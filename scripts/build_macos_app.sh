@@ -1,0 +1,98 @@
+#!/bin/sh
+set -eu
+
+if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ]; then
+  echo "V1 build must run on a real Apple Silicon macOS host" >&2
+  exit 1
+fi
+
+CSM_REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$CSM_REPO_ROOT"
+CSM_UV_CACHE_DIR=${UV_CACHE_DIR:-"$CSM_REPO_ROOT/build/.uv-cache"}
+export UV_CACHE_DIR="$CSM_UV_CACHE_DIR"
+export NUITKA_CACHE_DIR="$CSM_REPO_ROOT/build/.nuitka-cache"
+CSM_SPEC_BACKUP=$(mktemp "${TMPDIR:-/tmp}/csm-pysidedeploy-spec.XXXXXX")
+cp "$CSM_REPO_ROOT/pysidedeploy.spec" "$CSM_SPEC_BACKUP"
+CSM_BUILD_ENV="$CSM_REPO_ROOT/build/.venv-build"
+CSM_NUITKA_CRASH_REPORT="$CSM_REPO_ROOT/nuitka-crash-report.xml"
+CSM_NUITKA_REPORT="$CSM_REPO_ROOT/build/nuitka-compilation-report.xml"
+CSM_NUITKA_SOURCE="$CSM_BUILD_ENV/lib/python3.13/site-packages/nuitka/build/static_src/HelpersSafeStrings.c"
+CSM_NUITKA_BACKUP=""
+restore_build_inputs() {
+  if [ -f "$CSM_SPEC_BACKUP" ]; then
+    cp "$CSM_SPEC_BACKUP" "$CSM_REPO_ROOT/pysidedeploy.spec"
+    rm -f "$CSM_SPEC_BACKUP"
+  fi
+  if [ -n "$CSM_NUITKA_BACKUP" ] && [ -f "$CSM_NUITKA_BACKUP" ]; then
+    cp "$CSM_NUITKA_BACKUP" "$CSM_NUITKA_SOURCE"
+    rm -f "$CSM_NUITKA_BACKUP"
+  fi
+}
+trap restore_build_inputs EXIT INT TERM
+
+"$CSM_REPO_ROOT/scripts/check.sh"
+UV_PROJECT_ENVIRONMENT="$CSM_BUILD_ENV" uv sync --locked --no-default-groups \
+  --group runtime --group gui --group build --compile-bytecode
+test "$(shasum -a 256 "$CSM_NUITKA_SOURCE" | awk '{print $1}')" = \
+  "e9bd8b7c8ca6e7c913d6e89cdc1f942a24816fc2f299b79114cbc162ed007211"
+CSM_NUITKA_BACKUP=$(mktemp "${TMPDIR:-/tmp}/csm-nuitka-source.XXXXXX")
+cp "$CSM_NUITKA_SOURCE" "$CSM_NUITKA_BACKUP"
+patch -s -p1 -d "$CSM_BUILD_ENV/lib/python3.13/site-packages/nuitka" \
+  < "$CSM_REPO_ROOT/packaging/patches/nuitka-4.0-macos-utf8-path.patch"
+"$CSM_REPO_ROOT/scripts/fetch_age_macos_arm64.sh"
+"$CSM_REPO_ROOT/scripts/build_icon_macos.sh"
+rm -rf "$CSM_REPO_ROOT/deployment" "$CSM_REPO_ROOT/dist/CodexSessionManager.app"
+rm -f "$CSM_NUITKA_CRASH_REPORT" "$CSM_NUITKA_REPORT"
+PATH="$CSM_BUILD_ENV/bin:$PATH" "$CSM_BUILD_ENV/bin/pyside6-deploy" \
+  -c pysidedeploy.spec --force --mode standalone \
+  --extra-ignore-dirs=.venv,.venv-build,.uv-cache,.nuitka-cache,build,dist,deployment,vendor,artifacts
+if [ -f "$CSM_NUITKA_CRASH_REPORT" ]; then
+  echo "Nuitka emitted a crash report; refusing a partial or stale app bundle" >&2
+  exit 1
+fi
+test -f "$CSM_NUITKA_REPORT"
+sed -n '2p' "$CSM_NUITKA_REPORT" | grep -q 'completion="yes"'
+restore_build_inputs
+trap - EXIT INT TERM
+
+CSM_APP="$CSM_REPO_ROOT/dist/CodexSessionManager.app"
+if [ -x "$CSM_APP/Contents/MacOS/app_entry" ]; then
+  mv "$CSM_APP/Contents/MacOS/app_entry" "$CSM_APP/Contents/MacOS/CodexSessionManager"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable CodexSessionManager" "$CSM_APP/Contents/Info.plist"
+fi
+test -x "$CSM_APP/Contents/MacOS/CodexSessionManager"
+/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName CodexSessionManager" "$CSM_APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleName CodexSessionManager" "$CSM_APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.codex-session-manager.app" "$CSM_APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.1.0" "$CSM_APP/Contents/Info.plist"
+mkdir -p "$CSM_APP/Contents/Resources/bin" "$CSM_APP/Contents/Resources/licenses"
+install -m 0755 "$CSM_REPO_ROOT/vendor/age/age" "$CSM_APP/Contents/Resources/bin/age"
+install -m 0644 "$CSM_REPO_ROOT/vendor/age/LICENSE" "$CSM_APP/Contents/Resources/licenses/age-BSD-3-Clause.txt"
+install -m 0644 "$CSM_REPO_ROOT/vendor/age/verification.json" "$CSM_APP/Contents/Resources/licenses/age-verification.json"
+install -m 0644 "$CSM_REPO_ROOT/THIRD_PARTY_NOTICES.md" "$CSM_APP/Contents/Resources/licenses/THIRD_PARTY_NOTICES.md"
+install -m 0644 "$CSM_REPO_ROOT/packaging/patches/nuitka-4.0-macos-utf8-path.patch" \
+  "$CSM_APP/Contents/Resources/licenses/nuitka-4.0-macos-utf8-path.patch"
+install -m 0644 "$CSM_BUILD_ENV/lib/python3.13/site-packages/nuitka-4.0.dist-info/licenses/LICENSE.txt" \
+  "$CSM_APP/Contents/Resources/licenses/nuitka-GPLv3.txt"
+install -m 0644 "$CSM_BUILD_ENV/lib/python3.13/site-packages/nuitka-4.0.dist-info/licenses/LICENSE-RUNTIME.txt" \
+  "$CSM_APP/Contents/Resources/licenses/nuitka-runtime-exception.txt"
+
+if [ -n "${CSM_DEVELOPER_ID:-}" ]; then
+  printf '%s\n' "developer-id" > "$CSM_APP/Contents/Resources/build-channel"
+  codesign --force --deep --options runtime --timestamp --sign "$CSM_DEVELOPER_ID" "$CSM_APP"
+else
+  printf '%s\n' "local-adhoc" > "$CSM_APP/Contents/Resources/build-channel"
+  codesign --force --deep --timestamp=none --sign - "$CSM_APP"
+fi
+codesign --verify --deep --strict --verbose=2 "$CSM_APP"
+CSM_DOCTOR_ROOT="$CSM_REPO_ROOT/build/bundle-doctor"
+mkdir -p "$CSM_DOCTOR_ROOT/codex-home"
+CODEX_HOME="$CSM_DOCTOR_ROOT/codex-home" \
+  CSM_CODEX_HOME="$CSM_DOCTOR_ROOT/codex-home" \
+  CSM_DATA_DIR="$CSM_DOCTOR_ROOT/data" \
+  CSM_CONFIG_DIR="$CSM_DOCTOR_ROOT/config" \
+  CSM_CACHE_DIR="$CSM_DOCTOR_ROOT/cache" \
+  CSM_LOG_DIR="$CSM_DOCTOR_ROOT/log" \
+  "$CSM_APP/Contents/MacOS/CodexSessionManager" cli doctor
+
+echo "$CSM_APP"

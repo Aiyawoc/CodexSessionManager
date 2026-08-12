@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+exec "$HOME/Applications/CodexSessionManager.app/Contents/MacOS/CodexSessionManager" cli "$@"
+

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Codex 对话管理"
+  short_description: "安全盘点、备份、清理、导入与裁剪 Codex 对话"
+  default_prompt: "Use $manage-codex-sessions to safely review and manage my Codex tasks."
+policy:
+  allow_implicit_invocation: false

@@ -1,0 +1,92 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "codex-session-manager"
+version = "0.1.0"
+description = "安全管理、备份、导入和裁剪 Codex 对话"
+readme = "README.md"
+requires-python = "==3.13.14"
+license = { text = "MIT" }
+authors = [{ name = "CodexSessionManager contributors" }]
+dependencies = []
+
+[project.scripts]
+csm = "codex_session_manager.cli:app"
+CodexSessionManager = "codex_session_manager.dispatcher:main"
+
+[dependency-groups]
+runtime = [
+  "click>=8.2,<9",
+  "ijson>=3.4,<4",
+  "platformdirs>=4.3,<5",
+  "pydantic>=2.11,<3",
+  "setuptools>=80,<83",
+  "typer>=0.16,<1",
+]
+gui = [
+  "PySide6==6.11.1",
+  "QtVSCodeStyle>=0.0.6,<1",
+]
+dev = [
+  "mypy>=1.17,<2",
+  "pytest>=8.4,<9",
+  "pytest-cov>=6.2,<7",
+  "pytest-qt>=4.5,<5",
+  "ruff>=0.12,<1",
+]
+build = [
+  "Nuitka==4.0",
+  "ordered-set>=4.1,<5",
+  "zstandard>=0.23,<1",
+]
+
+[tool.uv]
+default-groups = ["runtime", "gui", "dev"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/codex_session_manager"]
+
+[tool.hatch.build]
+include = [
+  "src/codex_session_manager/**/*.py",
+  "src/codex_session_manager/**/*.ui",
+  "src/codex_session_manager/**/*.json",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+testpaths = ["tests"]
+qt_api = "pyside6"
+markers = [
+  "integration: uses a locally installed Codex CLI or packaged native tool",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["codex_session_manager"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+packages = ["codex_session_manager"]
+plugins = ["pydantic.mypy"]
+exclude = ["src/codex_session_manager/gui/ui_.*\\.py", "^tests/"]
+
+[[tool.mypy.overrides]]
+module = ["click.*", "ijson.*", "qtvscodestyle.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+extend-exclude = ["src/codex_session_manager/gui/ui_*.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["E501", "RUF001", "RUF002", "RUF003"]

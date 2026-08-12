@@ -1,0 +1,72 @@
+diff --git a/build/static_src/HelpersSafeStrings.c b/build/static_src/HelpersSafeStrings.c
+--- a/build/static_src/HelpersSafeStrings.c
++++ b/build/static_src/HelpersSafeStrings.c
+@@ -114,6 +114,46 @@
+     appendWCharSafeW(target, wide_buffer_c[0], buffer_size);
+ }
+ 
++#if defined(__APPLE__)
++static wchar_t decodeUtf8CodePoint(char const **source) {
++    unsigned char lead = (unsigned char)*(*source)++;
++    uint32_t code_point;
++    int continuation_count;
++    uint32_t minimum;
++
++    if (lead < 0x80) {
++        return (wchar_t)lead;
++    } else if ((lead & 0xe0) == 0xc0) {
++        code_point = lead & 0x1f;
++        continuation_count = 1;
++        minimum = 0x80;
++    } else if ((lead & 0xf0) == 0xe0) {
++        code_point = lead & 0x0f;
++        continuation_count = 2;
++        minimum = 0x800;
++    } else if ((lead & 0xf8) == 0xf0) {
++        code_point = lead & 0x07;
++        continuation_count = 3;
++        minimum = 0x10000;
++    } else {
++        abort();
++    }
++
++    while (continuation_count-- > 0) {
++        unsigned char continuation = (unsigned char)*(*source)++;
++        if ((continuation & 0xc0) != 0x80) {
++            abort();
++        }
++        code_point = (code_point << 6) | (continuation & 0x3f);
++    }
++    if (code_point < minimum || code_point > 0x10ffff ||
++        (code_point >= 0xd800 && code_point <= 0xdfff)) {
++        abort();
++    }
++    return (wchar_t)code_point;
++}
++#endif
++
+ void appendStringSafeW(wchar_t *target, char const *source, size_t buffer_size) {
+     while (*target != 0) {
+         target++;
+@@ -121,11 +161,21 @@
+     }
+ 
+     while (*source != 0) {
++#if defined(__APPLE__)
++        wchar_t code_point = decodeUtf8CodePoint(&source);
++        if (unlikely(buffer_size < 1)) {
++            abort();
++        }
++        *target++ = code_point;
++        buffer_size -= 1;
++#else
+         appendCharSafeW(target, *source, buffer_size);
+         target++;
+         source++;
+         buffer_size -= 1;
++#endif
+     }
++    *target = 0;
+ }
+ 
+ void checkWStringNumber(wchar_t const *value) {

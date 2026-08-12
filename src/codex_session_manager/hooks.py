@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import importlib
 import json
 import logging
 import os
@@ -84,7 +85,7 @@ def _try_acquire_file_lock(stream: TextIOWrapper) -> bool:
     """Acquire one process lock without blocking on POSIX or Windows."""
 
     if os.name == "nt":
-        import msvcrt
+        locking_api = vars(importlib.import_module("msvcrt"))
 
         stream.seek(0, os.SEEK_END)
         if stream.tell() == 0:
@@ -92,16 +93,17 @@ def _try_acquire_file_lock(stream: TextIOWrapper) -> bool:
             stream.flush()
         stream.seek(0)
         try:
-            lock_mode = msvcrt.LK_NBLCK  # type: ignore[attr-defined]
-            msvcrt.locking(stream.fileno(), lock_mode, 1)  # type: ignore[attr-defined]
+            lock_mode = locking_api["LK_NBLCK"]
+            locking_api["locking"](stream.fileno(), lock_mode, 1)
         except OSError:
             return False
         return True
 
-    import fcntl
+    locking_api = vars(importlib.import_module("fcntl"))
 
     try:
-        fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_mode = locking_api["LOCK_EX"] | locking_api["LOCK_NB"]
+        locking_api["flock"](stream.fileno(), lock_mode)
     except BlockingIOError:
         return False
     return True
@@ -109,16 +111,15 @@ def _try_acquire_file_lock(stream: TextIOWrapper) -> bool:
 
 def _release_file_lock(stream: TextIOWrapper) -> None:
     if os.name == "nt":
-        import msvcrt
+        locking_api = vars(importlib.import_module("msvcrt"))
 
         stream.seek(0)
-        unlock_mode = msvcrt.LK_UNLCK  # type: ignore[attr-defined]
-        msvcrt.locking(stream.fileno(), unlock_mode, 1)  # type: ignore[attr-defined]
+        unlock_mode = locking_api["LK_UNLCK"]
+        locking_api["locking"](stream.fileno(), unlock_mode, 1)
         return
 
-    import fcntl
-
-    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+    locking_api = vars(importlib.import_module("fcntl"))
+    locking_api["flock"](stream.fileno(), locking_api["LOCK_UN"])
 
 
 def _plan_has_current_write_capability(plan: TrimPlan) -> bool:

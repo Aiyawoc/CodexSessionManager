@@ -2,6 +2,18 @@
 
 [English README](README.md) | 中文
 
+<p align="center">
+  <img src="docs/images/gui-overview.png" alt="CodexSessionManager GUI 界面总览" width="100%">
+</p>
+<p align="center">
+  <sub>
+    在同一工作区中审查项目、对话、时间线、上下文和裁剪动作。·
+    <a href="docs/CodexSessionManager-GUI-Guide-bilingual.pptx">双语 GUI 操作说明（PPTX）</a>
+  </sub>
+</p>
+
+> **为什么开发这个项目？** 长期使用 Codex 后，对话与上下文会分散并累积在多个项目中，安全盘点、备份、清理和精简也随之变得困难。CodexSessionManager 将这些流程集中到可审计的界面中，同时保持原任务只读，并避免直接修改 Codex 内部存储。
+
 > **代码生成声明：** 本项目代码完全由 ChatGPT 生成，并经过人工审查、测试和发布决策；用于生产环境前请独立验证实现。
 
 CodexSessionManager（`csm`）是面向 Codex App 任务的安全管理工具，包含 CLI、PySide6 裁剪 GUI、显式调用 Skill、可选 PreCompact/PostCompact Hook，以及自带 Python、Qt 和 age 的 macOS `.app`。

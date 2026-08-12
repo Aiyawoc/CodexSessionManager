@@ -2,6 +2,18 @@
 
 [中文 README](README-cn.md) | English
 
+<p align="center">
+  <img src="docs/images/gui-overview.png" alt="CodexSessionManager GUI overview" width="100%">
+</p>
+<p align="center">
+  <sub>
+    Review projects, conversations, timeline items, context, and trimming actions in one workspace. ·
+    <a href="docs/CodexSessionManager-GUI-Guide-bilingual.pptx">Bilingual GUI guide (PPTX)</a>
+  </sub>
+</p>
+
+> **Why this project?** Long-running Codex work accumulates conversations and context across many projects, making safe review, backup, cleanup, and context reduction increasingly difficult. CodexSessionManager brings those workflows into one auditable interface while keeping source tasks read-only and avoiding direct edits to Codex's internal storage.
+
 > **Code-generation disclosure:** The code in this project was generated entirely by ChatGPT. It has received human review, testing, and release decisions; verify it independently before production use.
 
 CodexSessionManager (`csm`) is a safety-oriented management tool for Codex App tasks. It includes a CLI, a PySide6 context-trimming GUI, an explicitly invoked Skill, optional PreCompact/PostCompact Hooks, and a self-contained macOS `.app` with Python, Qt, and age.

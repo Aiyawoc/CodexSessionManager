@@ -523,6 +523,7 @@ def test_compact_timeline_numbers_and_runtime_language_switch(
     assert model.data(model.index(0, 2, QModelIndex())) == "1.6m"
     assert model.data(model.index(0, 2, turn_index)) == "91.6k"
     assert model.data(model.index(1, 2, turn_index)) == "1.5m"
+    assert window.ui.tokenLabel.text() == "预计上下文：1.6m → 1.6m tokens（节省约 0）"
     window.ui.languageCombo.setCurrentIndex(1)
     assert (app_paths.config_dir / "gui-preferences.json").is_file()
     assert window.ui.headerBadge.text() == "Source task is read-only"
@@ -532,6 +533,7 @@ def test_compact_timeline_numbers_and_runtime_language_switch(
     assert window.ui.savePlanButton.text() == "Save plan"
     assert window.ui.cancelButton.text() == "Close"
     assert window.ui.taskPaneCollapseButton.text() == "Collapse"
+    assert window.ui.tokenLabel.text() == "Estimated context: 1.6m → 1.6m tokens (save about 0)"
 
     window.ui.languageCombo.setCurrentIndex(0)
     assert window.ui.headerBadge.text() == "原任务只读保护"

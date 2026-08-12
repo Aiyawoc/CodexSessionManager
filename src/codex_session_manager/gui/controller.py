@@ -1726,9 +1726,9 @@ class TrimReviewWindow(QMainWindow):
         self.ui.tokenLabel.setText(
             self._t(
                 "estimate",
-                before=f"{before:,}",
-                after=f"{after:,}",
-                saved=f"{saved:,}",
+                before=compact_number(before),
+                after=compact_number(after),
+                saved=compact_number(saved),
             )
         )
         self.ui.savingProgress.setValue(percent)

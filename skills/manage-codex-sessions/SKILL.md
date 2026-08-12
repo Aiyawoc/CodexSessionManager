@@ -9,9 +9,9 @@ description: 安全管理 Codex App 中的任务，包括按项目与时间盘�
 
 ## 解析已安装运行入口
 
-1. 先运行 `command -v csm`。若存在，后续命令直接使用 `csm ...`。
-2. 若 `csm` 不在 `PATH`，但 `~/Applications/CodexSessionManager.app/Contents/MacOS/CodexSessionManager` 可执行，则使用该稳定入口，并在所有 CLI 子命令前加 `cli`。例如：`~/Applications/CodexSessionManager.app/Contents/MacOS/CodexSessionManager cli trim review TASK_ID`。
-3. 两个入口都不存在时停止操作，并提示用户先安装 `.app`。除非用户明确处于源码开发模式，否则不要回退到 `uv`、`.venv` 或系统 Python。
+1. 先从当前 shell 解析 `csm`（POSIX 使用 `command -v csm`，PowerShell 使用 `Get-Command csm`）。若存在，后续命令直接使用 `csm ...`。
+2. 若 `csm` 不在 `PATH`，则检查平台稳定入口：macOS 为 `~/Applications/CodexSessionManager.app/Contents/MacOS/CodexSessionManager`，Windows 为 `%LOCALAPPDATA%\CodexSessionManager\CodexSessionManager.exe`。使用稳定入口时，在所有 CLI 子命令前加 `cli`。
+3. 两类入口都不存在时停止操作，并提示用户先安装当前平台 standalone 应用。除非用户明确处于源码开发模式，否则不要回退到 `uv`、`.venv` 或系统 Python。
 4. 用户要求从 Codex 打开裁剪界面时，使用上述入口执行 `trim review TASK_ID`；该进程会打开独立 PySide6 GUI，并保持原任务只读。
 
 ## 先建立安全状态
@@ -55,7 +55,7 @@ PreCompact Hook 只保存计划。在 GUI 关闭、崩溃、启动失败或超�
 ## Hook 与安装
 
 - 只有用户明确要求启用时才运行 `csm hook install --yes`。
-- Hook 必须指向稳定的 `~/Applications/CodexSessionManager.app` 内可执行文件；禁止指向源码、`.venv` 或 `uv`。
+- Hook 必须指向当前平台的稳定安装包内可执行文件；禁止指向源码、`.venv` 或 `uv`。
 - 安装后提醒用户在 Codex `/hooks` 中审查并信任精确 Hook 定义。
 - 卸载只移除 CSM 自己的条目，并保留原 `hooks.json` 备份。
 

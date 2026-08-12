@@ -16,7 +16,9 @@
 
 > **代码生成声明：** 本项目代码完全由 ChatGPT 生成，并经过人工审查、测试和发布决策；用于生产环境前请独立验证实现。
 
-CodexSessionManager（`csm`）是面向 Codex App 任务的安全管理工具，包含 CLI、PySide6 裁剪 GUI、显式调用 Skill、可选 PreCompact/PostCompact Hook，以及自带 Python、Qt 和 age 的 macOS `.app`。
+> **测试版提示：** `v1.0.0` 是仅供隔离测试的 prerelease。macOS arm64 版本仅作 ad-hoc 签名、未经公证；Windows x64 版本未签名。系统可能显示 Gatekeeper 或 SmartScreen 警告，请先核对随附 SHA-256，且不要将任一构建视为生产版本。
+
+CodexSessionManager（`csm`）是面向 Codex App 任务的安全管理工具，包含 CLI、PySide6 裁剪 GUI、显式调用 Skill、可选 PreCompact/PostCompact Hook，以及自带 Python、Qt 和 age 的 macOS 与 Windows 独立运行包。
 
 在线读取和写入只通过官方 Codex App Server 完成；程序不会直接改写 Codex JSONL 或 SQLite。上下文裁剪始终创建派生任务，原任务不变。任何归档、恢复、导入、裁剪或永久清除都必须消费带 SHA-256 的不可变计划，并在执行前复核协议能力、内容指纹、状态和后代闭包。
 
@@ -33,30 +35,44 @@ CodexSessionManager（`csm`）是面向 Codex App 任务的安全管理工具，
 - [安全工作流](#安全工作流)
 - [上下文裁剪](#上下文裁剪)
 - [Hook](#hook)
-- [macOS arm64 构建](#macos-arm64-构建)
+- [自动化测试流程](#自动化测试流程)
+- [桌面构建与测试版发布](#桌面构建与测试版发布)
 - [项目结构](#项目结构)
 
 ## 快速启动
 
 | 入口 | 适用场景 | 说明 |
 | --- | --- | --- |
-| `CodexSessionManager.app` | 日常审查和裁剪 | standalone 包含 Python、Qt、插件和 age，不需要用户安装 Python、pip 或 uv |
+| macOS `CodexSessionManager.app` | Apple Silicon 日常盘点与裁剪 | standalone 内含 Python、Qt、插件和 age |
+| Windows `CodexSessionManager.exe` | Windows x64 日常盘点与裁剪 | 解压测试 ZIP 后运行内置用户级安装脚本 |
 | Codex 中的 `$manage-codex-sessions` | 由 Codex 打开 GUI 或执行安全工作流 | 安装后重启 Codex；Skill 会优先使用 `csm`，并可回退到稳定 App 内入口 |
 | `~/.local/bin/csm` | CLI、备份、计划和审计 | 安装器创建的用户级命令，仅执行 CLI 子命令 |
 | `scripts/launch_test_app.sh` | 隔离 GUI 测试 | 在复制的 Codex home 中启动，不接触真实用户目录 |
 
 ### 安装并启动 GUI
 
-如果已有构建好的 `dist/CodexSessionManager.app`，只需要执行：
+从 [`v1.0.0` prerelease](https://github.com/Aiyawoc/CodexSessionManager/releases/tag/v1.0.0) 下载测试包和对应 `.sha256` 文件，并在启动前核对散列。
+
+在 macOS arm64 上，可这样安装并启动本地构建：
 
 ```bash
 scripts/install_user.sh dist/CodexSessionManager.app
 "$HOME/Applications/CodexSessionManager.app/Contents/MacOS/CodexSessionManager"
 ```
 
-安装器使用用户目录和原子替换，不需要管理员权限；没有 `CSM_DEVELOPER_ID` 时得到的是本机 ad-hoc 签名版本。安装器还会把 App 内置 Skill 链接到 `~/.agents/skills/manage-codex-sessions`；若 `$manage-codex-sessions` 没有立即出现，请重启 Codex。Hook 仍需用户另行明确安装，不会随 App 静默启用。
+安装器使用用户目录和原子替换，不需要管理员权限。它还会把 App 内置 Skill 链接到 `~/.agents/skills/manage-codex-sessions`；若 `$manage-codex-sessions` 没有立即出现，请重启 Codex。下载的测试包只有 ad-hoc 签名且未经公证，macOS 可能隔离它。只有在核对 SHA-256 并确认文件确实来自本仓库后，才可手工移除 quarantine；正式分发应改用 Developer ID 签名与公证。
 
-重启 Codex 后，可直接调用 `$manage-codex-sessions`，并要求“打开某个对话的上下文裁剪界面”。Skill 会解析 `~/.local/bin/csm`；即使该目录不在 Codex 的 `PATH`，也会使用稳定的 App 内二进制入口。PreCompact 自动提示只有在用户另行执行 `csm hook install --yes` 并在 Codex `/hooks` 中审查、信任配置后才启用。
+在 Windows x64 上，解压 ZIP、审阅内置安装脚本，然后从 PowerShell 执行：
+
+```powershell
+Get-FileHash .\CodexSessionManager-Windows-x64-1.0.0-test.zip -Algorithm SHA256
+PowerShell -NoProfile -ExecutionPolicy Bypass -File .\CodexSessionManager-Windows-x64\Install-CodexSessionManager.ps1
+& "$env:LOCALAPPDATA\CodexSessionManager\CodexSessionManager.exe"
+```
+
+Windows 安装器写入 `%LOCALAPPDATA%\CodexSessionManager`，保留上一版本用于回退，把 Skill 安装到 `~/.agents/skills`，并把稳定应用目录加入用户 `PATH`。测试版没有 Authenticode 签名，Windows 可能显示 SmartScreen 警告。两个平台都不会在安装 App 时自动启用 Hook。
+
+重启 Codex 后，可直接调用 `$manage-codex-sessions`，并要求“打开某个对话的上下文裁剪界面”。Skill 会先解析 `csm`，再回退到当前平台已安装包内的稳定入口。PreCompact 自动提示只有在用户另行执行 `csm hook install --yes` 并在 Codex `/hooks` 中审查、信任配置后才启用。
 
 启动后，左侧“项目与任务”列表会按项目分组显示对话名称和距今时间：
 
@@ -135,7 +151,7 @@ scripts/install_user.sh dist/CodexSessionManager.app
 ~/.local/bin/csm doctor
 ```
 
-安装器使用原子替换，保留上一版本用于回退。稳定路径为 `~/Applications/CodexSessionManager.app`；Hook 不引用源码目录或 `.venv`。
+安装器使用原子替换，保留上一版本用于回退。macOS 稳定路径为 `~/Applications/CodexSessionManager.app`，Windows 稳定路径为 `%LOCALAPPDATA%\CodexSessionManager`；Hook 不引用源码目录或 `.venv`。
 
 若要使用当前 `~/.codex` 的副本进行隔离测试，使用测试安装脚本。它会在系统临时目录创建独立的 `HOME`、`codex-home`、数据和日志目录，不覆盖真实用户安装：
 
@@ -227,7 +243,40 @@ PreCompact 先显示 15 秒轻提示；关闭、超时、崩溃、启动失败�
 
 安装 Hook 后仍应在 Codex `/hooks` 中审查并信任具体命令。
 
-## macOS arm64 构建
+## 自动化测试流程
+
+源码门禁可独立运行；完整流程默认从当前源码重新构建 App，避免用旧 bundle 掩盖打包问题：
+
+```bash
+scripts/test_source_workflow.sh
+scripts/test_full_workflow.sh
+```
+
+已有可信 bundle 时，可分别复测安装、Skill 和 Hook，也可执行不重新构建的本地 smoke：
+
+```bash
+scripts/test_install_workflow.sh dist/CodexSessionManager.app
+scripts/test_skill_workflow.sh dist/CodexSessionManager.app
+scripts/test_hook_workflow.sh dist/CodexSessionManager.app
+scripts/test_full_workflow.sh --reuse-app dist/CodexSessionManager.app
+```
+
+自动化流程分层覆盖：
+
+- 源码：锁定环境、生成文件一致性、Shell 语法与执行权限、Ruff、严格 mypy、offscreen pytest、Skill 结构与命令契约、进程级假 App Server、真实 age 加密备份与审计生命周期，以及隔离 `doctor`。
+- bundle：内置 Python、PySide6、Qt 插件、age 完整性、无开发运行时的 CLI/GUI/Hook smoke、中文与空格路径及代码签名检查。
+- 安装：空白临时 `HOME` 中的冲突保护、原子安装与重复安装、上一版本保留、版本一致性、稳定 launcher、Skill 链接，以及“安装 App 不自动启用 Hook”。
+- Skill：源码、bundle、已安装副本三方校验和内容一致性，显式调用策略、稳定入口及全部文档命令的 CLI 可达性。
+- Hook：保留外部 handler、安装配置与 600/30 秒超时、`manual|auto` matcher、权限和备份、状态、单行 JSON fail-open、重复安装，以及只卸载 CSM handler。
+- 生命周期：在临时数据中执行加密备份、验证、归档、等待期证据、永久清除计划和审计链验证；不接触真实 Codex 数据。
+
+安装、Skill、Hook 流程始终创建空白的临时 `HOME`、`CODEX_HOME` 和应用数据目录，不复制真实认证或任务。失败排查时可设置 `CSM_KEEP_TEST_ROOT=1` 保留脚本打印的精确临时目录。
+
+这些自动化结果仍不等同于真实账号或生产验收。真实 Codex 中的 Skill 发现与模型遵循、`/hooks` 信任及真实触发、App Server 写操作、真实 Cocoa 窗口/缩放/输入法、Developer ID 签名、公证、staple 和干净机器安装仍需分别留存证据。
+
+## 桌面构建与测试版发布
+
+### macOS arm64
 
 ```bash
 scripts/build_macos_app.sh
@@ -236,20 +285,37 @@ scripts/accept_macos_bundle.sh dist/CodexSessionManager.app
 
 构建使用 `pyside6-deploy` / Nuitka standalone，携带 Python、Qt、Qt 插件和经 SHA-256 + Sigsum 验证的官方 age 1.3.1 arm64 二进制。项目携带一个严格校验后临时应用的 Nuitka 4.0 macOS UTF-8 路径补丁，用于满足应用位于中文路径时的启动要求；构建结束会恢复 `build/.venv-build` 中的原始 Nuitka 源码。Nuitka 成功 report 也是打包门禁，不接受 `pyside6-deploy` 遗留的部分 `.app`。
 
-无 `CSM_DEVELOPER_ID` 时只生成 `local-adhoc` 本机构建，不宣称可公开分发。对外发布必须另行执行 Developer ID 签名、公证和 staple：
+无 `CSM_DEVELOPER_ID` 时，普通构建标记为 `local-adhoc`。用户明确要求测试版 prerelease 时，可设置 `CSM_TEST_RELEASE=1` 标记为 `macos-test-adhoc`；它仍未公证，绝不能描述为生产版本。正式分发必须另行执行 Developer ID 签名、公证和 staple：
 
 ```bash
 CSM_DEVELOPER_ID='Developer ID Application: ...' scripts/build_macos_app.sh
 scripts/notarize_macos_app.sh dist/CodexSessionManager.app
 ```
 
-V1 只在真实 Apple Silicon macOS 上构建和验收；Intel 版本必须在 x86_64 主机独立构建。
+arm64 App 只在真实 Apple Silicon macOS 上构建和验收；Intel 版本必须在 x86_64 主机独立构建。
 构建机需要 uv、Xcode Command Line Tools 和 Go（仅用于从固定模块版本构建 Sigsum 验证器）；这些都不会进入最终用户运行要求。
+
+### Windows x64
+
+在真实 Windows AMD64 主机运行：
+
+```powershell
+.\scripts\check_windows.ps1
+.\scripts\build_windows_app.ps1 -Version 1.0.0
+```
+
+Windows 构建复用同一份 `uv.lock`、CPython 3.13.14、PySide6 6.11.1 和 Nuitka standalone，并携带经固定 SHA-256 + Sigsum 校验的官方 age 1.3.1 Windows 二进制。验收会把 bundle 复制到带空格和中文的路径，在 `PATH` 中没有 Python 与 uv 的环境运行。产物为 `dist\CodexSessionManager-Windows-x64-1.0.0-test.zip`；当前测试通道明确保持未签名。
+
+GitHub Actions 分别提供 [Windows CI](.github/workflows/ci.yml) 和手动触发的 [Windows 测试包构建](.github/workflows/build-windows.yml)。Action 成功只证明 GitHub 托管 Windows runner 上的检查与 standalone 验收，不证明 Authenticode 签名、SmartScreen 信誉、真实用户电脑安装或真实 Codex 账号写入。
+
+### 发布分类
+
+未签名 Windows 产物和 ad-hoc 签名 macOS 产物只能附加到 GitHub **prerelease**，且标题、说明、文件名和 bundle 内通道都必须明确标识为测试版。正式发布需要 macOS Developer ID 签名、公证与 staple，以及适当的 Windows Authenticode 证书。每个产物必须附带 SHA-256 文件。
 
 ## 项目结构
 
 - `src/codex_session_manager/`：App Server 客户端、模型、计划、备份、导入、清理、裁剪、Hook 和 GUI。
 - `skills/manage-codex-sessions/`：显式调用 Skill 和安全工作流参考。
-- `tests/`：假 App Server、备份边界、计划漂移、去重、Hook 和 GUI 测试。
-- `scripts/`：检查、age 验证、图标、构建、安装、公证和隔离验收。
+- `tests/`：进程级假 App Server、真实 age 生命周期、备份边界、计划漂移、Skill、Hook 和 GUI 测试。
+- `scripts/`：统一测试流程、检查、age 验证、图标、构建、安装、公证和隔离验收。
 - `agent_team/`：后台独立复核的派工与整合账本。

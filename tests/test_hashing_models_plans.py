@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -38,7 +39,8 @@ def test_action_plan_tamper_and_immutable_store(app_paths, capabilities) -> None
     plan.verify()
     store = PlanStore(app_paths)
     path = store.save(plan)
-    assert path.stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o600
     assert store.save(plan) == path
 
     tampered = plan.model_copy(update={"options": {"changed": True}})

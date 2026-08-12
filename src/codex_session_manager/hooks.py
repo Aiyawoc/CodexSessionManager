@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import json
 import logging
 import os
 import shlex
 import shutil
+import subprocess
 import sys
 import time
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
+from io import TextIOWrapper
 from pathlib import Path
 from typing import Any, Literal
 
@@ -79,6 +80,47 @@ Reviewer = Callable[[HookInput, float], TrimPlan | None]
 PlanGate = Callable[[TrimPlan], bool]
 
 
+def _try_acquire_file_lock(stream: TextIOWrapper) -> bool:
+    """Acquire one process lock without blocking on POSIX or Windows."""
+
+    if os.name == "nt":
+        import msvcrt
+
+        stream.seek(0, os.SEEK_END)
+        if stream.tell() == 0:
+            stream.write("\0")
+            stream.flush()
+        stream.seek(0)
+        try:
+            lock_mode = msvcrt.LK_NBLCK  # type: ignore[attr-defined]
+            msvcrt.locking(stream.fileno(), lock_mode, 1)  # type: ignore[attr-defined]
+        except OSError:
+            return False
+        return True
+
+    import fcntl
+
+    try:
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    return True
+
+
+def _release_file_lock(stream: TextIOWrapper) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        stream.seek(0)
+        unlock_mode = msvcrt.LK_UNLCK  # type: ignore[attr-defined]
+        msvcrt.locking(stream.fileno(), unlock_mode, 1)  # type: ignore[attr-defined]
+        return
+
+    import fcntl
+
+    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+
 def _plan_has_current_write_capability(plan: TrimPlan) -> bool:
     """Re-probe and dry-validate a plan before suppressing native compaction."""
 
@@ -138,16 +180,14 @@ class HookDecisionStore:
         descriptor = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
         stream = os.fdopen(descriptor, "r+")
         try:
-            try:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
+            if not _try_acquire_file_lock(stream):
                 stream.close()
                 yield None
                 return
             try:
                 yield stream
             finally:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                _release_file_lock(stream)
                 stream.close()
         except BaseException:
             if not stream.closed:
@@ -346,15 +386,23 @@ class HookHandler:
         return _continue()
 
 
-def _handler_command(mode: str) -> str:
+def _handler_command(mode: str, *, windows: bool | None = None) -> str:
     executable = stable_app_executable()
-    return shlex.join([str(executable), "hook", mode])
+    arguments = [str(executable), "hook", mode]
+    use_windows_quoting = os.name == "nt" if windows is None else windows
+    return subprocess.list2cmdline(arguments) if use_windows_quoting else shlex.join(arguments)
 
 
 def _is_csm_handler(handler: Any, mode: str) -> bool:
     if not isinstance(handler, Mapping):
         return False
-    return handler.get("type") == "command" and handler.get("command") == _handler_command(mode)
+    expected = {
+        _handler_command(mode, windows=False),
+        _handler_command(mode, windows=True),
+    }
+    return handler.get("type") == "command" and any(
+        handler.get(key) in expected for key in ("command", "commandWindows")
+    )
 
 
 class HookInstaller:
@@ -419,17 +467,16 @@ class HookInstaller:
                 for handler in group.get("hooks", [])
             )
             if not already:
+                handler = {
+                    "type": "command",
+                    "command": _handler_command(mode),
+                    "timeout": timeout,
+                    "statusMessage": message,
+                }
                 groups.append(
                     {
                         "matcher": "manual|auto",
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": _handler_command(mode),
-                                "timeout": timeout,
-                                "statusMessage": message,
-                            }
-                        ],
+                        "hooks": [handler],
                     }
                 )
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -489,6 +536,9 @@ def run_hook(
 ) -> int:
     """Read one hook JSON object and emit exactly one final JSON object."""
 
+    # Failures before AppPaths resolution cannot safely choose a log file. Keep
+    # stderr silent until configure_hook_logging() installs the private file log.
+    logging.basicConfig(handlers=[logging.NullHandler()], force=True)
     output = _continue("CSM hook failed before startup; native compaction continued.")
     saved_stdout: int | None = None
     try:

@@ -8,27 +8,41 @@ fi
 
 CSM_REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$CSM_REPO_ROOT"
+CSM_BUNDLE_LOCK="$CSM_REPO_ROOT/build/.bundle-operation.lock"
+mkdir -p "$CSM_REPO_ROOT/build"
+if ! mkdir "$CSM_BUNDLE_LOCK" 2>/dev/null; then
+  echo "another bundle build or acceptance run owns $CSM_BUNDLE_LOCK" >&2
+  exit 1
+fi
+printf '%s\n' "$$" > "$CSM_BUNDLE_LOCK/pid"
+CSM_VERSION=$(sed -n 's/^__version__ = "\([0-9][0-9.]*\)"$/\1/p' \
+  "$CSM_REPO_ROOT/src/codex_session_manager/version.py")
+test -n "$CSM_VERSION"
 CSM_UV_CACHE_DIR=${UV_CACHE_DIR:-"$CSM_REPO_ROOT/build/.uv-cache"}
 export UV_CACHE_DIR="$CSM_UV_CACHE_DIR"
 export NUITKA_CACHE_DIR="$CSM_REPO_ROOT/build/.nuitka-cache"
-CSM_SPEC_BACKUP=$(mktemp "${TMPDIR:-/tmp}/csm-pysidedeploy-spec.XXXXXX")
-cp "$CSM_REPO_ROOT/pysidedeploy.spec" "$CSM_SPEC_BACKUP"
+CSM_BUILD_SPEC=$(mktemp "$CSM_REPO_ROOT/.pysidedeploy.macos.XXXXXX.spec")
+cp "$CSM_REPO_ROOT/pysidedeploy.spec" "$CSM_BUILD_SPEC"
 CSM_BUILD_ENV="$CSM_REPO_ROOT/build/.venv-build"
 CSM_NUITKA_CRASH_REPORT="$CSM_REPO_ROOT/nuitka-crash-report.xml"
 CSM_NUITKA_REPORT="$CSM_REPO_ROOT/build/nuitka-compilation-report.xml"
 CSM_NUITKA_SOURCE="$CSM_BUILD_ENV/lib/python3.13/site-packages/nuitka/build/static_src/HelpersSafeStrings.c"
 CSM_NUITKA_BACKUP=""
 restore_build_inputs() {
-  if [ -f "$CSM_SPEC_BACKUP" ]; then
-    cp "$CSM_SPEC_BACKUP" "$CSM_REPO_ROOT/pysidedeploy.spec"
-    rm -f "$CSM_SPEC_BACKUP"
+  if [ -f "$CSM_BUILD_SPEC" ]; then
+    rm -f "$CSM_BUILD_SPEC"
   fi
   if [ -n "$CSM_NUITKA_BACKUP" ] && [ -f "$CSM_NUITKA_BACKUP" ]; then
     cp "$CSM_NUITKA_BACKUP" "$CSM_NUITKA_SOURCE"
     rm -f "$CSM_NUITKA_BACKUP"
   fi
 }
-trap restore_build_inputs EXIT INT TERM
+cleanup_build_operation() {
+  restore_build_inputs
+  rm -f "$CSM_BUNDLE_LOCK/pid"
+  rmdir "$CSM_BUNDLE_LOCK" 2>/dev/null || true
+}
+trap cleanup_build_operation EXIT INT TERM
 
 "$CSM_REPO_ROOT/scripts/check.sh"
 UV_PROJECT_ENVIRONMENT="$CSM_BUILD_ENV" uv sync --locked --no-default-groups \
@@ -44,7 +58,7 @@ patch -s -p1 -d "$CSM_BUILD_ENV/lib/python3.13/site-packages/nuitka" \
 rm -rf "$CSM_REPO_ROOT/deployment" "$CSM_REPO_ROOT/dist/CodexSessionManager.app"
 rm -f "$CSM_NUITKA_CRASH_REPORT" "$CSM_NUITKA_REPORT"
 PATH="$CSM_BUILD_ENV/bin:$PATH" "$CSM_BUILD_ENV/bin/pyside6-deploy" \
-  -c pysidedeploy.spec --force --mode standalone \
+  -c "$CSM_BUILD_SPEC" --force --mode standalone \
   --extra-ignore-dirs=.venv,.venv-build,.uv-cache,.nuitka-cache,build,dist,deployment,vendor,artifacts
 if [ -f "$CSM_NUITKA_CRASH_REPORT" ]; then
   echo "Nuitka emitted a crash report; refusing a partial or stale app bundle" >&2
@@ -53,7 +67,6 @@ fi
 test -f "$CSM_NUITKA_REPORT"
 sed -n '2p' "$CSM_NUITKA_REPORT" | grep -q 'completion="yes"'
 restore_build_inputs
-trap - EXIT INT TERM
 
 CSM_APP="$CSM_REPO_ROOT/dist/CodexSessionManager.app"
 if [ -x "$CSM_APP/Contents/MacOS/app_entry" ]; then
@@ -64,7 +77,7 @@ test -x "$CSM_APP/Contents/MacOS/CodexSessionManager"
 /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName CodexSessionManager" "$CSM_APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleName CodexSessionManager" "$CSM_APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.codex-session-manager.app" "$CSM_APP/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.1.0" "$CSM_APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $CSM_VERSION" "$CSM_APP/Contents/Info.plist"
 mkdir -p "$CSM_APP/Contents/Resources/bin" "$CSM_APP/Contents/Resources/licenses" \
   "$CSM_APP/Contents/Resources/skills"
 install -m 0755 "$CSM_REPO_ROOT/vendor/age/age" "$CSM_APP/Contents/Resources/bin/age"
@@ -84,7 +97,13 @@ if [ -n "${CSM_DEVELOPER_ID:-}" ]; then
   printf '%s\n' "developer-id" > "$CSM_APP/Contents/Resources/build-channel"
   codesign --force --deep --options runtime --timestamp --sign "$CSM_DEVELOPER_ID" "$CSM_APP"
 else
-  printf '%s\n' "local-adhoc" > "$CSM_APP/Contents/Resources/build-channel"
+  if [ "${CSM_TEST_RELEASE:-0}" = "1" ]; then
+    printf '%s\n' "macos-test-adhoc" > "$CSM_APP/Contents/Resources/build-channel"
+    install -m 0644 "$CSM_REPO_ROOT/packaging/TEST_RELEASE_NOTICE.txt" \
+      "$CSM_APP/Contents/Resources/TEST_RELEASE_NOTICE.txt"
+  else
+    printf '%s\n' "local-adhoc" > "$CSM_APP/Contents/Resources/build-channel"
+  fi
   codesign --force --deep --timestamp=none --sign - "$CSM_APP"
 fi
 codesign --verify --deep --strict --verbose=2 "$CSM_APP"

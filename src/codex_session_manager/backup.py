@@ -19,7 +19,7 @@ import ijson
 
 from codex_session_manager.app_server import SubprocessAppServer
 from codex_session_manager.audit import AuditStore
-from codex_session_manager.config import AppPaths, app_bundle_root, bundled_age_path
+from codex_session_manager.config import AppPaths, bundled_age_path, bundled_resources_root
 from codex_session_manager.hashing import canonical_json_bytes, hash_file, hash_stream, utc_now
 from codex_session_manager.inventory import normalize_thread
 from codex_session_manager.models import (
@@ -32,7 +32,6 @@ from codex_session_manager.models import (
 from codex_session_manager.version import __version__
 
 EXPECTED_AGE_VERSION = "1.3.1"
-EXPECTED_AGE_MACOS_ARM64_SHA256 = "0e3ea0b1bed2b30aa2dc46eef4e1723864d626c80f37319c20d9b73ca045f56f"
 MANIFEST_PATH = "manifest.json"
 MAX_MANIFEST_BYTES = 16 * 1024 * 1024
 MAX_BACKUP_ENTRIES = 10_000
@@ -131,13 +130,21 @@ class AgeBackend:
             raise BackupError(
                 f"unsupported age version {version!r}; expected v{EXPECTED_AGE_VERSION}"
             )
-        bundle = app_bundle_root()
-        if bundle is not None:
-            expected_path = (bundle / "Resources" / "bin" / "age").resolve(strict=False)
+        resources = bundled_resources_root()
+        if resources is not None:
+            expected_path = (resources / "bin" / ("age.exe" if os.name == "nt" else "age")).resolve(
+                strict=False
+            )
             if self.executable.resolve(strict=False) != expected_path:
                 raise BackupError("packaged runtime must use the bundle-local age executable")
+            verification_path = resources / "licenses" / "age-verification.json"
+            try:
+                verification = json.loads(verification_path.read_text(encoding="utf-8"))
+                expected_digest = verification["binary_sha256"]
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise BackupError("bundle-local age verification metadata is invalid") from exc
             digest, _size = hash_file(self.executable)
-            if digest != EXPECTED_AGE_MACOS_ARM64_SHA256:
+            if not isinstance(expected_digest, str) or digest != expected_digest:
                 raise BackupError("bundle-local age executable SHA-256 mismatch")
 
     def version(self) -> str:

@@ -1,4 +1,4 @@
-"""Single executable dispatcher used by the standalone macOS bundle."""
+"""Single executable dispatcher shared by standalone desktop bundles."""
 
 from __future__ import annotations
 

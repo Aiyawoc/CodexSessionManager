@@ -90,18 +90,39 @@ def app_bundle_root() -> Path | None:
     return None
 
 
+def standalone_root() -> Path | None:
+    """Return the platform-native root of an installed standalone build."""
+
+    bundle = app_bundle_root()
+    if bundle is not None:
+        return bundle
+    executable_root = Path(sys.executable).resolve().parent
+    if (executable_root / "Resources" / "build-channel").is_file():
+        return executable_root
+    return None
+
+
+def bundled_resources_root() -> Path | None:
+    """Locate resources in either a macOS app bundle or Windows dist folder."""
+
+    root = standalone_root()
+    return root / "Resources" if root is not None else None
+
+
 def bundled_age_path(*, allow_development_path: bool = True) -> Path | None:
     """Locate the bundled age executable without downloading anything."""
 
-    bundle = app_bundle_root()
-    if bundle:
-        candidate = bundle / "Resources" / "bin" / "age"
+    resources = bundled_resources_root()
+    if resources:
+        candidate = resources / "bin" / ("age.exe" if os.name == "nt" else "age")
         return candidate if candidate.is_file() else None
     if allow_development_path:
         explicit = _override("CSM_AGE_BIN")
         if explicit:
             return explicit
-        repository_candidate = Path(__file__).parents[2] / "vendor" / "age" / "age"
+        repository_candidate = (
+            Path(__file__).parents[2] / "vendor" / "age" / ("age.exe" if os.name == "nt" else "age")
+        )
         if repository_candidate.is_file():
             return repository_candidate
         system_age = shutil.which("age")
@@ -117,14 +138,22 @@ def codex_binary() -> str:
 
 
 def stable_installed_app() -> Path:
-    """Return the user-level stable application path used by hooks."""
+    """Return the user-level stable application root used by hooks."""
 
     explicit = _override("CSM_APP_PATH")
-    return explicit or Path.home() / "Applications" / "CodexSessionManager.app"
+    if explicit is not None:
+        return explicit
+    if os.name == "nt":
+        local_app_data = _override("LOCALAPPDATA") or Path.home() / "AppData" / "Local"
+        return local_app_data / APP_NAME
+    return Path.home() / "Applications" / "CodexSessionManager.app"
 
 
 def stable_app_executable() -> Path:
-    return stable_installed_app() / "Contents" / "MacOS" / "CodexSessionManager"
+    installed = stable_installed_app()
+    if os.name == "nt":
+        return installed if installed.suffix.casefold() == ".exe" else installed / f"{APP_NAME}.exe"
+    return installed / "Contents" / "MacOS" / APP_NAME
 
 
 def private_atomic_write(path: Path, data: bytes) -> None:

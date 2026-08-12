@@ -85,7 +85,7 @@
   ```
 
 - `manage-codex-sessions` 只在用户显式调用 Skill 或明确要求使用时运行；普通代码任务不得自动触发清理、恢复、导入、裁剪或 Hook 安装。
-- Hook 必须指向稳定安装路径 `~/Applications/CodexSessionManager.app` 内的可执行文件，禁止指向源码、`.venv` 或 uv；stdout 只能输出最终 JSON，日志写入独立文件。
+- Hook 必须指向平台稳定安装路径：macOS 为 `~/Applications/CodexSessionManager.app`，Windows 为 `%LOCALAPPDATA%\CodexSessionManager`；禁止指向源码、`.venv` 或 uv。stdout 只能输出最终 JSON，日志写入独立文件。
 - Hook 使用 `session_id + turn_id + trigger` 去重，总超时 600 秒、内部截止 540 秒；Hook 模式只保存计划，不在进行中的 turn 内创建派生任务。
 - Hook、恢复、导入、归档和裁剪前先运行 `doctor`，再执行 dry-run/plan；不得把用户确认隐含为授权。
 
@@ -106,6 +106,14 @@ uv run --locked mypy src/codex_session_manager
 QT_QPA_PLATFORM=offscreen uv run --locked pytest
 ```
 
+需要验证完整源码入口时运行 `scripts/test_source_workflow.sh`。涉及安装、Skill 或 Hook 时，分别运行 `scripts/test_install_workflow.sh`、`scripts/test_skill_workflow.sh` 或 `scripts/test_hook_workflow.sh`；这些脚本只使用空白临时 `HOME` 和 `CODEX_HOME`，不得改为复制真实 Codex 数据。完整 macOS 流程运行：
+
+```bash
+scripts/test_full_workflow.sh
+```
+
+完整流程默认从当前源码重新构建，并依次执行源码门禁、bundle 验收、真实 age 临时生命周期、安装、Skill 和 Hook 流程。`--reuse-app` 只用于已有可信 bundle 的快速本地 smoke，不得作为发布验收。
+
 涉及 standalone `.app` 时，在真实 Apple Silicon macOS 上运行：
 
 ```bash
@@ -113,16 +121,24 @@ scripts/build_macos_app.sh
 scripts/accept_macos_bundle.sh dist/CodexSessionManager.app
 ```
 
+涉及 Windows standalone 时，在真实 Windows AMD64 或 GitHub `windows-latest` 上运行：
+
+```powershell
+.\scripts\check_windows.ps1
+.\scripts\build_windows_app.ps1 -Version VERSION
+```
+
 验收至少覆盖内置 Python、PySide6、Qt 插件、age 校验、无 Python/uv 的运行、中文或空格路径和可写用户目录。隔离测试使用 `scripts/install_test_app.sh`；其复制的 Codex home 可能包含认证信息，结束后只删除脚本打印的精确 `TEST_ROOT`。永久删除、恢复和 Hook 写入只能针对临时隔离数据根。
 
 报告结果时区分测试层级：单元测试、假 App Server、offscreen GUI、本机构建和 bundle 验收只能证明对应层级；真实账号联调、真实用户输入、签名公证和生产验收必须单独标明证据。
 
-## macOS 构建与发布
+## 桌面构建与发布
 
-- V1 只在真实 Apple Silicon macOS 上构建 `darwin-arm64`；Intel 版本必须在 x86_64 主机独立构建。
+- macOS arm64 只在真实 Apple Silicon 主机构建；Intel 版本必须在 x86_64 主机独立构建。Windows x64 只在真实 Windows AMD64 或 GitHub Windows runner 构建，不以本机模拟代替目标平台验收。
 - 使用 `pyside6-deploy` / Nuitka standalone，不改为 onefile；最终用户不应依赖 Python、pip、uv、Homebrew 或系统 age。
-- age 使用固定版本的官方 arm64 二进制、校验信息和许可证；运行时禁止联网下载。
-- 没有 `CSM_DEVELOPER_ID` 时只能生成 `local-adhoc` 本机构建，不宣称可公开分发；对外发布必须 Developer ID 签名、公证并 staple。
+- age 使用对应平台固定版本的官方二进制、校验信息和许可证；构建时完成 SHA-256 与 Sigsum 校验，运行时禁止联网下载。
+- 未签名 Windows 或 ad-hoc 签名 macOS 产物，只有在用户明确要求时才能作为 GitHub prerelease 测试版发布；标题、说明、文件名和 bundle 通道必须明确标为测试、未签名/未公证，且不得宣称生产可用。
+- 正式公开分发的 macOS 产物必须使用 Developer ID 签名、公证并 staple；Windows 正式产物必须使用适当的 Authenticode 证书签名。测试版例外不改变正式发布门禁。
 - 发布前执行 bundle `doctor` 和验收；升级先验签和自检，再原子替换稳定路径，并保留上一版本用于回退。
 - Hook 永远指向稳定安装路径，不得指向带版本号目录、源码目录或开发环境。
 

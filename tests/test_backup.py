@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import tarfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -108,7 +109,8 @@ def test_streaming_backup_manifest_is_final_and_round_trips(tmp_path: Path) -> N
     created = _create_backup(path)
     verification = BackupReader(_TestCipher()).verify(path, decryption=DecryptionSpec())
     assert verification.manifest.manifest_sha256 == created.manifest_sha256
-    assert path.stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o600
     with tarfile.open(path, "r:") as archive:
         assert archive.getnames()[-1] == "manifest.json"
 

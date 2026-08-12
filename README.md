@@ -16,7 +16,9 @@
 
 > **Code-generation disclosure:** The code in this project was generated entirely by ChatGPT. It has received human review, testing, and release decisions; verify it independently before production use.
 
-CodexSessionManager (`csm`) is a safety-oriented management tool for Codex App tasks. It includes a CLI, a PySide6 context-trimming GUI, an explicitly invoked Skill, optional PreCompact/PostCompact Hooks, and a self-contained macOS `.app` with Python, Qt, and age.
+> **Test-release notice:** `v1.0.0` is a prerelease for isolated testing. The macOS arm64 asset is ad-hoc signed and not notarized; the Windows x64 asset is unsigned. Expect Gatekeeper or SmartScreen warnings, verify the published SHA-256 files, and do not treat either asset as a production build.
+
+CodexSessionManager (`csm`) is a safety-oriented management tool for Codex App tasks. It includes a CLI, a PySide6 context-trimming GUI, an explicitly invoked Skill, optional PreCompact/PostCompact Hooks, and self-contained macOS and Windows bundles with Python, Qt, and age.
 
 Online reads and writes go through the official Codex App Server only; the program never directly rewrites Codex JSONL or SQLite. Context trimming always creates a derived task and leaves the original task unchanged. Any archive, restore, import, trim, or permanent purge operation must consume an immutable SHA-256-bound plan and re-check protocol capabilities, content fingerprints, state, and descendant closure before execution.
 
@@ -33,30 +35,44 @@ Online reads and writes go through the official Codex App Server only; the progr
 - [Safety workflow](#safety-workflow)
 - [Context trimming](#context-trimming)
 - [Hooks](#hooks)
-- [macOS arm64 build](#macos-arm64-build)
+- [Automated test workflow](#automated-test-workflow)
+- [Desktop builds and test releases](#desktop-builds-and-test-releases)
 - [Project structure](#project-structure)
 
 ## Quick start
 
 | Entry point | Best for | Notes |
 | --- | --- | --- |
-| `CodexSessionManager.app` | Daily review and trimming | The standalone bundle includes Python, Qt, plugins, and age; end users do not need Python, pip, or uv |
+| macOS `CodexSessionManager.app` | Daily review and trimming on Apple Silicon | The standalone bundle includes Python, Qt, plugins, and age |
+| Windows `CodexSessionManager.exe` | Daily review and trimming on Windows x64 | Extract the test ZIP and run the bundled user installer |
 | `$manage-codex-sessions` in Codex | Open the GUI from Codex or run a guarded workflow | Restart Codex after installation; the Skill prefers `csm` and can fall back to the stable in-App executable |
 | `~/.local/bin/csm` | CLI, backups, plans, and audit | The user-level launcher runs CLI subcommands only |
 | `scripts/launch_test_app.sh` | Isolated GUI testing | Launches against a copied Codex home instead of the real user directory |
 
 ### Install and launch the GUI
 
-If `dist/CodexSessionManager.app` has already been built, install and launch it with:
+Download both test builds and their `.sha256` files from the [`v1.0.0` prerelease](https://github.com/Aiyawoc/CodexSessionManager/releases/tag/v1.0.0), then verify the asset before opening it.
+
+On macOS arm64, a locally built App can be installed and launched with:
 
 ```bash
 scripts/install_user.sh dist/CodexSessionManager.app
 "$HOME/Applications/CodexSessionManager.app/Contents/MacOS/CodexSessionManager"
 ```
 
-The installer uses a user-owned directory and an atomic replacement, so administrator access is not required. Without `CSM_DEVELOPER_ID`, the result is a locally ad-hoc-signed build. It also links the bundled Skill into `~/.agents/skills/manage-codex-sessions`; restart Codex if `$manage-codex-sessions` does not appear immediately. Hook installation remains a separate, explicit action.
+The installer uses a user-owned directory and an atomic replacement, so administrator access is not required. It also links the bundled Skill into `~/.agents/skills/manage-codex-sessions`; restart Codex if `$manage-codex-sessions` does not appear immediately. The downloadable test asset is ad-hoc signed but not notarized, so macOS may quarantine it. Remove quarantine only after checking the SHA-256 and confirming that the asset came from this repository; a formal distribution must instead use Developer ID signing and notarization.
 
-After restarting Codex, invoke `$manage-codex-sessions` and ask it to open context trimming for a conversation. The Skill resolves `~/.local/bin/csm`; if that directory is not on Codex's `PATH`, it uses the stable executable inside the installed App. Automatic PreCompact review remains disabled until the user separately runs `csm hook install --yes` and reviews/trusts the definition in Codex `/hooks`.
+On Windows x64, extract the ZIP, inspect the bundled installer, and run it from PowerShell:
+
+```powershell
+Get-FileHash .\CodexSessionManager-Windows-x64-1.0.0-test.zip -Algorithm SHA256
+PowerShell -NoProfile -ExecutionPolicy Bypass -File .\CodexSessionManager-Windows-x64\Install-CodexSessionManager.ps1
+& "$env:LOCALAPPDATA\CodexSessionManager\CodexSessionManager.exe"
+```
+
+The Windows installer uses `%LOCALAPPDATA%\CodexSessionManager`, retains the previous installation for rollback, installs the bundled Skill under `~/.agents/skills`, and adds the stable application directory to the user `PATH`. Because the test executable has no Authenticode signature, Windows may show SmartScreen warnings. Hook installation remains a separate, explicit action on both platforms.
+
+After restarting Codex, invoke `$manage-codex-sessions` and ask it to open context trimming for a conversation. The Skill resolves `csm` first, then the platform's stable bundled executable. Automatic PreCompact review remains disabled until the user separately runs `csm hook install --yes` and reviews/trusts the definition in Codex `/hooks`.
 
 After launch, the **Projects & Tasks** pane groups conversation names and relative activity times by project:
 
@@ -120,7 +136,7 @@ uv run csm cleanup plan --older-than-days 90
 uv run csm trim review THREAD_ID
 ```
 
-The installed application has one distribution entry point:
+Each installed application has one distribution entry point:
 
 ```text
 CodexSessionManager                  open the GUI
@@ -135,7 +151,7 @@ scripts/install_user.sh dist/CodexSessionManager.app
 ~/.local/bin/csm doctor
 ```
 
-The installer performs an atomic replacement and keeps the previous version for rollback. The stable path is `~/Applications/CodexSessionManager.app`; Hooks never reference the source checkout or `.venv`.
+The installer performs an atomic replacement and keeps the previous version for rollback. Stable paths are `~/Applications/CodexSessionManager.app` on macOS and `%LOCALAPPDATA%\CodexSessionManager` on Windows; Hooks never reference the source checkout or `.venv`.
 
 To test against a copy of the current `~/.codex`, use the isolated test installer. It creates separate `HOME`, `codex-home`, data, and log directories under the system temporary directory and does not overwrite the real user installation:
 
@@ -227,7 +243,40 @@ PreCompact first shows a 15-second lightweight prompt. Closing it, timing out, c
 
 After installing Hooks, review and trust the exact command in Codex `/hooks`.
 
-## macOS arm64 build
+## Automated test workflow
+
+Run the source gate independently, or run the complete workflow, which rebuilds the App from the current source by default so a stale bundle cannot hide packaging failures:
+
+```bash
+scripts/test_source_workflow.sh
+scripts/test_full_workflow.sh
+```
+
+For an existing trusted bundle, installation, Skill, and Hook checks can run separately. A faster local smoke run may reuse that bundle:
+
+```bash
+scripts/test_install_workflow.sh dist/CodexSessionManager.app
+scripts/test_skill_workflow.sh dist/CodexSessionManager.app
+scripts/test_hook_workflow.sh dist/CodexSessionManager.app
+scripts/test_full_workflow.sh --reuse-app dist/CodexSessionManager.app
+```
+
+The layered workflow covers:
+
+- Source: locked environment, generated-file parity, shell syntax and executable bits, Ruff, strict mypy, offscreen pytest, Skill structure and command contracts, a process-level fake App Server, a real-age encrypted backup/audit lifecycle, and an isolated `doctor` run.
+- Bundle: embedded Python, PySide6, Qt plugins, age integrity, CLI/GUI/Hook smoke tests with no development runtime, Chinese and space-containing paths, and code-signature verification.
+- Installation: conflict preservation in an empty temporary `HOME`, atomic install and reinstall, previous-version retention, version parity, the stable launcher, the Skill link, and proof that installing the App does not silently enable Hooks.
+- Skill: validation and content parity across source, bundled, and installed packages, the explicit-invocation policy, stable entry points, and CLI reachability for every documented command.
+- Hooks: preservation of foreign handlers, exact installation settings and 600/30-second timeouts, the `manual|auto` matcher, permissions and backup, status, one-line JSON fail-open behavior, reinstall behavior, and removal of CSM handlers only.
+- Lifecycle: encrypted backup, verification, archive, waiting-period evidence, a permanent-purge plan, and audit-chain verification against temporary data only.
+
+The installation, Skill, and Hook workflows always create empty temporary `HOME`, `CODEX_HOME`, and application-data directories. They do not copy real credentials or tasks. Set `CSM_KEEP_TEST_ROOT=1` to retain the exact temporary fixture printed by the script after a failure.
+
+These automated results are not real-account or production acceptance. Skill discovery and model adherence in Codex, `/hooks` trust and real triggers, App Server writes, a real Cocoa window/scaling/IME session, Developer ID signing, notarization, stapling, and clean-machine installation still require separate evidence.
+
+## Desktop builds and test releases
+
+### macOS arm64
 
 ```bash
 scripts/build_macos_app.sh
@@ -236,20 +285,37 @@ scripts/accept_macos_bundle.sh dist/CodexSessionManager.app
 
 The build uses `pyside6-deploy` / Nuitka standalone and carries Python, Qt, Qt plugins, and the official age 1.3.1 arm64 binary verified with SHA-256 and Sigsum. A strictly checked temporary patch for Nuitka 4.0's macOS UTF-8 path handling allows the app to start from a Chinese path; the build restores the original Nuitka source in `build/.venv-build` when it finishes. A successful Nuitka report is also a packaging gate, so a partial `.app` left by `pyside6-deploy` is not accepted.
 
-Without `CSM_DEVELOPER_ID`, the result is a `local-adhoc` build for local use only and is not claimed as publicly distributable. Public releases require separate Developer ID signing, notarization, and stapling:
+Without `CSM_DEVELOPER_ID`, the normal result is a `local-adhoc` build. An explicitly requested test prerelease can be labeled `macos-test-adhoc` by setting `CSM_TEST_RELEASE=1`; it remains unnotarized and must never be described as a production release. Formal distribution requires separate Developer ID signing, notarization, and stapling:
 
 ```bash
 CSM_DEVELOPER_ID='Developer ID Application: ...' scripts/build_macos_app.sh
 scripts/notarize_macos_app.sh dist/CodexSessionManager.app
 ```
 
-V1 is built and accepted only on real Apple Silicon macOS hardware; an Intel build must be produced independently on an x86_64 host.
+The arm64 App is built and accepted only on real Apple Silicon macOS hardware; an Intel build must be produced independently on an x86_64 host.
 The build machine needs uv, Xcode Command Line Tools, and Go (only to build the Sigsum verifier from pinned module versions); none of these are required by end users.
+
+### Windows x64
+
+On a real Windows AMD64 host:
+
+```powershell
+.\scripts\check_windows.ps1
+.\scripts\build_windows_app.ps1 -Version 1.0.0
+```
+
+The build uses the same `uv.lock`, CPython 3.13.14, PySide6 6.11.1, Nuitka standalone mode, and a pinned SHA-256 + Sigsum-verified age 1.3.1 Windows binary. It runs bundle acceptance from a path containing spaces and Chinese characters, with Python and uv absent from `PATH`. The result is `dist\CodexSessionManager-Windows-x64-1.0.0-test.zip`; the current test channel is intentionally unsigned.
+
+GitHub Actions provides separate [Windows CI](.github/workflows/ci.yml) and a manually dispatched [Windows test-bundle build](.github/workflows/build-windows.yml). A successful Action proves the checks and standalone acceptance on the hosted Windows runner; it does not prove Authenticode signing, SmartScreen reputation, a physical end-user installation, or real Codex-account writes.
+
+### Release classification
+
+Unsigned Windows and ad-hoc-signed macOS artifacts may be attached only to a GitHub **prerelease** whose title, notes, filenames, and in-bundle channel identify them as test builds. A formal release requires Developer ID signing/notarization/stapling on macOS and an appropriate Authenticode certificate on Windows. Every asset is accompanied by a SHA-256 file.
 
 ## Project structure
 
 - `src/codex_session_manager/`: App Server client, models, plans, backup, import, cleanup, trimming, Hooks, and GUI.
 - `skills/manage-codex-sessions/`: explicitly invoked Skill and safety workflow references.
-- `tests/`: fake App Server, backup-boundary, plan-drift, deduplication, Hook, and GUI tests.
-- `scripts/`: checks, age verification, icons, build, installation, notarization, and isolated acceptance.
+- `tests/`: process-level fake App Server, real-age lifecycle, backup-boundary, plan-drift, Skill, Hook, and GUI tests.
+- `scripts/`: unified test workflows, checks, age verification, icons, build, installation, notarization, and isolated acceptance.
 - `agent_team/`: ledger for independent background reviews and integration.

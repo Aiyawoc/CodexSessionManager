@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import os
 import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -473,6 +475,9 @@ class ProcessGuard:
 
     @staticmethod
     def assert_no_other_codex_processes(*, controlled_pid: int | None = None) -> None:
+        if os.name == "nt":
+            ProcessGuard._assert_no_other_windows_codex_processes(controlled_pid)
+            return
         completed = subprocess.run(
             ["ps", "-axo", "pid=,command="],
             check=True,
@@ -501,6 +506,32 @@ class ProcessGuard:
             )
             if is_codex and "codex_session_manager" not in lowered:
                 blockers.append(f"{pid} {command}")
+        if blockers:
+            preview = "; ".join(blockers[:5])
+            raise RuntimeError(f"permanent deletion blocked by running Codex processes: {preview}")
+
+    @staticmethod
+    def _assert_no_other_windows_codex_processes(controlled_pid: int | None) -> None:
+        completed = subprocess.run(
+            ["tasklist", "/FO", "CSV", "/NH"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        blockers: list[str] = []
+        for row in csv.reader(completed.stdout.splitlines()):
+            if len(row) < 2:
+                continue
+            image_name, pid_text = row[0], row[1]
+            try:
+                pid = int(pid_text)
+            except ValueError:
+                continue
+            if controlled_pid is not None and pid == controlled_pid:
+                continue
+            if image_name.casefold() in {"codex.exe", "chatgpt.exe"}:
+                blockers.append(f"{pid} {image_name}")
         if blockers:
             preview = "; ".join(blockers[:5])
             raise RuntimeError(f"permanent deletion blocked by running Codex processes: {preview}")

@@ -16,7 +16,12 @@ from PySide6.QtCore import QLibraryInfo, qVersion
 
 from codex_session_manager.app_server import connect_and_probe
 from codex_session_manager.backup import EXPECTED_AGE_VERSION, AgeBackend
-from codex_session_manager.config import AppPaths, app_bundle_root, bundled_age_path
+from codex_session_manager.config import (
+    AppPaths,
+    bundled_age_path,
+    bundled_resources_root,
+    standalone_root,
+)
 from codex_session_manager.hashing import hash_file
 
 EXPECTED_PYTHON = (3, 13, 14)
@@ -51,15 +56,19 @@ def _writable_directory(path: Path) -> Check:
         return Check(f"write:{path}", False, str(exc))
 
 
-def _qt_plugin_directory(reported: Path, bundle: Path | None) -> Path:
+def _qt_plugin_directory(reported: Path, root: Path | None) -> Path:
     """Resolve Qt's plugin directory in source and Nuitka bundle layouts."""
 
     candidates = [reported]
-    if bundle is not None:
+    if root is not None:
         candidates.extend(
             (
-                bundle / "MacOS" / "PySide6" / "qt-plugins",
-                bundle / "MacOS" / "PySide6" / "Qt" / "plugins",
+                root / "MacOS" / "PySide6" / "qt-plugins",
+                root / "MacOS" / "PySide6" / "Qt" / "plugins",
+                root / "PySide6" / "qt-plugins",
+                root / "PySide6" / "Qt" / "plugins",
+                root / "qt-plugins",
+                root / "plugins",
             )
         )
     for candidate in candidates:
@@ -68,8 +77,25 @@ def _qt_plugin_directory(reported: Path, bundle: Path | None) -> Path:
     return reported
 
 
+def _qt_platform_plugin() -> tuple[str, str]:
+    if os.name == "nt":
+        return "Qt windows plugin", "qwindows.dll"
+    if sys.platform == "darwin":
+        return "Qt cocoa plugin", "libqcocoa.dylib"
+    return "Qt xcb plugin", "libqxcb.so"
+
+
+def _architecture_supported() -> bool:
+    machine = platform.machine().casefold()
+    if os.name == "nt":
+        return machine in {"amd64", "x86_64"}
+    if sys.platform == "darwin":
+        return machine == "arm64"
+    return bool(machine)
+
+
 def run_doctor(paths: AppPaths, *, probe_app_server: bool = True) -> dict[str, Any]:
-    bundle = app_bundle_root()
+    root = standalone_root()
     checks: list[Check] = []
     current_python = sys.version_info[:3]
     checks.append(
@@ -80,15 +106,16 @@ def run_doctor(paths: AppPaths, *, probe_app_server: bool = True) -> dict[str, A
         )
     )
     checks.append(
-        Check("architecture", platform.machine() == "arm64", platform.machine(), required=False)
+        Check("architecture", _architecture_supported(), platform.machine(), required=False)
     )
     checks.append(Check("PySide6", pyside_version == EXPECTED_PYSIDE, pyside_version))
     checks.append(Check("Qt", qVersion() == EXPECTED_PYSIDE, qVersion()))
     reported_plugin_path = Path(QLibraryInfo.path(QLibraryInfo.LibraryPath.PluginsPath))
-    plugin_path = _qt_plugin_directory(reported_plugin_path, bundle)
+    plugin_path = _qt_plugin_directory(reported_plugin_path, root)
     checks.append(Check("Qt plugins", plugin_path.is_dir(), str(plugin_path)))
-    platform_plugin = plugin_path / "platforms" / "libqcocoa.dylib"
-    checks.append(Check("Qt cocoa plugin", platform_plugin.is_file(), str(platform_plugin)))
+    platform_check_name, platform_plugin_name = _qt_platform_plugin()
+    platform_plugin = plugin_path / "platforms" / platform_plugin_name
+    checks.append(Check(platform_check_name, platform_plugin.is_file(), str(platform_plugin)))
     image_formats = plugin_path / "imageformats"
     checks.append(Check("Qt image plugins", image_formats.is_dir(), str(image_formats)))
     age_path = bundled_age_path()
@@ -101,9 +128,10 @@ def run_doctor(paths: AppPaths, *, probe_app_server: bool = True) -> dict[str, A
             checks.append(Check("age", expected, f"{version} at {age_path}"))
         except (OSError, RuntimeError) as exc:
             checks.append(Check("age", False, str(exc)))
+        resources = bundled_resources_root()
         verification_path = (
-            bundle / "Resources" / "licenses" / "age-verification.json"
-            if bundle
+            resources / "licenses" / "age-verification.json"
+            if resources is not None
             else age_path.parent / "verification.json"
         )
         try:
@@ -120,8 +148,8 @@ def run_doctor(paths: AppPaths, *, probe_app_server: bool = True) -> dict[str, A
             )
         except (OSError, ValueError, TypeError) as exc:
             checks.append(Check("age integrity", False, str(exc)))
-    if bundle:
-        checks.append(Check("standalone bundle", True, str(bundle)))
+    if root:
+        checks.append(Check("standalone bundle", True, str(root)))
         checks.append(Check("uv not required", True, "packaged runtime", required=False))
     else:
         uv = shutil.which("uv")
@@ -164,7 +192,7 @@ def run_doctor(paths: AppPaths, *, probe_app_server: bool = True) -> dict[str, A
     required_ok = all(check.ok for check in checks if check.required)
     return {
         "ok": required_ok,
-        "mode": "standalone-app" if bundle else "development",
+        "mode": "standalone-app" if root else "development",
         "checks": [check.as_dict() for check in checks],
         "capabilities": capability_data,
     }

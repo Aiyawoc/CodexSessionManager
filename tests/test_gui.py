@@ -32,6 +32,9 @@ def test_review_window_layout_and_stale_worker_result(
     assert window.minimumHeight() == 640
     assert window.width() == 1280
     assert window.height() == 800
+    assert window.ui.appTitleLabel.text() == "CodexSessionManager"
+    assert window.ui.headerBadge.text() == "原任务只读保护"
+    assert window.ui.errorLabel.isHidden()
 
     stale = _document(snapshot_factory("stale"), capabilities)
     window._document_loaded(99, stale)

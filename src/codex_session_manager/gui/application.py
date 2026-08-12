@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from codex_session_manager.config import get_paths
+from codex_session_manager.gui.theme import APP_STYLESHEET
 
 
 def ensure_application() -> tuple[QApplication, bool]:
@@ -24,11 +25,13 @@ def ensure_application() -> tuple[QApplication, bool]:
     # QtVSCodeStyle writes extracted resources below Path.home() at import
     # time. Redirect that legacy behavior into CSM's bounded cache instead of
     # allowing it to touch an unrelated user-home path.
+    base_stylesheet = ""
     with contextlib.suppress(AttributeError, ImportError, OSError):
         cache_home = get_paths().cache_dir / "qtvscodestyle-home"
         cache_home.mkdir(parents=True, exist_ok=True, mode=0o700)
         with patch.object(Path, "home", return_value=cache_home):
             import qtvscodestyle as qtvsc
 
-            app.setStyleSheet(qtvsc.load_stylesheet(qtvsc.Theme.LIGHT_VS))
+            base_stylesheet = qtvsc.load_stylesheet(qtvsc.Theme.LIGHT_VS)
+    app.setStyleSheet(base_stylesheet + APP_STYLESHEET)
     return app, True

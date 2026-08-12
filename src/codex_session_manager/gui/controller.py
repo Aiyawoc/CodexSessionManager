@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from PySide6.QtCore import QItemSelection, QThreadPool, Signal, Slot
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QMainWindow, QMessageBox
+from PySide6.QtWidgets import QHeaderView, QMainWindow, QMessageBox
 
 from codex_session_manager.app_server import connect_and_probe
 from codex_session_manager.audit import AuditStore
@@ -85,6 +85,8 @@ class TrimReviewWindow(QMainWindow):
         self._closing = False
         self._write_in_progress = False
         self._connect_signals()
+        self._configure_views()
+        self.ui.errorLabel.hide()
         self.ui.mainSplitter.setSizes([330, 580, 300])
         if hook_mode:
             self.ui.applyButton.hide()
@@ -93,6 +95,20 @@ class TrimReviewWindow(QMainWindow):
         if thread_id:
             self.ui.threadIdEdit.setText(thread_id)
             self.load_thread(thread_id)
+
+    def _configure_views(self) -> None:
+        """Apply stable column sizing and comfortable desktop reading metrics."""
+
+        header = self.ui.timelineView.header()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for section in (1, 2, 3):
+            header.setSectionResizeMode(section, QHeaderView.ResizeMode.ResizeToContents)
+        self.ui.timelineView.setIndentation(16)
+        self.ui.timelineView.setHeaderHidden(False)
+        self.ui.contentBrowser.setLineWrapMode(self.ui.contentBrowser.LineWrapMode.WidgetWidth)
+        self.ui.summaryEdit.setMinimumHeight(120)
+        self.ui.reasonBrowser.setMinimumHeight(72)
 
     def _connect_signals(self) -> None:
         self.ui.loadButton.clicked.connect(self._load_from_edit)
@@ -327,6 +343,7 @@ class TrimReviewWindow(QMainWindow):
             return
         self.current_plan = plan
         self.ui.errorLabel.setText(f"TrimPlan 已安全保存：{plan.plan_id}")
+        self.ui.errorLabel.show()
         self.plan_saved.emit(plan)
         if self.hook_mode:
             self.close()
@@ -433,6 +450,7 @@ class TrimReviewWindow(QMainWindow):
 
     def _show_error(self, message: str) -> None:
         self.ui.errorLabel.setText("⚠ " + message)
+        self.ui.errorLabel.show()
 
     @staticmethod
     def _target_text(target: TurnSnapshot | ThreadItemSnapshot) -> str:

@@ -2,6 +2,8 @@
 
 [English README](README.md) | 中文
 
+> **代码生成声明：** 本项目代码完全由 ChatGPT 生成，并经过人工审查、测试和发布决策；用于生产环境前请独立验证实现。
+
 CodexSessionManager（`csm`）是面向 Codex App 任务的安全管理工具，包含 CLI、PySide6 裁剪 GUI、显式调用 Skill、可选 PreCompact/PostCompact Hook，以及自带 Python、Qt 和 age 的 macOS `.app`。
 
 在线读取和写入只通过官方 Codex App Server 完成；程序不会直接改写 Codex JSONL 或 SQLite。上下文裁剪始终创建派生任务，原任务不变。任何归档、恢复、导入、裁剪或永久清除都必须消费带 SHA-256 的不可变计划，并在执行前复核协议能力、内容指纹、状态和后代闭包。

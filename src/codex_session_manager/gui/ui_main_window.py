@@ -34,6 +34,49 @@ class Ui_MainWindow(object):
         self.rootLayout.setSpacing(12)
         self.rootLayout.setObjectName(u"rootLayout")
         self.rootLayout.setContentsMargins(16, 16, 16, 12)
+        self.heroFrame = QFrame(self.centralwidget)
+        self.heroFrame.setObjectName(u"heroFrame")
+        self.heroFrame.setFrameShape(QFrame.Shape.StyledPanel)
+        self.heroLayout = QHBoxLayout(self.heroFrame)
+        self.heroLayout.setObjectName(u"heroLayout")
+        self.heroLayout.setContentsMargins(14, 12, 14, 12)
+        self.brandMark = QLabel(self.heroFrame)
+        self.brandMark.setObjectName(u"brandMark")
+        self.brandMark.setMinimumSize(QSize(48, 48))
+        self.brandMark.setMaximumSize(QSize(48, 48))
+        self.brandMark.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.heroLayout.addWidget(self.brandMark)
+
+        self.heroTextLayout = QVBoxLayout()
+        self.heroTextLayout.setSpacing(2)
+        self.heroTextLayout.setObjectName(u"heroTextLayout")
+        self.appTitleLabel = QLabel(self.heroFrame)
+        self.appTitleLabel.setObjectName(u"appTitleLabel")
+
+        self.heroTextLayout.addWidget(self.appTitleLabel)
+
+        self.appSubtitleLabel = QLabel(self.heroFrame)
+        self.appSubtitleLabel.setObjectName(u"appSubtitleLabel")
+
+        self.heroTextLayout.addWidget(self.appSubtitleLabel)
+
+
+        self.heroLayout.addLayout(self.heroTextLayout)
+
+        self.heroSpacer = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+
+        self.heroLayout.addItem(self.heroSpacer)
+
+        self.headerBadge = QLabel(self.heroFrame)
+        self.headerBadge.setObjectName(u"headerBadge")
+        self.headerBadge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.heroLayout.addWidget(self.headerBadge)
+
+
+        self.rootLayout.addWidget(self.heroFrame)
+
         self.sourceFrame = QFrame(self.centralwidget)
         self.sourceFrame.setObjectName(u"sourceFrame")
         self.sourceFrame.setFrameShape(QFrame.Shape.StyledPanel)
@@ -66,6 +109,8 @@ class Ui_MainWindow(object):
         self.mainSplitter = QSplitter(self.centralwidget)
         self.mainSplitter.setObjectName(u"mainSplitter")
         self.mainSplitter.setOrientation(Qt.Orientation.Horizontal)
+        self.mainSplitter.setHandleWidth(8)
+        self.mainSplitter.setChildrenCollapsible(False)
         self.timelinePane = QWidget(self.mainSplitter)
         self.timelinePane.setObjectName(u"timelinePane")
         self.timelinePane.setMinimumSize(QSize(260, 0))
@@ -262,6 +307,10 @@ class Ui_MainWindow(object):
 
     def retranslateUi(self, MainWindow):
         MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", u"CodexSessionManager \u00b7 \u4e0a\u4e0b\u6587\u88c1\u526a", None))
+        self.brandMark.setText(QCoreApplication.translate("MainWindow", u"CSM", None))
+        self.appTitleLabel.setText(QCoreApplication.translate("MainWindow", u"CodexSessionManager", None))
+        self.appSubtitleLabel.setText(QCoreApplication.translate("MainWindow", u"\u5b89\u5168\u5730\u5ba1\u67e5\u3001\u7cbe\u7b80\u548c\u6d3e\u751f Codex \u4e0a\u4e0b\u6587", None))
+        self.headerBadge.setText(QCoreApplication.translate("MainWindow", u"\u539f\u4efb\u52a1\u53ea\u8bfb\u4fdd\u62a4", None))
         self.threadIdLabel.setText(QCoreApplication.translate("MainWindow", u"\u4efb\u52a1 ID", None))
         self.threadIdEdit.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u8f93\u5165 Codex \u4efb\u52a1 ID", None))
 #if QT_CONFIG(accessibility)

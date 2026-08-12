@@ -19,6 +19,24 @@
     <property name="bottomMargin"><number>12</number></property>
     <property name="spacing"><number>12</number></property>
     <item>
+     <widget class="QFrame" name="heroFrame">
+      <property name="frameShape"><enum>QFrame::Shape::StyledPanel</enum></property>
+      <layout class="QHBoxLayout" name="heroLayout">
+       <property name="leftMargin"><number>14</number></property><property name="topMargin"><number>12</number></property><property name="rightMargin"><number>14</number></property><property name="bottomMargin"><number>12</number></property>
+       <item><widget class="QLabel" name="brandMark"><property name="minimumSize"><size><width>48</width><height>48</height></size></property><property name="maximumSize"><size><width>48</width><height>48</height></size></property><property name="text"><string>CSM</string></property><property name="alignment"><set>Qt::AlignmentFlag::AlignCenter</set></property></widget></item>
+       <item>
+        <layout class="QVBoxLayout" name="heroTextLayout">
+         <property name="spacing"><number>2</number></property>
+         <item><widget class="QLabel" name="appTitleLabel"><property name="text"><string>CodexSessionManager</string></property></widget></item>
+         <item><widget class="QLabel" name="appSubtitleLabel"><property name="text"><string>安全地审查、精简和派生 Codex 上下文</string></property></widget></item>
+        </layout>
+       </item>
+       <item><spacer name="heroSpacer"><property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property><property name="sizeHint"><size><width>40</width><height>20</height></size></property></spacer></item>
+       <item><widget class="QLabel" name="headerBadge"><property name="text"><string>原任务只读保护</string></property><property name="alignment"><set>Qt::AlignmentFlag::AlignCenter</set></property></widget></item>
+      </layout>
+     </widget>
+    </item>
+    <item>
      <widget class="QFrame" name="sourceFrame">
       <property name="frameShape"><enum>QFrame::Shape::StyledPanel</enum></property>
       <layout class="QHBoxLayout" name="sourceLayout">
@@ -30,8 +48,10 @@
      </widget>
     </item>
     <item>
-     <widget class="QSplitter" name="mainSplitter">
+    <widget class="QSplitter" name="mainSplitter">
       <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
+      <property name="handleWidth"><number>8</number></property>
+      <property name="childrenCollapsible"><bool>false</bool></property>
       <widget class="QWidget" name="timelinePane">
        <property name="minimumSize"><size><width>260</width><height>0</height></size></property>
        <layout class="QVBoxLayout" name="timelineLayout">

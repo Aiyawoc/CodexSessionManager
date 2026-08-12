@@ -76,6 +76,38 @@ class HookDecision(BaseModel):
 
 
 Reviewer = Callable[[HookInput, float], TrimPlan | None]
+PlanGate = Callable[[TrimPlan], bool]
+
+
+def _plan_has_current_write_capability(plan: TrimPlan) -> bool:
+    """Re-probe and dry-validate a plan before suppressing native compaction."""
+
+    from codex_session_manager.app_server import connect_and_probe
+    from codex_session_manager.inventory import InventoryService
+    from codex_session_manager.trim import prefix_fork_turn, validate_selections
+
+    client, capabilities = connect_and_probe(request_timeout=45)
+    try:
+        if (
+            not capabilities.write_enabled
+            or capabilities.fingerprint != plan.capability_fingerprint
+        ):
+            return False
+        source = InventoryService(client).read(plan.source_thread_id, include_turns=True)
+        if source.trim_fingerprint != plan.source_thread_fingerprint:
+            return False
+        validate_selections(source, plan.selections)
+        cutoff = prefix_fork_turn(source, plan)
+        if cutoff:
+            capabilities.require_write("thread/fork")
+            if not capabilities.fork_supports_last_turn_id:
+                capabilities.require_write("thread/rollback")
+        else:
+            for method in ("thread/start", "thread/inject_items", "thread/name/set"):
+                capabilities.require_write(method)
+        return True
+    finally:
+        client.close()
 
 
 def _continue(message: str | None = None) -> HookOutput:
@@ -156,9 +188,15 @@ class HookDecisionStore:
 
 
 class HookHandler:
-    def __init__(self, paths: AppPaths, reviewer: Reviewer | None = None) -> None:
+    def __init__(
+        self,
+        paths: AppPaths,
+        reviewer: Reviewer | None = None,
+        plan_gate: PlanGate | None = None,
+    ) -> None:
         self.paths = paths
         self.reviewer = reviewer or self._default_reviewer
+        self.plan_gate = plan_gate or _plan_has_current_write_capability
         self.decisions = HookDecisionStore(paths)
         self.plans = PlanStore(paths)
 
@@ -186,7 +224,22 @@ class HookHandler:
             try:
                 existing = self.decisions.load(hook_input.dedupe_key)
                 if existing:
-                    self._validate_cached_decision(existing, hook_input)
+                    cached_plan = self._validate_cached_decision(existing, hook_input)
+                    if cached_plan is not None and not self.plan_gate(cached_plan):
+                        output = _continue(
+                            "CSM cached plan is no longer executable; native compaction continued."
+                        )
+                        self.decisions.save(
+                            HookDecision(
+                                key=hook_input.dedupe_key,
+                                session_id=hook_input.session_id,
+                                turn_id=hook_input.turn_id,
+                                trigger=hook_input.trigger,
+                                decided_at=utc_now(),
+                                output=output,
+                            )
+                        )
+                        return output
                     return existing.output
             except BaseException:
                 self.decisions.discard(hook_input.dedupe_key)
@@ -205,11 +258,18 @@ class HookHandler:
                         or plan.trigger != "hook"
                     ):
                         raise ValueError("reviewer returned a TrimPlan bound to another Hook event")
-                    # The persisted plan is the only condition under which the
-                    # hook may stop native compaction.
-                    persisted = self.plans.save(plan)
-                    output = _stop(plan)
-                    plan_path = str(persisted)
+                    if not self.plan_gate(plan):
+                        output = _continue(
+                            "CSM plan cannot be applied with the current App Server "
+                            "capabilities; native compaction continued."
+                        )
+                        plan_path = None
+                    else:
+                        # The persisted plan is the only condition under which the
+                        # hook may stop native compaction.
+                        persisted = self.plans.save(plan)
+                        output = _stop(plan)
+                        plan_path = str(persisted)
             except BaseException:
                 LOGGER.exception("PreCompact review failed; continuing native compaction")
                 output = _continue("CSM review failed; native compaction continued.")
@@ -231,7 +291,9 @@ class HookHandler:
             )
             return output
 
-    def _validate_cached_decision(self, decision: HookDecision, hook_input: HookInput) -> None:
+    def _validate_cached_decision(
+        self, decision: HookDecision, hook_input: HookInput
+    ) -> TrimPlan | None:
         if (
             decision.key != hook_input.dedupe_key
             or decision.session_id != hook_input.session_id
@@ -249,7 +311,7 @@ class HookHandler:
                 )
             ):
                 raise ValueError("continue decision unexpectedly references a TrimPlan")
-            return
+            return None
         if not all(
             (
                 decision.plan_path,
@@ -274,6 +336,7 @@ class HookHandler:
             or plan.trigger != "hook"
         ):
             raise ValueError("cached Hook TrimPlan binding mismatch")
+        return plan
 
     def postcompact(self, raw: Mapping[str, Any]) -> HookOutput:
         hook_input = HookInput.model_validate(raw)
@@ -420,15 +483,12 @@ def configure_hook_logging(paths: AppPaths) -> None:
     )
 
 
-def run_hook(mode: Literal["precompact", "postcompact"], paths: AppPaths) -> int:
+def run_hook(
+    mode: Literal["precompact", "postcompact"],
+    paths: AppPaths | None = None,
+) -> int:
     """Read one hook JSON object and emit exactly one final JSON object."""
 
-    try:
-        configure_hook_logging(paths)
-    except OSError:
-        # A read-only or damaged application data directory must never prevent
-        # the fail-open Hook response from reaching Codex.
-        logging.basicConfig(handlers=[logging.NullHandler()], force=True)
     output = _continue("CSM hook failed before startup; native compaction continued.")
     saved_stdout: int | None = None
     try:
@@ -438,13 +498,25 @@ def run_hook(mode: Literal["precompact", "postcompact"], paths: AppPaths) -> int
         with open(os.devnull, "w", encoding="utf-8") as sink:
             os.dup2(sink.fileno(), stdout_fd)
             try:
+                if paths is None:
+                    from codex_session_manager.config import get_paths
+
+                    resolved_paths = get_paths()
+                else:
+                    resolved_paths = paths
+                try:
+                    configure_hook_logging(resolved_paths)
+                except OSError:
+                    # A read-only or damaged application data directory must never
+                    # prevent the fail-open response from reaching Codex.
+                    logging.basicConfig(handlers=[logging.NullHandler()], force=True)
                 raw_bytes = sys.stdin.buffer.read(MAX_HOOK_INPUT_BYTES + 1)
                 if len(raw_bytes) > MAX_HOOK_INPUT_BYTES:
                     raise ValueError("hook input exceeds 1 MiB")
                 raw = json.loads(raw_bytes)
                 if not isinstance(raw, Mapping):
                     raise ValueError("hook input must be an object")
-                handler = HookHandler(paths)
+                handler = HookHandler(resolved_paths)
                 output = (
                     handler.precompact(raw) if mode == "precompact" else handler.postcompact(raw)
                 )

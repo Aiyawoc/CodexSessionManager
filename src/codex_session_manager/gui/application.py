@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from codex_session_manager.config import get_paths
+from codex_session_manager.gui import resources_rc  # noqa: F401
 from codex_session_manager.gui.theme import APP_STYLESHEET
 
 

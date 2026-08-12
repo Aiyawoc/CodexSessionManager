@@ -14,6 +14,20 @@ AGE_PROOF_SHA="e53545de98acd8fb17aca18ab4940e46edd032418df352b7387be4bc5379a0ac"
 AGE_BINARY_SHA="0e3ea0b1bed2b30aa2dc46eef4e1723864d626c80f37319c20d9b73ca045f56f"
 AGE_BASE_URL="https://github.com/FiloSottile/age/releases/download/v${AGE_VERSION}"
 CSM_REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+CSM_VENDOR_AGE="$CSM_REPO_ROOT/vendor/age/age"
+
+# Reuse a previously verified immutable payload.  This keeps repeated local
+# builds and offline packaging runs from downloading the same release again;
+# the pinned binary digest and version remain the trust gate.
+if [ -x "$CSM_VENDOR_AGE" ] && [ -f "$CSM_REPO_ROOT/vendor/age/verification.json" ] \
+  && [ "$(shasum -a 256 "$CSM_VENDOR_AGE" | awk '{print $1}')" = "$AGE_BINARY_SHA" ] \
+  && "$CSM_VENDOR_AGE" --version | grep -q "^v${AGE_VERSION}$" \
+  && grep -Fq "\"binary_sha256\": \"$AGE_BINARY_SHA\"" \
+    "$CSM_REPO_ROOT/vendor/age/verification.json"; then
+  echo "Using verified cached age ${AGE_VERSION} (${AGE_BINARY_SHA})"
+  exit 0
+fi
+
 CSM_FETCH_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/csm-age.XXXXXX")
 trap 'chmod -R u+w "$CSM_FETCH_ROOT" 2>/dev/null || true; rm -rf "$CSM_FETCH_ROOT"' EXIT INT TERM
 

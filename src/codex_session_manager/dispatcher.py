@@ -40,11 +40,10 @@ def main() -> int:
             "postcompact",
         }
     ):
-        from codex_session_manager.config import get_paths
         from codex_session_manager.hooks import run_hook
 
         mode = cast(Literal["precompact", "postcompact"], arguments[1])
-        return run_hook(mode, get_paths())
+        return run_hook(mode)
     if arguments[0] == "--thread" and len(arguments) == 2:
         from codex_session_manager.gui.main import run_gui
 

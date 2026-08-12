@@ -86,6 +86,23 @@ def test_archive_root_filter_keeps_full_safe_descendant_closure(
     assert CleanupPlanner().plan_archive((unknown,), capabilities, now=now).targets == ()
 
 
+def test_explicit_archive_ignores_age_but_keeps_descendant_safety(
+    capabilities, snapshot_factory
+) -> None:
+    root = snapshot_factory("root")
+    child = snapshot_factory("child", parent_id="root")
+    snapshots = attach_descendant_closures((root, child))
+
+    plan = CleanupPlanner().plan_selected_archive(snapshots, capabilities, ("root",))
+
+    assert plan.action is PlanAction.ARCHIVE
+    assert set(plan.targets[0].affected_thread_ids) == {"root", "child"}
+    unsafe_child = child.model_copy(update={"status": ThreadStatus.ACTIVE})
+    unsafe = attach_descendant_closures((root, unsafe_child))
+    with pytest.raises(ValueError, match="active or in an unsafe state"):
+        CleanupPlanner().plan_selected_archive(unsafe, capabilities, ("root",))
+
+
 class _CleanupClient:
     pid = 444
 
@@ -101,6 +118,19 @@ class _CleanupClient:
         self.archive_calls += 1
         if self.timeout:
             raise RequestTimeout("thread/archive", 1.0)
+
+
+class _RenameClient:
+    pid = 445
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def loaded_thread_ids(self):
+        return ()
+
+    def rename_thread(self, thread_id: str, name: str) -> None:
+        self.calls.append((thread_id, name))
 
 
 class _CleanupInventory:
@@ -140,6 +170,30 @@ def test_archive_apply_checks_backup_and_never_retries_ambiguous_timeout(
         audit.verify_chain()
     assert completed == ("root",)
     assert client.archive_calls == 1
+
+
+def test_rename_uses_sealed_plan_and_verifies_title_postcondition(
+    app_paths, capabilities, snapshot_factory
+) -> None:
+    before = snapshot_factory("root")
+    after = before.model_copy(update={"title": "新的对话名称"})
+    plan = CleanupPlanner().plan_rename(
+        (before,), capabilities, thread_id="root", new_name=" 新的对话名称 "
+    )
+    client = _RenameClient()
+    inventory = _CleanupInventory(before, after)
+
+    with AuditStore(app_paths) as audit:
+        completed = CleanupExecutor(
+            client=client,  # type: ignore[arg-type]
+            inventory=inventory,  # type: ignore[arg-type]
+            capabilities=capabilities,
+            audit=audit,
+        ).apply(plan)
+
+    assert plan.action is PlanAction.RENAME
+    assert completed == ("root",)
+    assert client.calls == [("root", "新的对话名称")]
 
 
 def test_replaced_backup_invalidates_cleanup_gate(
@@ -190,6 +244,35 @@ def test_purge_plan_rejects_ephemeral_and_untrusted_archive(
         CleanupExecutor._verify_snapshot_drift(
             plan, (normal.model_copy(update={"archived": False}),)
         )
+
+
+def test_explicit_purge_plans_only_selected_eligible_roots(
+    tmp_path: Path, app_paths, capabilities, snapshot_factory
+) -> None:
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    first = snapshot_factory("first", archived=True, updated_at=now - timedelta(days=200))
+    second = snapshot_factory("second", archived=True, updated_at=now - timedelta(days=200))
+    with AuditStore(app_paths) as audit:
+        first_manifest = _record_backup(audit, first, tmp_path / "first.csmbackup")
+        second_manifest = _record_backup(audit, second, tmp_path / "second.csmbackup")
+        audit.record_trusted_archive(
+            thread_id="first",
+            plan_sha256="1" * 64,
+            manifest_sha256=first_manifest.manifest_sha256,
+            archived_at=now - timedelta(days=15),
+        )
+        audit.record_trusted_archive(
+            thread_id="second",
+            plan_sha256="2" * 64,
+            manifest_sha256=second_manifest.manifest_sha256,
+            archived_at=now - timedelta(days=15),
+        )
+
+        plan = CleanupPlanner().plan_selected_purge(
+            (first, second), capabilities, audit, ("second",), now=now
+        )
+
+    assert [target.root_thread_id for target in plan.targets] == ["second"]
 
 
 def test_purge_requires_archive_bound_manifest_and_intact_audit_chain(

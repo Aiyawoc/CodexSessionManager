@@ -7,6 +7,13 @@ description: 安全管理 Codex App 中的任务，包括按项目与时间盘�
 
 使用 `csm` 执行确定性盘点、计划、校验和审计。把 Codex App Server 视为在线管理的唯一协议边界；禁止直接修改 Codex JSONL、SQLite、认证或配置。
 
+## 解析已安装运行入口
+
+1. 先运行 `command -v csm`。若存在，后续命令直接使用 `csm ...`。
+2. 若 `csm` 不在 `PATH`，但 `~/Applications/CodexSessionManager.app/Contents/MacOS/CodexSessionManager` 可执行，则使用该稳定入口，并在所有 CLI 子命令前加 `cli`。例如：`~/Applications/CodexSessionManager.app/Contents/MacOS/CodexSessionManager cli trim review TASK_ID`。
+3. 两个入口都不存在时停止操作，并提示用户先安装 `.app`。除非用户明确处于源码开发模式，否则不要回退到 `uv`、`.venv` 或系统 Python。
+4. 用户要求从 Codex 打开裁剪界面时，使用上述入口执行 `trim review TASK_ID`；该进程会打开独立 PySide6 GUI，并保持原任务只读。
+
 ## 先建立安全状态
 
 1. 运行 `csm doctor`。若使用源码开发环境，只运行 `uv run --locked csm doctor`；不要调用系统 Python 或全局 pip。
@@ -43,7 +50,7 @@ description: 安全管理 Codex App 中的任务，包括按项目与时间盘�
 5. 保存不可变 TrimPlan 后，等待源任务 idle，再运行 `csm trim apply PLAN --confirm PLAN_ID`。
 6. 裁剪只创建派生任务，不改写原任务，不自动启动模型 turn。非连续裁剪注入带来源 manifest 的 ContextProjection；连续前缀可用官方 fork。
 
-PreCompact Hook 只保存计划。在 GUI 关闭、崩溃、启动失败或超时后继续原生压缩；只有 TrimPlan 已原子持久化时才允许 `continue:false`。
+PreCompact Hook 只保存计划。在 GUI 关闭、崩溃、启动失败或超时后继续原生压缩；只有当前 App Server 写能力、协议 fingerprint、源内容 fingerprint 和选择语义均通过复核，且 TrimPlan 已原子持久化时，才允许 `continue:false`。
 
 ## Hook 与安装
 
@@ -54,4 +61,4 @@ PreCompact Hook 只保存计划。在 GUI 关闭、崩溃、启动失败或超�
 
 ## 报告结果
 
-报告计划路径、plan ID、SHA-256、根数、后代总数、备份 manifest SHA-256、实际新建/归档任务 ID、审计结果和任何未满足的门。不要把 dry-run、假服务器、offscreen GUI 或本机构建称为真实 macOS/公开分发验收。
+报告计划路径、plan ID、SHA-256、根数、后代总数、备份 manifest SHA-256、实际新建/归档对话 ID、审计结果和任何未满足的门。不要把 dry-run、假服务器、offscreen GUI 或本机构建称为真实 macOS/公开分发验收。

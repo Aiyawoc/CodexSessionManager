@@ -107,6 +107,15 @@ def validate_selections(snapshot: ThreadSnapshot, selections: tuple[TrimSelectio
     for turn in snapshot.turns:
         item_actions: dict[str, TrimAction] = {}
         turn_selection = selection_by_id.get(turn.id)
+        item_selections = [
+            selection_by_id[item.id] for item in turn.items if item.id in selection_by_id
+        ]
+        if (
+            turn_selection is not None
+            and turn_selection.action is not TrimAction.KEEP
+            and item_selections
+        ):
+            raise TrimError(f"turn {turn.id} uses a non-keep action together with item overrides")
         for item in turn.items:
             item_selection = selection_by_id.get(item.id)
             action = (
@@ -413,6 +422,7 @@ class TrimExecutor:
             raise TrimError("source thread changed after TrimPlan creation")
         if source.status is not ThreadStatus.IDLE:
             raise TrimError("wait for the source thread to become idle before applying TrimPlan")
+        validate_selections(source, plan.selections)
         cutoff = prefix_fork_turn(source, plan)
         self.audit.begin_operation(plan_sha256=plan.plan_sha256, action="trim")
         target_id: str | None = None

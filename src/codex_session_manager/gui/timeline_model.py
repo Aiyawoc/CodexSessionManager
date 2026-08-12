@@ -7,10 +7,20 @@ from typing import Any
 
 from PySide6.QtCore import QAbstractItemModel, QModelIndex, QPersistentModelIndex, Qt
 
+from codex_session_manager.gui.i18n import (
+    DEFAULT_LANGUAGE,
+    GuiLanguage,
+    action_label,
+    compact_number,
+    item_kind_label,
+    localized_reason,
+    text,
+    turn_status_label,
+)
 from codex_session_manager.models import (
+    ItemKind,
     ThreadItemSnapshot,
     ThreadSnapshot,
-    TrimAction,
     TrimSelection,
     TurnSnapshot,
 )
@@ -28,25 +38,53 @@ class TimelineNode:
 
 
 class TurnTimelineModel(QAbstractItemModel):
-    HEADERS = ("时间线", "类型/状态", "Token", "动作")
-
     def __init__(
         self,
         snapshot: ThreadSnapshot,
         selections: dict[str, TrimSelection],
         parent: Any = None,
+        *,
+        language: GuiLanguage = DEFAULT_LANGUAGE,
     ) -> None:
         super().__init__(parent)
         self.snapshot = snapshot
         self.selections = selections
+        self.language = language
         self.root = TimelineNode(snapshot)
+        self.hidden_internal_item_count = 0
         for turn in snapshot.turns:
             turn_node = TimelineNode(turn, self.root)
             self.root.children.append(turn_node)
-            turn_node.children.extend(TimelineNode(item, turn_node) for item in turn.items)
+            visible_items = [item for item in turn.items if self._is_visible_item(item)]
+            self.hidden_internal_item_count += len(turn.items) - len(visible_items)
+            turn_node.children.extend(TimelineNode(item, turn_node) for item in visible_items)
+
+    @property
+    def input_tokens(self) -> int:
+        """Locally estimated model-input tokens from normalized item roles."""
+
+        input_kinds = {
+            ItemKind.USER_MESSAGE,
+            ItemKind.DEVELOPER_MESSAGE,
+            ItemKind.SYSTEM_MESSAGE,
+            ItemKind.TOOL_RESULT,
+            ItemKind.APPROVAL,
+        }
+        return sum(
+            item.token_estimate
+            for turn in self.snapshot.turns
+            for item in turn.items
+            if item.kind in input_kinds
+        )
+
+    @property
+    def output_tokens(self) -> int:
+        """Locally estimated model-output tokens for the remaining items."""
+
+        return max(0, self.snapshot.token_estimate - self.input_tokens)
 
     def columnCount(self, _parent: QModelIndex | QPersistentModelIndex | None = None) -> int:
-        return len(self.HEADERS)
+        return 4
 
     def rowCount(self, parent: QModelIndex | QPersistentModelIndex | None = None) -> int:
         node = self._node(parent or QModelIndex())
@@ -95,24 +133,28 @@ class TurnTimelineModel(QAbstractItemModel):
             return None
         if isinstance(target, TurnSnapshot):
             values = (
-                f"Turn {self.snapshot.turns.index(target) + 1}",
-                target.status,
-                str(sum(item.token_estimate for item in target.items)),
+                text(
+                    self.language,
+                    "turn",
+                    number=self.snapshot.turns.index(target) + 1,
+                ),
+                turn_status_label(self.language, target.status),
+                compact_number(sum(item.token_estimate for item in target.items)),
                 self._action_text(target.id),
             )
         elif isinstance(target, ThreadItemSnapshot):
             preview = target.text.replace("\n", " ")[:42] or target.id
             values = (
                 preview,
-                target.kind.value,
-                str(target.token_estimate),
+                item_kind_label(self.language, target.kind),
+                compact_number(target.token_estimate),
                 self._action_text(target.id),
             )
         else:
             values = (
                 target.title or target.id,
                 target.status.value,
-                str(target.token_estimate),
+                compact_number(target.token_estimate),
                 "",
             )
         return values[index.column()]
@@ -124,7 +166,13 @@ class TurnTimelineModel(QAbstractItemModel):
         role: int = Qt.ItemDataRole.DisplayRole,
     ) -> Any:
         if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
-            return self.HEADERS[section]
+            headers = (
+                text(self.language, "timeline_header_name"),
+                text(self.language, "timeline_header_type"),
+                text(self.language, "timeline_header_token"),
+                text(self.language, "timeline_header_action"),
+            )
+            return headers[section]
         return None
 
     def flags(self, index: QModelIndex | QPersistentModelIndex) -> Qt.ItemFlag:
@@ -144,6 +192,33 @@ class TurnTimelineModel(QAbstractItemModel):
                 bottom_right = self.index(len(turn_node.children) - 1, 3, parent_index)
                 self.dataChanged.emit(top_left, bottom_right, [Qt.ItemDataRole.DisplayRole])
 
+    def set_language(self, language: GuiLanguage) -> None:
+        """Retranslate model headers and visible cells without rebuilding nodes."""
+
+        if language is self.language:
+            return
+        self.language = language
+        self.headerDataChanged.emit(Qt.Orientation.Horizontal, 0, self.columnCount() - 1)
+        if self.root.children:
+            self.dataChanged.emit(
+                self.index(0, 0),
+                self.index(len(self.root.children) - 1, self.columnCount() - 1),
+                [Qt.ItemDataRole.DisplayRole],
+            )
+        for turn_row, turn_node in enumerate(self.root.children):
+            if not turn_node.children:
+                continue
+            parent_index = self.index(turn_row, 0)
+            self.dataChanged.emit(
+                self.index(0, 0, parent_index),
+                self.index(
+                    len(turn_node.children) - 1,
+                    self.columnCount() - 1,
+                    parent_index,
+                ),
+                [Qt.ItemDataRole.DisplayRole],
+            )
+
     def target_for(
         self, index: QModelIndex | QPersistentModelIndex
     ) -> TurnSnapshot | ThreadItemSnapshot | None:
@@ -159,17 +234,22 @@ class TurnTimelineModel(QAbstractItemModel):
 
     def _action_text(self, target_id: str) -> str:
         action = self.selections.get(target_id)
-        labels = {
-            TrimAction.KEEP: "保留",
-            TrimAction.EXCLUDE: "排除",
-            TrimAction.SUMMARY: "摘要",
-            TrimAction.PROTECT: "保护",
-        }
-        return labels.get(action.action, "继承") if action else "继承"
+        return (
+            action_label(self.language, action.action)
+            if action
+            else text(self.language, "action_inherit")
+        )
 
     @staticmethod
-    def _tooltip(target: TurnSnapshot | ThreadItemSnapshot | ThreadSnapshot) -> str:
+    def _is_visible_item(item: ThreadItemSnapshot) -> bool:
+        """Hide empty protocol bookkeeping while retaining the full snapshot."""
+
+        return item.token_estimate > 0 or bool(item.text.strip())
+
+    def _tooltip(self, target: TurnSnapshot | ThreadItemSnapshot | ThreadSnapshot) -> str:
         if isinstance(target, ThreadItemSnapshot):
-            reasons = "；".join(target.protected_reasons)
+            reasons = "；".join(
+                localized_reason(self.language, reason) for reason in target.protected_reasons
+            )
             return f"{target.id}\n{reasons}" if reasons else target.id
         return target.id

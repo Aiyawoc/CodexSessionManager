@@ -139,6 +139,83 @@ class CleanupPlanner:
             options={"stale_before": cutoff.isoformat(), "automatic_ceiling": "archive"},
         )
 
+    def plan_selected_archive(
+        self,
+        snapshots: tuple[ThreadSnapshot, ...],
+        capabilities: CapabilityMatrix,
+        selected_ids: tuple[str, ...],
+    ) -> ActionPlan:
+        """Plan an explicitly selected archive batch without an age policy.
+
+        Explicit selection never weakens the safety gates: every spawned
+        descendant must still be present, complete, inactive, unpinned, and
+        non-ephemeral.  The executor also requires a current verified backup.
+        """
+
+        all_snapshots = {snapshot.id: snapshot for snapshot in snapshots}
+        roots = self._explicit_roots(selected_ids, all_snapshots)
+        targets: list[PlanTarget] = []
+        for root in roots:
+            closure = self._resolved_closure(root, all_snapshots)
+            for snapshot in closure:
+                reason = self._archive_block_reason(snapshot)
+                if reason:
+                    raise ValueError(f"selected archive blocked for {snapshot.id}: {reason}")
+            targets.append(
+                self._explicit_target(root, all_snapshots, "explicit human archive selection")
+            )
+        return ActionPlan.create(
+            action=PlanAction.ARCHIVE,
+            capability_fingerprint=capabilities.fingerprint,
+            targets=tuple(targets),
+            prerequisites=(
+                "verified encrypted backup covering every affected snapshot",
+                "all affected threads remain non-active and unpinned",
+                "descendant closure and App Server capability fingerprint remain unchanged",
+            ),
+            options={"manual_selection": True, "automatic_ceiling": "archive"},
+        )
+
+    def plan_rename(
+        self,
+        snapshots: tuple[ThreadSnapshot, ...],
+        capabilities: CapabilityMatrix,
+        *,
+        thread_id: str,
+        new_name: str,
+    ) -> ActionPlan:
+        """Plan a reversible title change against a full management snapshot."""
+
+        normalized_name = new_name.strip()
+        if not normalized_name:
+            raise ValueError("new conversation name must not be empty")
+        if len(normalized_name) > 200:
+            raise ValueError("new conversation name exceeds 200 characters")
+        all_snapshots = {snapshot.id: snapshot for snapshot in snapshots}
+        roots = self._explicit_roots((thread_id,), all_snapshots)
+        root = roots[0]
+        for snapshot in self._resolved_closure(root, all_snapshots):
+            if snapshot.status not in SAFE_INACTIVE_STATUSES:
+                raise ValueError(f"selected rename blocked for active thread: {snapshot.id}")
+            if snapshot.pinned or snapshot.ephemeral:
+                raise ValueError(f"selected rename blocked for protected thread: {snapshot.id}")
+            if not snapshot.mapping_complete or not snapshot.content_complete:
+                raise ValueError(f"selected rename lacks complete mapping: {snapshot.id}")
+        if root.title == normalized_name:
+            raise ValueError("new conversation name is unchanged")
+        return ActionPlan.create(
+            action=PlanAction.RENAME,
+            capability_fingerprint=capabilities.fingerprint,
+            targets=(
+                self._explicit_target(root, all_snapshots, "explicit human rename selection"),
+            ),
+            prerequisites=(
+                "the selected conversation remains inactive",
+                "descendant closure and App Server capability fingerprint remain unchanged",
+            ),
+            options={"new_name": normalized_name, "manual_selection": True},
+        )
+
     def plan_unarchive(
         self,
         snapshots: tuple[ThreadSnapshot, ...],
@@ -222,6 +299,145 @@ class CleanupPlanner:
                 "human supplies the exact plan id and permanent-deletion phrase",
             ),
             options={"manual_only": True, "minimum_archive_days": self.policy.purge_delay.days},
+        )
+
+    def plan_selected_purge(
+        self,
+        snapshots: tuple[ThreadSnapshot, ...],
+        capabilities: CapabilityMatrix,
+        audit: AuditStore,
+        selected_ids: tuple[str, ...],
+        *,
+        now: datetime | None = None,
+    ) -> ActionPlan:
+        """Plan permanent deletion for explicit roots after every purge gate passes."""
+
+        effective_now = (now or utc_now()).astimezone(UTC)
+        audit.verify_chain()
+        all_snapshots = {snapshot.id: snapshot for snapshot in snapshots}
+        roots = self._explicit_roots(selected_ids, all_snapshots)
+        targets: list[PlanTarget] = []
+        for root in roots:
+            closure = self._resolved_closure(root, all_snapshots)
+            for snapshot in closure:
+                if (
+                    not snapshot.archived
+                    or snapshot.pinned
+                    or snapshot.ephemeral
+                    or snapshot.status not in SAFE_INACTIVE_STATUSES
+                    or not snapshot.mapping_complete
+                    or not snapshot.content_complete
+                ):
+                    raise ValueError(
+                        f"selected permanent deletion is not safely archived: {snapshot.id}"
+                    )
+                trusted = audit.trusted_archive(snapshot.id)
+                if trusted is None or effective_now - trusted.archived_at < self.policy.purge_delay:
+                    raise ValueError(
+                        f"selected permanent deletion requires {self.policy.purge_delay.days} "
+                        f"days of CSM-trusted archive history: {snapshot.id}"
+                    )
+                evidence = audit.verified_backup(
+                    snapshot.id,
+                    snapshot.backup_fingerprint,
+                    manifest_sha256=trusted.manifest_sha256,
+                )
+                if evidence is None or not evidence.is_current():
+                    raise ValueError(
+                        f"selected permanent deletion lacks an archive-bound verified backup: "
+                        f"{snapshot.id}"
+                    )
+            targets.append(
+                self._explicit_target(
+                    root, all_snapshots, "explicit human permanent-deletion selection"
+                )
+            )
+        return ActionPlan.create(
+            action=PlanAction.PURGE,
+            capability_fingerprint=capabilities.fingerprint,
+            targets=tuple(targets),
+            prerequisites=(
+                f"CSM-trusted archive age is at least {self.policy.purge_delay.days} days",
+                "verified encrypted backup covers every affected snapshot",
+                "no other Codex process is running against the data root",
+                "human supplies the exact plan id and permanent-deletion phrase",
+            ),
+            options={
+                "manual_only": True,
+                "manual_selection": True,
+                "minimum_archive_days": self.policy.purge_delay.days,
+            },
+        )
+
+    def _explicit_roots(
+        self,
+        selected_ids: tuple[str, ...],
+        snapshots: dict[str, ThreadSnapshot],
+    ) -> list[ThreadSnapshot]:
+        unique_ids = tuple(dict.fromkeys(selected_ids))
+        if not unique_ids:
+            raise ValueError("at least one conversation must be selected")
+        missing = [thread_id for thread_id in unique_ids if thread_id not in snapshots]
+        if missing:
+            raise ValueError(
+                "selected conversations are no longer available: " + ", ".join(missing)
+            )
+        selected = [snapshots[thread_id] for thread_id in unique_ids]
+        roots = _non_overlapping_roots(_top_level_candidates(selected, snapshots))
+        if not roots:
+            raise ValueError("selected conversation closures overlap or cannot be resolved")
+        if len(roots) > self.policy.maximum_roots:
+            raise ValueError(
+                f"selected batch exceeds the {self.policy.maximum_roots}-root safety limit"
+            )
+        covered = {
+            thread_id for root in roots for thread_id in (root.id, *root.spawned_descendant_ids)
+        }
+        if not set(unique_ids) <= covered:
+            raise ValueError("selected conversation graph cannot be represented safely")
+        return roots
+
+    @staticmethod
+    def _resolved_closure(
+        root: ThreadSnapshot, snapshots: dict[str, ThreadSnapshot]
+    ) -> tuple[ThreadSnapshot, ...]:
+        closure_ids = (root.id, *root.spawned_descendant_ids)
+        missing = [thread_id for thread_id in closure_ids if thread_id not in snapshots]
+        if missing:
+            raise ValueError(
+                f"descendant closure is incomplete for {root.id}: " + ", ".join(missing)
+            )
+        return tuple(snapshots[thread_id] for thread_id in closure_ids)
+
+    @staticmethod
+    def _archive_block_reason(snapshot: ThreadSnapshot) -> str | None:
+        if snapshot.archived:
+            return "conversation is already archived"
+        if snapshot.pinned:
+            return "conversation is pinned"
+        if snapshot.ephemeral:
+            return "ephemeral conversation cannot be managed"
+        if snapshot.status not in SAFE_INACTIVE_STATUSES:
+            return "conversation is active or in an unsafe state"
+        if not snapshot.mapping_complete or not snapshot.content_complete:
+            return "conversation mapping/content is incomplete"
+        return None
+
+    @staticmethod
+    def _explicit_target(
+        root: ThreadSnapshot,
+        snapshots: dict[str, ThreadSnapshot],
+        reason: str,
+    ) -> PlanTarget:
+        closure = tuple(thread_id for thread_id in (root.id, *root.spawned_descendant_ids))
+        return PlanTarget(
+            root_thread_id=root.id,
+            affected_thread_ids=closure,
+            snapshot_fingerprints={
+                thread_id: snapshots[thread_id].management_fingerprint for thread_id in closure
+            },
+            reasons=(reason,),
+            risk=RiskLevel.MEDIUM if len(closure) > 1 else RiskLevel.LOW,
         )
 
     @staticmethod
@@ -321,6 +537,7 @@ class CleanupExecutor:
             PlanAction.ARCHIVE: "thread/archive",
             PlanAction.UNARCHIVE: "thread/unarchive",
             PlanAction.PURGE: "thread/delete",
+            PlanAction.RENAME: "thread/name/set",
         }.get(plan.action)
         if method is None:
             raise ValueError(f"CleanupExecutor cannot apply {plan.action.value}")
@@ -410,7 +627,7 @@ class CleanupExecutor:
                             + ", ".join(sorted(occupied_terminals))
                         )
                     ProcessGuard.assert_no_other_codex_processes(controlled_pid=self.client.pid)
-                self._apply_root(plan.action, target.root_thread_id)
+                self._apply_root(plan, target.root_thread_id)
                 completed.append(target.root_thread_id)
             self._verify_result(plan, affected)
             if plan.action is PlanAction.ARCHIVE:
@@ -484,14 +701,19 @@ class CleanupExecutor:
         )
         return tuple(target.root_thread_id for target in plan.targets)
 
-    def _apply_root(self, action: PlanAction, thread_id: str) -> None:
+    def _apply_root(self, plan: ActionPlan, thread_id: str) -> None:
         try:
-            if action is PlanAction.ARCHIVE:
+            if plan.action is PlanAction.ARCHIVE:
                 self.client.archive_thread(thread_id)
-            elif action is PlanAction.UNARCHIVE:
+            elif plan.action is PlanAction.UNARCHIVE:
                 self.client.unarchive_thread(thread_id)
-            elif action is PlanAction.PURGE:
+            elif plan.action is PlanAction.PURGE:
                 self.client.delete_thread(thread_id)
+            elif plan.action is PlanAction.RENAME:
+                new_name = plan.options.get("new_name")
+                if not isinstance(new_name, str) or not new_name:
+                    raise ValueError("rename plan lacks a non-empty new_name")
+                self.client.rename_thread(thread_id, new_name)
         except RequestTimeout as exc:
             # Never retry.  The postcondition query in _verify_result determines
             # whether the operation committed; an unresolved state stays failed.
@@ -609,8 +831,16 @@ class CleanupExecutor:
                 for thread_id in affected
                 if not by_id.get(thread_id) or by_id[thread_id].archived
             ]
-        else:
+        elif plan.action is PlanAction.PURGE:
             unresolved = [thread_id for thread_id in affected if thread_id in by_id]
+        else:
+            new_name = plan.options.get("new_name")
+            unresolved = [
+                target.root_thread_id
+                for target in plan.targets
+                if target.root_thread_id not in by_id
+                or by_id[target.root_thread_id].title != new_name
+            ]
         if unresolved:
             raise RuntimeError(
                 f"operation postcondition unresolved for: {', '.join(sorted(unresolved))}; no retry was attempted"

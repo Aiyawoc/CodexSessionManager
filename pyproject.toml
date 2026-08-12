@@ -76,7 +76,7 @@ python_version = "3.13"
 strict = true
 packages = ["codex_session_manager"]
 plugins = ["pydantic.mypy"]
-exclude = ["src/codex_session_manager/gui/ui_.*\\.py", "^tests/"]
+exclude = ["src/codex_session_manager/gui/(ui_|resources_rc).*\\.py", "^tests/"]
 
 [[tool.mypy.overrides]]
 module = ["click.*", "ijson.*", "qtvscodestyle.*"]
@@ -85,7 +85,7 @@ ignore_missing_imports = true
 [tool.ruff]
 target-version = "py313"
 line-length = 100
-extend-exclude = ["src/codex_session_manager/gui/ui_*.py"]
+extend-exclude = ["src/codex_session_manager/gui/ui_*.py", "src/codex_session_manager/gui/resources_rc.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]

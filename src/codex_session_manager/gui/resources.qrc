@@ -1,0 +1,7 @@
+<RCC>
+  <qresource prefix="/csm">
+    <file>branch-closed.svg</file>
+    <file>branch-open.svg</file>
+    <file>combo-down.svg</file>
+  </qresource>
+</RCC>

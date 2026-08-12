@@ -9,17 +9,32 @@ from PySide6.QtCore import QEventLoop, QTimer, Slot
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QDialog
 
+from codex_session_manager.config import get_paths
 from codex_session_manager.gui.application import ensure_application
 from codex_session_manager.gui.controller import TrimReviewWindow
+from codex_session_manager.gui.i18n import GuiLanguage, load_language, text
 from codex_session_manager.gui.ui_precompact_prompt import Ui_PrecompactPrompt
 from codex_session_manager.models import TrimPlan
 
 
 class PrecompactPromptDialog(QDialog):
-    def __init__(self, *, seconds: int, parent: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        seconds: int,
+        language: GuiLanguage,
+        parent: Any = None,
+    ) -> None:
         super().__init__(parent)
         self.ui = Ui_PrecompactPrompt()
         self.ui.setupUi(self)  # type: ignore[no-untyped-call]
+        self.setWindowTitle(text(language, "precompact_window"))
+        self.ui.titleLabel.setText(text(language, "precompact_title"))
+        self.ui.messageLabel.setText(text(language, "precompact_message"))
+        self.ui.countdownProgress.setFormat(text(language, "precompact_remaining"))
+        self.ui.reviewButton.setText(text(language, "precompact_review"))
+        self.ui.continueButton.setText(text(language, "precompact_continue"))
+        self.ui.continueButton.setAccessibleName(text(language, "precompact_continue_accessible"))
         self.remaining = max(1, seconds)
         self.ui.countdownProgress.setMaximum(self.remaining)
         self.ui.countdownProgress.setValue(self.remaining)
@@ -57,7 +72,10 @@ def review_precompact(
     remaining = int(max(0, min(prompt_seconds, deadline - time.monotonic())))
     if remaining <= 0:
         return None
-    prompt = PrecompactPromptDialog(seconds=remaining)
+    prompt = PrecompactPromptDialog(
+        seconds=remaining,
+        language=load_language(get_paths().config_dir),
+    )
     if prompt.exec() != QDialog.DialogCode.Accepted:
         return None
     remaining_ms = int(max(0, (deadline - time.monotonic()) * 1000))

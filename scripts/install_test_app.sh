@@ -10,6 +10,7 @@ CSM_SOURCE_APP=${1:-"$CSM_PROJECT_ROOT/dist/CodexSessionManager.app"}
 CSM_TEST_ROOT=${2:-"${CSM_TEST_ROOT:-}"}
 CSM_SOURCE_CODEX_HOME=${CSM_SOURCE_CODEX_HOME:-${CODEX_HOME:-"$HOME/.codex"}}
 CSM_OPEN_TEST_APP=${CSM_OPEN_TEST_APP:-0}
+CSM_SOURCE_CODEX_BIN=${CSM_CODEX_BIN:-}
 
 usage() {
   cat >&2 <<'EOF'
@@ -99,8 +100,29 @@ CSM_TEST_CODEX_HOME="$CSM_TEST_ROOT/codex-home"
 CSM_TEST_APP="$CSM_TEST_HOME/Applications/CodexSessionManager.app"
 CSM_TEST_EXECUTABLE="$CSM_TEST_APP/Contents/MacOS/CodexSessionManager"
 CSM_TEST_LAUNCHER="$CSM_TEST_HOME/.local/bin/csm"
+CSM_TEST_SKILL="$CSM_TEST_HOME/.agents/skills/manage-codex-sessions"
+CSM_TEST_LAUNCH_SCRIPT="$CSM_TEST_ROOT/launch-test-app.sh"
 CSM_TEST_COPY="$CSM_TEST_ROOT/.codex-home.$$.partial"
 CSM_SYSTEM_PATH=/usr/bin:/bin:/usr/sbin:/sbin
+
+# Capture the host Codex CLI before the test launcher switches to its minimal
+# PATH.  The generated launcher passes this exact executable to App Server and
+# adds its directory so Node-based Codex installations can start.
+if [ -n "$CSM_SOURCE_CODEX_BIN" ] && [ "${CSM_SOURCE_CODEX_BIN#/}" = "$CSM_SOURCE_CODEX_BIN" ]; then
+  CSM_SOURCE_CODEX_BIN=$(command -v "$CSM_SOURCE_CODEX_BIN" || true)
+fi
+if [ -z "$CSM_SOURCE_CODEX_BIN" ]; then
+  CSM_SOURCE_CODEX_BIN=$(command -v codex || true)
+fi
+CSM_TEST_PATH="$CSM_SYSTEM_PATH"
+if [ -n "$CSM_SOURCE_CODEX_BIN" ]; then
+  CSM_SOURCE_CODEX_BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$CSM_SOURCE_CODEX_BIN")" && pwd -P)
+  CSM_SOURCE_CODEX_BIN="$CSM_SOURCE_CODEX_BIN_DIR/$(basename -- "$CSM_SOURCE_CODEX_BIN")"
+  CSM_TEST_PATH="$CSM_SOURCE_CODEX_BIN_DIR:$CSM_SYSTEM_PATH"
+  echo "测试 App Server CLI: $CSM_SOURCE_CODEX_BIN"
+else
+  echo "警告：未找到 codex CLI；GUI 将无法加载任务列表。" >&2
+fi
 
 mkdir -m 700 -p "$CSM_TEST_HOME" "$CSM_TEST_ROOT/data" \
   "$CSM_TEST_ROOT/config" "$CSM_TEST_ROOT/cache" "$CSM_TEST_ROOT/log"
@@ -118,7 +140,7 @@ mv "$CSM_TEST_COPY" "$CSM_TEST_CODEX_HOME"
 
 echo "安装测试 App: $CSM_SOURCE_APP"
 HOME="$CSM_TEST_HOME" \
-PATH="$CSM_SYSTEM_PATH" \
+PATH="$CSM_TEST_PATH" \
 CODEX_HOME="$CSM_TEST_CODEX_HOME" \
 CSM_CODEX_HOME="$CSM_TEST_CODEX_HOME" \
 CSM_INSTALL_SKIP_APP_SERVER=1 \
@@ -130,7 +152,7 @@ CSM_LOG_DIR="$CSM_TEST_ROOT/log" \
 
 echo "验证测试安装"
 HOME="$CSM_TEST_HOME" \
-PATH="$CSM_SYSTEM_PATH" \
+PATH="$CSM_TEST_PATH" \
 CODEX_HOME="$CSM_TEST_CODEX_HOME" \
 CSM_CODEX_HOME="$CSM_TEST_CODEX_HOME" \
 CSM_DATA_DIR="$CSM_TEST_ROOT/data" \
@@ -138,12 +160,36 @@ CSM_CONFIG_DIR="$CSM_TEST_ROOT/config" \
 CSM_CACHE_DIR="$CSM_TEST_ROOT/cache" \
 CSM_LOG_DIR="$CSM_TEST_ROOT/log" \
   "$CSM_TEST_LAUNCHER" doctor --skip-app-server
+test -L "$CSM_TEST_SKILL"
+test -f "$CSM_TEST_SKILL/SKILL.md"
+
+cat > "$CSM_TEST_LAUNCH_SCRIPT" <<EOF
+#!/bin/sh
+set -eu
+exec env \\
+  HOME="$CSM_TEST_HOME" \\
+  PATH="$CSM_TEST_PATH" \\
+  CODEX_HOME="$CSM_TEST_CODEX_HOME" \\
+  CSM_CODEX_HOME="$CSM_TEST_CODEX_HOME" \\
+EOF
+if [ -n "$CSM_SOURCE_CODEX_BIN" ]; then
+  printf '  CSM_CODEX_BIN="%s" \\\n' "$CSM_SOURCE_CODEX_BIN" >> "$CSM_TEST_LAUNCH_SCRIPT"
+fi
+cat >> "$CSM_TEST_LAUNCH_SCRIPT" <<EOF
+  CSM_DATA_DIR="$CSM_TEST_ROOT/data" \\
+  CSM_CONFIG_DIR="$CSM_TEST_ROOT/config" \\
+  CSM_CACHE_DIR="$CSM_TEST_ROOT/cache" \\
+  CSM_LOG_DIR="$CSM_TEST_ROOT/log" \\
+  "$CSM_TEST_EXECUTABLE"
+EOF
+chmod 700 "$CSM_TEST_LAUNCH_SCRIPT"
 
 if [ "$CSM_OPEN_TEST_APP" = "1" ]; then
   env HOME="$CSM_TEST_HOME" \
-    PATH="$CSM_SYSTEM_PATH" \
+    PATH="$CSM_TEST_PATH" \
     CODEX_HOME="$CSM_TEST_CODEX_HOME" \
     CSM_CODEX_HOME="$CSM_TEST_CODEX_HOME" \
+    ${CSM_SOURCE_CODEX_BIN:+CSM_CODEX_BIN="$CSM_SOURCE_CODEX_BIN"} \
     CSM_DATA_DIR="$CSM_TEST_ROOT/data" \
     CSM_CONFIG_DIR="$CSM_TEST_ROOT/config" \
     CSM_CACHE_DIR="$CSM_TEST_ROOT/cache" \
@@ -160,16 +206,24 @@ cat <<EOF
   APP=$CSM_TEST_APP
   EXECUTABLE=$CSM_TEST_EXECUTABLE
   LAUNCHER=$CSM_TEST_LAUNCHER
+  SKILL=$CSM_TEST_SKILL
+  LAUNCH_SCRIPT=$CSM_TEST_LAUNCH_SCRIPT
 
 启动隔离 GUI（请直接执行 bundle 内二进制，不要用 open，以确保环境变量生效）：
-  env HOME="$CSM_TEST_HOME" PATH="$CSM_SYSTEM_PATH" \\
+  env HOME="$CSM_TEST_HOME" PATH="$CSM_TEST_PATH" \\
   CODEX_HOME="$CSM_TEST_CODEX_HOME" CSM_CODEX_HOME="$CSM_TEST_CODEX_HOME" \\
+  ${CSM_SOURCE_CODEX_BIN:+CSM_CODEX_BIN="$CSM_SOURCE_CODEX_BIN"} \\
   CSM_DATA_DIR="$CSM_TEST_ROOT/data" CSM_CONFIG_DIR="$CSM_TEST_ROOT/config" \\
   CSM_CACHE_DIR="$CSM_TEST_ROOT/cache" CSM_LOG_DIR="$CSM_TEST_ROOT/log" \\
   "$CSM_TEST_EXECUTABLE"
 
+也可以直接启动生成的脚本：
+  "$CSM_TEST_LAUNCH_SCRIPT"
+
 在同一测试环境运行 CLI：
-  HOME="$CSM_TEST_HOME" CODEX_HOME="$CSM_TEST_CODEX_HOME" CSM_CODEX_HOME="$CSM_TEST_CODEX_HOME" \\
+  HOME="$CSM_TEST_HOME" PATH="$CSM_TEST_PATH" \\
+  CODEX_HOME="$CSM_TEST_CODEX_HOME" CSM_CODEX_HOME="$CSM_TEST_CODEX_HOME" \\
+  ${CSM_SOURCE_CODEX_BIN:+CSM_CODEX_BIN="$CSM_SOURCE_CODEX_BIN"} \\
   CSM_DATA_DIR="$CSM_TEST_ROOT/data" CSM_CONFIG_DIR="$CSM_TEST_ROOT/config" \\
   CSM_CACHE_DIR="$CSM_TEST_ROOT/cache" CSM_LOG_DIR="$CSM_TEST_ROOT/log" \\
   "$CSM_TEST_LAUNCHER" threads list

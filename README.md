@@ -8,6 +8,81 @@ CodexSessionManager (`csm`) is a safety-oriented management tool for Codex App t
 
 Online reads and writes go through the official Codex App Server only; the program never directly rewrites Codex JSONL or SQLite. Context trimming always creates a derived task and leaves the original task unchanged. Any archive, restore, import, trim, or permanent purge operation must consume an immutable SHA-256-bound plan and re-check protocol capabilities, content fingerprints, state, and descendant closure before execution.
 
+---
+
+## Contents
+
+- [Quick start](#quick-start)
+  - [Install and launch the GUI](#install-and-launch-the-gui)
+  - [Trim context in the GUI](#trim-context-in-the-gui)
+  - [Install an isolated test copy](#install-an-isolated-test-copy)
+- [Development environment](#development-environment)
+- [Daily use](#daily-use)
+- [Safety workflow](#safety-workflow)
+- [Context trimming](#context-trimming)
+- [Hooks](#hooks)
+- [macOS arm64 build](#macos-arm64-build)
+- [Project structure](#project-structure)
+
+## Quick start
+
+| Entry point | Best for | Notes |
+| --- | --- | --- |
+| `CodexSessionManager.app` | Daily review and trimming | The standalone bundle includes Python, Qt, plugins, and age; end users do not need Python, pip, or uv |
+| `$manage-codex-sessions` in Codex | Open the GUI from Codex or run a guarded workflow | Restart Codex after installation; the Skill prefers `csm` and can fall back to the stable in-App executable |
+| `~/.local/bin/csm` | CLI, backups, plans, and audit | The user-level launcher runs CLI subcommands only |
+| `scripts/launch_test_app.sh` | Isolated GUI testing | Launches against a copied Codex home instead of the real user directory |
+
+### Install and launch the GUI
+
+If `dist/CodexSessionManager.app` has already been built, install and launch it with:
+
+```bash
+scripts/install_user.sh dist/CodexSessionManager.app
+"$HOME/Applications/CodexSessionManager.app/Contents/MacOS/CodexSessionManager"
+```
+
+The installer uses a user-owned directory and an atomic replacement, so administrator access is not required. Without `CSM_DEVELOPER_ID`, the result is a locally ad-hoc-signed build. It also links the bundled Skill into `~/.agents/skills/manage-codex-sessions`; restart Codex if `$manage-codex-sessions` does not appear immediately. Hook installation remains a separate, explicit action.
+
+After restarting Codex, invoke `$manage-codex-sessions` and ask it to open context trimming for a conversation. The Skill resolves `~/.local/bin/csm`; if that directory is not on Codex's `PATH`, it uses the stable executable inside the installed App. Automatic PreCompact review remains disabled until the user separately runs `csm hook install --yes` and reviews/trusts the definition in Codex `/hooks`.
+
+After launch, the **Projects & Tasks** pane groups conversation names and relative activity times by project:
+
+1. Use the shared field to search projects/conversations, or enter a full conversation ID and click **Load ID**.
+2. Select a turn/item in the timeline and inspect its content and protection reasons.
+3. Choose **Keep / Exclude / Summary / Protect** in the action pane and edit a summary when needed.
+4. Click **Save plan** to persist the reviewed, immutable TrimPlan without changing any conversation, or click **Create trimmed task** to save and apply it to a new derived task. The original task remains read-only.
+
+The language selector to the right of the read-only badge switches the live interface between Simplified Chinese (default) and English. The **Collapse** control beside the project/task title hides the left pane. Click the project/task icon in the fixed rail to restore it. Each divider keeps an 8px draggable hit area with a centered 1px blue-gray line, so the timeline and source panes can be resized without changing the action pane width.
+
+### Trim context in the GUI
+
+The GUI operates at turn level by default; item-level selection is available for advanced review. The current request, in-progress turns, valid goals, unresolved errors, unknown items, and grouped tool-call/result and file-change/verification records are hard-protected. Estimated tokens and savings appear in the footer; resolve risk warnings before applying a plan.
+
+**Sensitive scan** uses deterministic local rules on model-visible text and does not upload content. It detects private-key headers, common cloud/API keys, JWTs, password or token assignments, email addresses, and Mainland China phone numbers, plus checksum-validated Chinese resident IDs and payment-card numbers. Placeholders, redacted values, and invalid numbers are ignored. When enabled, the task list shows only likely matches and the **Context** pane marks matched ranges as white text on red. This is review assistance and can still produce false positives or miss unusual secret formats.
+
+### Install an isolated test copy
+
+The test installer copies the current Codex home, creates an isolated `HOME`, data, config, cache, and log directory, and installs a standalone App:
+
+```bash
+scripts/install_test_app.sh
+```
+
+At completion it prints `TEST_ROOT`, `APP`, `LAUNCHER`, `SKILL`, and a generated `LAUNCH_SCRIPT`. Run the generated script to open the isolated GUI:
+
+```bash
+"/private/tmp/csm-codex-home-test.xxxxxx/launch-test-app.sh"
+```
+
+Or use the reusable repository launcher:
+
+```bash
+scripts/launch_test_app.sh "/private/tmp/csm-codex-home-test.xxxxxx"
+```
+
+The test install skips the external App Server probe by default so the bundled runtime can be checked on a minimal `PATH`. `doctor --skip-app-server` verifies the embedded Python, PySide6, Qt plugins, age, signature, and writable directories. The copy skips Unix sockets and other runtime special files, but it may contain authentication data; after testing, delete only the exact `TEST_ROOT` printed by the installer.
+
 ## Development environment
 
 The project is pinned to CPython 3.13.14. It does not use `/usr/bin/python3` or install dependencies into the system Python. uv obtains and manages the required Python in an isolated project environment:
@@ -62,11 +137,15 @@ The script prints the test directory and launch command when it finishes. It can
 CSM_OPEN_TEST_APP=1 scripts/install_test_app.sh
 ```
 
+The installer also creates `TEST_ROOT/launch-test-app.sh` for repeated launches of the same test copy. The reusable launcher is `scripts/launch_test_app.sh TEST_ROOT`.
+
+The installer automatically detects the host `codex` CLI and writes its path plus the Node runtime directory into the test launcher, allowing the GUI to load existing tasks through the isolated `CODEX_HOME`. If the CLI is not on `PATH`, set `CSM_CODEX_BIN=/absolute/path/to/codex` before installing. Without a CLI the GUI can still start, but its task list cannot be loaded through App Server.
+
 To launch the test GUI manually, use the printed `EXECUTABLE` and environment variables to run the binary inside the bundle directly; do not use `open App.app`, because LaunchServices does not guarantee that the shell's `CODEX_HOME` is inherited.
 
 Set `CSM_SOURCE_CODEX_HOME` to choose the copy source, or pass a second argument for a test root that must not already exist. The test root contains a copy of the Codex home and may contain authentication data, so remove that exact directory after testing.
 The copy skips Unix sockets, FIFOs, devices, and other runtime special files. Exit Codex before copying when possible so the SQLite main database and WAL files form a more consistent snapshot.
-Installation skips the external Codex App Server probe by default so the bundled runtime can be tested with no `codex`, uv, or Python on `PATH`. For App Server integration, set `CSM_CODEX_BIN` in the printed test environment and run the full `doctor` command.
+Installation skips the external Codex App Server probe by default so the bundled runtime can be tested with no `codex`, uv, or Python on `PATH`. When a CLI is available, the installer records it and reuses the path in the generated launcher and CLI example.
 
 ## Safety workflow
 
@@ -94,7 +173,7 @@ csm cleanup apply PLAN.json --confirm PLAN_ID
 
 If `CSM_CODEX_HOME` and external `CODEX_HOME` are both set, they must resolve to the same data root. Otherwise every entry point, including Hook management commands, refuses to continue so tasks from one account cannot be mixed with backup or Hook state from another.
 
-Restore and cross-account import create new task IDs. Supported sources include:
+Restore and cross-account import create new conversation IDs. Supported sources include:
 
 - logical restore from a CSM encrypted backup;
 - root-to-leaf branch expansion from an official ChatGPT export;
@@ -112,11 +191,13 @@ csm trim apply PLAN.json --confirm PLAN_ID
 
 Actions are `keep`, `exclude`, `summary`, and `protect`. The current request, in-progress turns, valid goals, approval decisions, unresolved errors, unknown items, and associated tool call/result and file-change/verification groups are hard-protected. The GUI operates at turn level by default, with item-level controls in the advanced view; scans, App Server requests, and analysis run in worker threads.
 
-The GUI's left pane groups task names, IDs, and statuses by project cwd or Git remote. It supports searching and selecting a task directly, while also keeping a manual task-ID loader in the same pane.
+The GUI's left pane groups conversation names and relative activity times by project cwd or Git remote, without spending a separate column on status; status remains available in tooltips. Search and manual conversation-ID loading share one field. The list supports multi-selection plus context-menu rename, copy-conversation-ID, archive, and permanent-delete actions. Archive and delete still pass immutable-plan, descendant-closure, backup, state, and audit gates; permanent deletion also requires 14 days of trusted archive history and two explicit confirmations.
+
+The **Sensitive scan** button at the lower right scans conversations one by one in a worker thread using local rules for likely keys, tokens, private keys, email addresses, phone numbers, identity numbers, and payment cards. Results retain categories and counts only—never the matched sensitive value—and no conversation content is uploaded to an external service. This is a potentially noisy local screening aid; it does not prove that a credential is valid or has been leaked.
 
 The collapse icon beside the project/task title hides the pane. Its freed width is distributed between the timeline and source panes, while the rightmost trim-action pane keeps its width.
 
-A fixed-width feature rail remains at the far left. When the project/task pane is collapsed, its project/task icon still restores the pane while the other icons preview future backup, cleanup, and audit features. The timeline table stretches its first column to the remaining width, and the divider between the timeline and source panes is draggable.
+A fixed-width project/task entry remains at the far left; unfinished backup, cleanup, and audit placeholder icons are not shown. When the project/task pane is collapsed, that icon still restores it. The timeline table stretches its first column to the remaining width, and all three vertical dividers are draggable with a centered 1px blue-gray line.
 
 When supported by the App Server, a continuous prefix uses `thread/fork(lastTurnId)`. If the protocol lacks that field, a checked `thread/rollback` is used only on a new fork. Non-contiguous trimming creates a new task and injects a source-manifest `ContextProjection`; it never starts a model turn automatically.
 

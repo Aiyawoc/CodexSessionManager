@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict, deque
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
@@ -66,14 +67,59 @@ def _status(value: Any) -> ThreadStatus:
 def _text_from(value: Any) -> str:
     fragments: list[str] = []
 
+    def add_structured(node: Any) -> None:
+        if not node:
+            return
+        try:
+            encoded = json.dumps(
+                node,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        except (TypeError, ValueError):
+            return
+        if encoded:
+            fragments.append(encoded)
+
     def visit(node: Any) -> None:
         if isinstance(node, str):
             fragments.append(node)
         elif isinstance(node, Mapping):
-            for key in ("text", "outputText", "inputText", "message", "summary"):
+            for key in (
+                "text",
+                "outputText",
+                "inputText",
+                "message",
+                "summary",
+                "aggregatedOutput",
+                "command",
+                "query",
+                "prompt",
+                "revisedPrompt",
+                "output",
+                "path",
+                "tool",
+            ):
                 child = node.get(key)
                 if isinstance(child, str):
                     fragments.append(child)
+                elif isinstance(child, (list, tuple)):
+                    visit(child)
+            for key in (
+                "arguments",
+                "changes",
+                "result",
+                "error",
+                "contentItems",
+                "commandActions",
+                "payload",
+            ):
+                child = node.get(key)
+                if isinstance(child, str):
+                    fragments.append(child)
+                elif isinstance(child, (Mapping, list, tuple)):
+                    add_structured(child)
             content = node.get("content")
             if isinstance(content, (list, tuple)):
                 for child in content:
@@ -302,6 +348,12 @@ def normalize_thread(
         raise ValueError("thread object lacks a non-empty id")
     status = _status(raw.get("status"))
     raw_turns = raw.get("turns")
+    turns_shape_complete = isinstance(raw_turns, list) and all(
+        isinstance(turn, Mapping)
+        and isinstance(turn.get("items"), list)
+        and all(isinstance(item, Mapping) for item in turn["items"])
+        for turn in raw_turns
+    )
     turns: tuple[TurnSnapshot, ...] = ()
     if isinstance(raw_turns, list):
         turns = tuple(
@@ -355,7 +407,7 @@ def normalize_thread(
             raw.get("forkedFromId") if isinstance(raw.get("forkedFromId"), str) else None
         ),
         turns=turns,
-        content_complete=content_complete,
+        content_complete=content_complete and turns_shape_complete,
         size_bytes=size_bytes,
         raw_path=raw_path,
         unknown_item_count=unknown_item_count,

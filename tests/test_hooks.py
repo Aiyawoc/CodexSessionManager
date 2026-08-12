@@ -56,7 +56,7 @@ def test_precompact_blocks_only_after_plan_is_persisted(
         reviews += 1
         return plan
 
-    handler = HookHandler(app_paths, reviewer=reviewer)
+    handler = HookHandler(app_paths, reviewer=reviewer, plan_gate=lambda _plan: True)
     first = handler.precompact(_hook_input())
     second = handler.precompact(_hook_input())
     assert first.continue_ is False
@@ -93,7 +93,11 @@ def test_precompact_rejects_tampered_cached_plan(app_paths, capabilities, snapsh
         trigger="hook",
         source_turn_id="turn-1",
     )
-    handler = HookHandler(app_paths, reviewer=lambda _input, _deadline: plan)
+    handler = HookHandler(
+        app_paths,
+        reviewer=lambda _input, _deadline: plan,
+        plan_gate=lambda _plan: True,
+    )
     assert handler.precompact(_hook_input()).continue_ is False
     plan_path = next(app_paths.plans_dir.glob("trim-*.json"))
     plan_path.write_bytes(b"{}")
@@ -103,6 +107,62 @@ def test_precompact_rejects_tampered_cached_plan(app_paths, capabilities, snapsh
     assert cached.continue_ is True
     key = HookInput.model_validate(_hook_input()).dedupe_key
     assert not handler.decisions.decision_path(key).exists()
+
+
+def test_precompact_continues_when_plan_is_not_currently_executable(
+    app_paths, capabilities, snapshot_factory
+) -> None:
+    snapshot = snapshot_factory("session-1")
+    plan = TrimPlan.create(
+        source_thread=snapshot,
+        capability_fingerprint=capabilities.fingerprint,
+        selections=(TrimSelection(target_id=snapshot.turns[0].id, action=TrimAction.KEEP),),
+        estimated_tokens_after=snapshot.token_estimate,
+        trigger="hook",
+        source_turn_id="turn-1",
+    )
+    handler = HookHandler(
+        app_paths,
+        reviewer=lambda _input, _deadline: plan,
+        plan_gate=lambda _plan: False,
+    )
+
+    output = handler.precompact(_hook_input())
+
+    assert output.continue_ is True
+    assert "current App Server capabilities" in (output.systemMessage or "")
+    assert not tuple(app_paths.plans_dir.glob("trim-*.json"))
+
+
+def test_precompact_rechecks_cached_blocking_plan_capabilities(
+    app_paths, capabilities, snapshot_factory
+) -> None:
+    snapshot = snapshot_factory("session-1")
+    plan = TrimPlan.create(
+        source_thread=snapshot,
+        capability_fingerprint=capabilities.fingerprint,
+        selections=(TrimSelection(target_id=snapshot.turns[0].id, action=TrimAction.KEEP),),
+        estimated_tokens_after=snapshot.token_estimate,
+        trigger="hook",
+        source_turn_id="turn-1",
+    )
+    executable = True
+
+    def plan_gate(_plan: TrimPlan) -> bool:
+        return executable
+
+    handler = HookHandler(
+        app_paths,
+        reviewer=lambda _input, _deadline: plan,
+        plan_gate=plan_gate,
+    )
+    assert handler.precompact(_hook_input()).continue_ is False
+
+    executable = False
+    repeated = handler.precompact(_hook_input())
+
+    assert repeated.continue_ is True
+    assert "no longer executable" in (repeated.systemMessage or "")
 
 
 def test_hook_decision_rejects_implausible_future_timestamp(app_paths) -> None:
@@ -148,6 +208,33 @@ def test_hook_subprocess_stdout_is_exactly_one_json_object(
     output = json.loads(lines[0])
     assert output["continue"] is True
     assert "suppressOutput" not in output
+
+
+def test_hook_fail_open_covers_path_resolution_errors(tmp_path: Path) -> None:
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "CODEX_HOME": str(tmp_path / "codex-a"),
+            "CSM_CODEX_HOME": str(tmp_path / "codex-b"),
+            "CSM_DATA_DIR": str(tmp_path / "data"),
+            "CSM_CONFIG_DIR": str(tmp_path / "config"),
+            "CSM_CACHE_DIR": str(tmp_path / "cache"),
+            "CSM_LOG_DIR": str(tmp_path / "log"),
+        }
+    )
+    completed = subprocess.run(
+        [sys.executable, "-m", "codex_session_manager.dispatcher", "hook", "precompact"],
+        input="{}",
+        capture_output=True,
+        text=True,
+        env=environment,
+        check=True,
+        timeout=10,
+    )
+
+    lines = completed.stdout.splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["continue"] is True
 
 
 def test_hook_installer_merges_and_removes_only_csm_entries(

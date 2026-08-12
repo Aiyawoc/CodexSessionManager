@@ -9,6 +9,8 @@ TEXT = "#1f2937"
 TEXT_MUTED = "#66758a"
 OUTLINE = "#d9e2ee"
 OUTLINE_STRONG = "#b7c6d9"
+# Quiet blue-gray separator, only slightly darker than the application surface.
+SPLITTER_LINE = OUTLINE
 ACCENT = "#3567d6"
 ACCENT_HOVER = "#2c56b8"
 ACCENT_SOFT = "#e8f0ff"
@@ -18,6 +20,7 @@ WARNING = "#9a5b00"
 WARNING_SOFT = "#fff7e6"
 DANGER = "#b42318"
 DANGER_SOFT = "#fff1f0"
+ON_DANGER = "#ffffff"
 
 
 APP_STYLESHEET = f"""
@@ -38,8 +41,7 @@ QFrame#toolRail {{
     border-radius: 8px;
 }}
 
-QToolButton#projectTaskRailButton, QToolButton#backupRailButton,
-QToolButton#cleanupRailButton, QToolButton#auditRailButton {{
+QToolButton#projectTaskRailButton {{
     min-width: 32px;
     min-height: 32px;
     max-width: 34px;
@@ -57,25 +59,22 @@ QToolButton#projectTaskRailButton:checked {{
     color: #174a9e;
 }}
 
-QToolButton#taskPaneCollapseButton {{
-    min-width: 34px;
-    min-height: 34px;
-    background: {ACCENT_SOFT};
-    border: 1px solid #c8d8ff;
-    border-radius: 6px;
-    color: #174a9e;
-}}
-
-QToolButton#taskPaneCollapseButton:hover {{
-    background: #dce8ff;
-    border-color: {ACCENT};
-}}
-
-QToolButton#backupRailButton:disabled, QToolButton#cleanupRailButton:disabled,
-QToolButton#auditRailButton:disabled {{
-    background: {PANEL_MUTED};
-    border-color: {OUTLINE};
+QToolButton#taskPaneCollapseButton, QToolButton#contentTagsButton,
+QToolButton#contentMarkdownButton {{
+    min-height: 28px;
+    padding: 0 7px;
+    border: 1px solid transparent;
+    border-radius: 5px;
     color: {TEXT_MUTED};
+    font-size: 11px;
+}}
+
+QToolButton#taskPaneCollapseButton:hover,
+QToolButton#contentTagsButton:hover, QToolButton#contentMarkdownButton:hover,
+QToolButton#contentTagsButton:checked, QToolButton#contentMarkdownButton:checked {{
+    background: {ACCENT_SOFT};
+    border-color: #c8d8ff;
+    color: #174a9e;
 }}
 
 QLabel#brandMark {{
@@ -98,14 +97,18 @@ QLabel#appSubtitleLabel {{
     font-size: 12px;
 }}
 
-QLabel#timelineHelp, QLabel#contentMetaLabel,
-QLabel#taskContextStatusLabel, QLabel#taskHelp,
-QLabel#taskListStatusLabel {{
+QLabel#timelineHelp, QLabel#taskContextStatusLabel, QLabel#taskListStatusLabel {{
     color: {TEXT_MUTED};
 }}
 
-QLabel#threadIdLabel {{
-    font-weight: 600;
+QLabel#tokenLabel {{
+    color: {TEXT};
+    background: transparent;
+}}
+
+QLabel#reasonLabel, QLabel#summaryLabel {{
+    color: {TEXT_MUTED};
+    font-weight: 500;
 }}
 
 QLabel#taskContextStatusLabel {{
@@ -127,7 +130,7 @@ QLabel#timelineTitle, QLabel#contentTitle, QLabel#actionTitle, QLabel#taskTitle 
     font-weight: 600;
 }}
 
-QLineEdit, QComboBox, QPlainTextEdit, QTextBrowser {{
+QLineEdit, QComboBox, QPlainTextEdit, QTextBrowser, QTextEdit {{
     background: {PANEL};
     color: {TEXT};
     border: 1px solid {OUTLINE};
@@ -141,19 +144,71 @@ QLineEdit, QComboBox {{
     padding: 0 9px;
 }}
 
-QPlainTextEdit, QTextBrowser {{
+QPlainTextEdit, QTextBrowser, QTextEdit {{
     padding: 8px;
 }}
 
 QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus, QTextBrowser:focus,
+QTextEdit:focus,
 QTreeView:focus {{
     border: 1px solid {ACCENT};
 }}
 
+QTextEdit#contentBrowser {{
+    background: #ffffff;
+    color: {TEXT};
+}}
+
 QComboBox::drop-down {{
     width: 28px;
-    border: 0;
+    background: {PANEL_MUTED};
     border-left: 1px solid {OUTLINE};
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+}}
+
+QComboBox::down-arrow {{
+    image: url(:/csm/combo-down.svg);
+    width: 12px;
+    height: 8px;
+}}
+
+QComboBox QAbstractItemView, QAbstractItemView {{
+    background: {PANEL};
+    color: {TEXT};
+    border: 1px solid {OUTLINE};
+    outline: 0;
+    selection-background-color: {ACCENT_SOFT};
+    selection-color: #174a9e;
+}}
+
+QComboBox QAbstractItemView::item {{
+    background: {PANEL};
+    color: {TEXT};
+    min-height: 28px;
+    padding: 5px 8px;
+}}
+
+QComboBox QAbstractItemView::item:selected {{
+    background: {ACCENT_SOFT};
+    color: #174a9e;
+}}
+
+QMenu {{
+    background: {PANEL};
+    color: {TEXT};
+    border: 1px solid {OUTLINE};
+    padding: 4px;
+}}
+
+QMenu::item {{
+    padding: 6px 22px 6px 10px;
+    border-radius: 4px;
+}}
+
+QMenu::item:selected {{
+    background: {ACCENT_SOFT};
+    color: #174a9e;
 }}
 
 QPushButton {{
@@ -182,7 +237,7 @@ QPushButton:disabled {{
 }}
 
 QPushButton#loadButton, QPushButton#suggestButton, QPushButton#taskRefreshButton,
-QPushButton#savePlanButton, QPushButton#reviewButton {{
+QPushButton#taskArchiveButton, QPushButton#savePlanButton, QPushButton#reviewButton {{
     background: {ACCENT};
     border-color: {ACCENT};
     color: #ffffff;
@@ -190,9 +245,52 @@ QPushButton#savePlanButton, QPushButton#reviewButton {{
 
 QPushButton#loadButton:hover, QPushButton#suggestButton:hover,
 QPushButton#taskRefreshButton:hover,
-QPushButton#savePlanButton:hover, QPushButton#reviewButton:hover {{
+QPushButton#taskArchiveButton:hover, QPushButton#savePlanButton:hover,
+QPushButton#reviewButton:hover {{
     background: {ACCENT_HOVER};
     border-color: {ACCENT_HOVER};
+}}
+
+QPushButton#taskDeleteButton {{
+    background: {DANGER_SOFT};
+    border-color: #f1c6c1;
+    color: {DANGER};
+}}
+
+QPushButton#taskDeleteButton:hover {{
+    background: #ffe5e2;
+    border-color: {DANGER};
+}}
+
+QPushButton#sensitiveScanButton {{
+    background: {DANGER_SOFT};
+    border-color: #f1c6c1;
+    color: {DANGER};
+}}
+
+QPushButton#sensitiveScanButton:hover {{
+    background: #ffe5e2;
+    border-color: {DANGER};
+}}
+
+QPushButton#sensitiveScanButton:checked {{
+    background: {DANGER};
+    border-color: {DANGER};
+    color: #ffffff;
+}}
+
+QPushButton#sensitiveScanButton:checked:hover {{
+    background: #8f1c13;
+    border-color: #8f1c13;
+}}
+
+QPushButton#loadButton:disabled, QPushButton#suggestButton:disabled,
+QPushButton#taskRefreshButton:disabled, QPushButton#taskArchiveButton:disabled,
+QPushButton#taskDeleteButton:disabled, QPushButton#savePlanButton:disabled,
+QPushButton#sensitiveScanButton:disabled, QPushButton#reviewButton:disabled {{
+    background: #eef2f7;
+    color: #9aa7b7;
+    border-color: #e2e8f0;
 }}
 
 QPushButton#applyButton {{
@@ -232,6 +330,16 @@ QTreeView::item:selected, QTreeWidget::item:selected {{
     color: #174a9e;
 }}
 
+QTreeView::branch:closed:has-children,
+QTreeWidget::branch:closed:has-children {{
+    image: url(:/csm/branch-closed.svg);
+}}
+
+QTreeView::branch:open:has-children,
+QTreeWidget::branch:open:has-children {{
+    image: url(:/csm/branch-open.svg);
+}}
+
 QTreeWidget::item:disabled {{
     color: {TEXT_MUTED};
 }}
@@ -246,14 +354,16 @@ QHeaderView::section {{
 }}
 
 QSplitter::handle:horizontal {{
-    width: 6px;
-    background: #dbe7ff;
-    border-radius: 3px;
+    width: 8px;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
 }}
 
 QSplitter::handle:horizontal:hover {{
-    background: {ACCENT};
-    border-radius: 4px;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
 }}
 
 QLabel#riskLabel {{

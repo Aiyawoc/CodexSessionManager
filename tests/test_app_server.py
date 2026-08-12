@@ -70,6 +70,11 @@ def test_inventory_requests_all_source_kinds_and_start_uses_schema_fields() -> N
     start_params = next(params for method, params in client.requests if method == "thread/start")
     assert start_params == {"cwd": "/tmp/project"}
     assert "serviceName" not in start_params
+    client.rename_thread("new", "Renamed")
+    assert client.requests[-1] == (
+        "thread/name/set",
+        {"threadId": "new", "name": "Renamed"},
+    )
 
 
 def test_thread_read_rejects_mismatched_response_id() -> None:

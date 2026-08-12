@@ -387,6 +387,11 @@ class SubprocessAppServer:
     def delete_thread(self, thread_id: str) -> None:
         self.request("thread/delete", {"threadId": thread_id})
 
+    def rename_thread(self, thread_id: str, name: str) -> None:
+        if not name.strip():
+            raise ValueError("thread name must not be empty")
+        self.request("thread/name/set", {"threadId": thread_id, "name": name})
+
     def start_thread(self, *, cwd: str | None = None, name: str | None = None) -> dict[str, Any]:
         params: dict[str, Any] = {}
         if cwd:
@@ -398,7 +403,7 @@ class SubprocessAppServer:
         if not isinstance(thread.get("id"), str) or not thread["id"]:
             raise ProtocolError("thread/start returned no non-empty thread id")
         if name:
-            self.request("thread/name/set", {"threadId": thread["id"], "name": name})
+            self.rename_thread(thread["id"], name)
         return thread
 
     def fork_thread(self, thread_id: str, *, last_turn_id: str | None = None) -> dict[str, Any]:

@@ -65,8 +65,11 @@ test -x "$CSM_APP/Contents/MacOS/CodexSessionManager"
 /usr/libexec/PlistBuddy -c "Set :CFBundleName CodexSessionManager" "$CSM_APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.codex-session-manager.app" "$CSM_APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.1.0" "$CSM_APP/Contents/Info.plist"
-mkdir -p "$CSM_APP/Contents/Resources/bin" "$CSM_APP/Contents/Resources/licenses"
+mkdir -p "$CSM_APP/Contents/Resources/bin" "$CSM_APP/Contents/Resources/licenses" \
+  "$CSM_APP/Contents/Resources/skills"
 install -m 0755 "$CSM_REPO_ROOT/vendor/age/age" "$CSM_APP/Contents/Resources/bin/age"
+ditto "$CSM_REPO_ROOT/skills/manage-codex-sessions" \
+  "$CSM_APP/Contents/Resources/skills/manage-codex-sessions"
 install -m 0644 "$CSM_REPO_ROOT/vendor/age/LICENSE" "$CSM_APP/Contents/Resources/licenses/age-BSD-3-Clause.txt"
 install -m 0644 "$CSM_REPO_ROOT/vendor/age/verification.json" "$CSM_APP/Contents/Resources/licenses/age-verification.json"
 install -m 0644 "$CSM_REPO_ROOT/THIRD_PARTY_NOTICES.md" "$CSM_APP/Contents/Resources/licenses/THIRD_PARTY_NOTICES.md"

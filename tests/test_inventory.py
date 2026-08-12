@@ -79,6 +79,18 @@ def test_normalize_tolerates_turn_without_items() -> None:
     )
 
     assert snapshot.turns[0].items == ()
+    assert snapshot.content_complete is False
+
+
+def test_normalize_marks_incomplete_thread_and_item_shapes() -> None:
+    missing_turns = normalize_thread({"id": "missing-turns"}, content_complete=True)
+    invalid_item = normalize_thread(
+        {"id": "invalid-item", "turns": [{"id": "turn", "items": ["opaque"]}]},
+        content_complete=True,
+    )
+
+    assert missing_turns.content_complete is False
+    assert invalid_item.content_complete is False
 
 
 def test_descendant_closure_is_transitive_and_orphan_is_incomplete() -> None:
@@ -142,6 +154,10 @@ def test_opaque_payload_changes_item_and_trim_fingerprints() -> None:
 
     first = snapshot('{"path":"one"}')
     second = snapshot('{"path":"two"}')
+    assert '"path":"one"' in first.turns[0].items[0].text
+    assert first.turns[0].items[0].token_estimate > 0
+    assert first.turns[0].items[1].text == "ok"
+    assert first.turns[0].items[1].token_estimate > 0
     assert (
         first.turns[0].items[0].content_fingerprint != second.turns[0].items[0].content_fingerprint
     )

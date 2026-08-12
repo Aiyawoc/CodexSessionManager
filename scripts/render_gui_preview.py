@@ -130,7 +130,9 @@ def main() -> int:
         window._document_loaded(0, ReviewDocument(snapshot, capabilities, plan))
         window.task_snapshots = (snapshot,)
         window._populate_task_list((snapshot,))
-        window.ui.taskListStatusLabel.setText("共 1 个任务 · 可按名称或 ID 搜索")
+        window.ui.taskListStatusLabel.setText(
+            window._t("task_list_count_search", count=len(window.task_snapshots))
+        )
         window.show()
         app.processEvents()
         args.output.parent.mkdir(parents=True, exist_ok=True)

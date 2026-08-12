@@ -9,7 +9,7 @@
   <layout class="QVBoxLayout" name="rootLayout">
    <property name="leftMargin"><number>24</number></property><property name="topMargin"><number>24</number></property><property name="rightMargin"><number>24</number></property><property name="bottomMargin"><number>20</number></property><property name="spacing"><number>14</number></property>
    <item><widget class="QLabel" name="titleLabel"><property name="text"><string>Codex 即将压缩当前上下文</string></property><property name="font"><font><pointsize>17</pointsize><weight>500</weight></font></property></widget></item>
-   <item><widget class="QLabel" name="messageLabel"><property name="text"><string>可先审查并保存 TrimPlan，稍后创建派生精简任务；关闭或超时会继续 Codex 原生压缩。</string></property><property name="wordWrap"><bool>true</bool></property></widget></item>
+   <item><widget class="QLabel" name="messageLabel"><property name="text"><string>可先审查并保存方案，稍后创建派生精简任务；关闭或超时会继续 Codex 原生压缩。</string></property><property name="wordWrap"><bool>true</bool></property></widget></item>
    <item><widget class="QProgressBar" name="countdownProgress"><property name="minimum"><number>0</number></property><property name="maximum"><number>15</number></property><property name="value"><number>15</number></property><property name="format"><string>剩余 %v 秒</string></property></widget></item>
    <item><spacer name="verticalSpacer"><property name="orientation"><enum>Qt::Orientation::Vertical</enum></property><property name="sizeHint"><size><width>20</width><height>10</height></size></property></spacer></item>
    <item>
@@ -25,4 +25,3 @@
  <resources/>
  <connections/>
 </ui>
-

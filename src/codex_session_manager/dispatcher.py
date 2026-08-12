@@ -3,7 +3,22 @@
 from __future__ import annotations
 
 import sys
+from io import TextIOWrapper
 from typing import Literal, cast
+
+
+def _configure_windows_stdio(
+    *,
+    platform: str = sys.platform,
+    streams: tuple[object, ...] | None = None,
+) -> None:
+    """Make native Windows CLI and Hook output deterministic and Unicode-safe."""
+
+    if platform != "win32":
+        return
+    for stream in streams if streams is not None else (sys.stdout, sys.stderr):
+        if isinstance(stream, TextIOWrapper):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
 def _run_cli(arguments: list[str]) -> int:
@@ -24,6 +39,7 @@ def _run_cli(arguments: list[str]) -> int:
 
 
 def main() -> int:
+    _configure_windows_stdio()
     arguments = sys.argv[1:]
     if not arguments:
         from codex_session_manager.gui.main import run_gui

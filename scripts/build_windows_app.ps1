@@ -37,7 +37,7 @@ Copy-Item -LiteralPath $SpecPath -Destination $BuildSpec
 function Invoke-Checked {
     param(
         [Parameter(Mandatory = $true)][string]$Program,
-        [Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments
+        [Parameter(Mandatory = $true)][string[]]$Arguments
     )
     & $Program @Arguments
     if ($LASTEXITCODE -ne 0) {
@@ -49,13 +49,16 @@ try {
     & (Join-Path $RepoRoot "scripts\check_windows.ps1")
 
     $env:UV_PROJECT_ENVIRONMENT = $BuildEnvironment
-    Invoke-Checked uv sync --locked --no-default-groups `
-        --group runtime --group gui --group build --compile-bytecode
+    Invoke-Checked -Program "uv" -Arguments @(
+        "sync", "--locked", "--no-default-groups",
+        "--group", "runtime", "--group", "gui", "--group", "build", "--compile-bytecode"
+    )
     & (Join-Path $RepoRoot "scripts\fetch_age_windows_amd64.ps1")
 
     $BuildPython = Join-Path $BuildEnvironment "Scripts\python.exe"
-    Invoke-Checked $BuildPython scripts/build_icon_windows.py `
-        --output build/CodexSessionManager.ico
+    Invoke-Checked -Program $BuildPython -Arguments @(
+        "scripts/build_icon_windows.py", "--output", "build/CodexSessionManager.ico"
+    )
 
     foreach ($Path in @("deployment", $DeployOutput, $Bundle, $Archive, $Checksum)) {
         if (Test-Path -LiteralPath $Path) {
@@ -69,8 +72,10 @@ try {
     }
 
     $Deploy = Join-Path $BuildEnvironment "Scripts\pyside6-deploy.exe"
-    Invoke-Checked $Deploy -c $BuildSpec --force --mode standalone `
-        --extra-ignore-dirs=.venv,.venv-build,.uv-cache,.nuitka-cache,build,dist,deployment,vendor,artifacts
+    Invoke-Checked -Program $Deploy -Arguments @(
+        "-c", $BuildSpec, "--force", "--mode", "standalone",
+        "--extra-ignore-dirs=.venv,.venv-build,.uv-cache,.nuitka-cache,build,dist,deployment,vendor,artifacts"
+    )
     if (Test-Path -LiteralPath $NuitkaCrashReport) {
         throw "Nuitka emitted a crash report; refusing a partial or stale bundle"
     }

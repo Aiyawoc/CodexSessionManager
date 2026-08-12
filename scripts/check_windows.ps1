@@ -17,7 +17,7 @@ New-Item -ItemType Directory -Path $CheckRoot | Out-Null
 function Invoke-Checked {
     param(
         [Parameter(Mandatory = $true)][string]$Program,
-        [Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments
+        [Parameter(Mandatory = $true)][string[]]$Arguments
     )
     & $Program @Arguments
     if ($LASTEXITCODE -ne 0) {
@@ -41,23 +41,31 @@ try {
     $GeneratedMain = Join-Path $CheckRoot "ui_main_window.py"
     $GeneratedPrompt = Join-Path $CheckRoot "ui_precompact_prompt.py"
     $GeneratedResources = Join-Path $CheckRoot "resources_rc.py"
-    Invoke-Checked uv run --locked pyside6-uic `
-        src/codex_session_manager/gui/main_window.ui -o $GeneratedMain
-    Invoke-Checked uv run --locked pyside6-uic `
-        src/codex_session_manager/gui/precompact_prompt.ui -o $GeneratedPrompt
-    Invoke-Checked uv run --locked pyside6-rcc `
-        src/codex_session_manager/gui/resources.qrc -o $GeneratedResources
+    Invoke-Checked -Program "uv" -Arguments @(
+        "run", "--locked", "pyside6-uic",
+        "src/codex_session_manager/gui/main_window.ui", "-o", $GeneratedMain
+    )
+    Invoke-Checked -Program "uv" -Arguments @(
+        "run", "--locked", "pyside6-uic",
+        "src/codex_session_manager/gui/precompact_prompt.ui", "-o", $GeneratedPrompt
+    )
+    Invoke-Checked -Program "uv" -Arguments @(
+        "run", "--locked", "pyside6-rcc",
+        "src/codex_session_manager/gui/resources.qrc", "-o", $GeneratedResources
+    )
     Assert-GeneratedText $GeneratedMain "src/codex_session_manager/gui/ui_main_window.py"
     Assert-GeneratedText $GeneratedPrompt "src/codex_session_manager/gui/ui_precompact_prompt.py"
     Assert-GeneratedText $GeneratedResources "src/codex_session_manager/gui/resources_rc.py"
 
-    Invoke-Checked uv run --locked ruff format --check .
-    Invoke-Checked uv run --locked ruff check .
-    Invoke-Checked uv run --locked mypy src/codex_session_manager
+    Invoke-Checked -Program "uv" -Arguments @("run", "--locked", "ruff", "format", "--check", ".")
+    Invoke-Checked -Program "uv" -Arguments @("run", "--locked", "ruff", "check", ".")
+    Invoke-Checked -Program "uv" -Arguments @("run", "--locked", "mypy", "src/codex_session_manager")
     $env:QT_QPA_PLATFORM = "offscreen"
-    Invoke-Checked uv run --locked pytest
-    Invoke-Checked uv run --locked python scripts/validate_skill.py `
-        skills/manage-codex-sessions
+    Invoke-Checked -Program "uv" -Arguments @("run", "--locked", "pytest")
+    Invoke-Checked -Program "uv" -Arguments @(
+        "run", "--locked", "python", "scripts/validate_skill.py",
+        "skills/manage-codex-sessions"
+    )
 }
 finally {
     if (Test-Path -LiteralPath $CheckRoot) {

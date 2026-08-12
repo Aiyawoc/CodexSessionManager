@@ -80,6 +80,24 @@ finally {
         [Environment]::SetEnvironmentVariable($Name, $SavedEnvironment[$Name], "Process")
     }
     if (Test-Path -LiteralPath $AcceptRoot) {
-        Remove-Item -LiteralPath $AcceptRoot -Recurse -Force
+        # Windows may keep a just-executed .pyd mapped briefly after process
+        # exit. This disposable runner-local copy must not invalidate a bundle
+        # that already passed every acceptance gate above.
+        $Removed = $false
+        foreach ($Attempt in 1..5) {
+            try {
+                Remove-Item -LiteralPath $AcceptRoot -Recurse -Force -ErrorAction Stop
+                $Removed = $true
+                break
+            }
+            catch {
+                if ($Attempt -lt 5) {
+                    Start-Sleep -Milliseconds 250
+                }
+            }
+        }
+        if (-not $Removed) {
+            Write-Warning "Unable to remove disposable acceptance copy: $AcceptRoot"
+        }
     }
 }

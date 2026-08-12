@@ -1,0 +1,4 @@
+# Qt RCC embeds resource bytes verbatim; keep text assets reproducible on Windows.
+*.qrc text eol=lf
+*.svg text eol=lf
+*.ui text eol=lf

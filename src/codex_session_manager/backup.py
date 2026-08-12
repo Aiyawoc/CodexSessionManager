@@ -472,7 +472,9 @@ class BackupWriter:
                     fileobj=io.BytesIO(manifest_bytes),
                 )
             session.finish()
-            with temporary.open("rb") as encrypted:
+            # Windows rejects fsync on a read-only descriptor. Reopen the
+            # completed encrypted file without truncation but with write access.
+            with temporary.open("rb+") as encrypted:
                 os.fsync(encrypted.fileno())
             with contextlib.suppress(OSError):
                 temporary.chmod(0o600)

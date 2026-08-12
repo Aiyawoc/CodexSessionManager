@@ -16,18 +16,18 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QImage, QKeySequence, QLinearGradient, QPainter,
     QPalette, QPixmap, QRadialGradient, QTransform)
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox,
-    QFrame, QGridLayout, QHBoxLayout, QHeaderView,
-    QLabel, QLineEdit, QMainWindow, QPlainTextEdit,
-    QProgressBar, QPushButton, QSizePolicy, QSpacerItem,
-    QSplitter, QTextBrowser, QTreeView, QVBoxLayout,
-    QWidget)
+    QFrame, QHBoxLayout, QHeaderView, QLabel,
+    QLineEdit, QMainWindow, QPlainTextEdit, QProgressBar,
+    QPushButton, QSizePolicy, QSpacerItem, QSplitter,
+    QTextBrowser, QToolButton, QTreeView, QTreeWidget,
+    QTreeWidgetItem, QVBoxLayout, QWidget)
 
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
         if not MainWindow.objectName():
             MainWindow.setObjectName(u"MainWindow")
-        MainWindow.resize(1280, 800)
-        MainWindow.setMinimumSize(QSize(960, 640))
+        MainWindow.resize(1600, 900)
+        MainWindow.setMinimumSize(QSize(1280, 720))
         self.centralwidget = QWidget(MainWindow)
         self.centralwidget.setObjectName(u"centralwidget")
         self.rootLayout = QVBoxLayout(self.centralwidget)
@@ -37,6 +37,7 @@ class Ui_MainWindow(object):
         self.heroFrame = QFrame(self.centralwidget)
         self.heroFrame.setObjectName(u"heroFrame")
         self.heroFrame.setFrameShape(QFrame.Shape.StyledPanel)
+        self.heroFrame.setMaximumSize(QSize(16777215, 100))
         self.heroLayout = QHBoxLayout(self.heroFrame)
         self.heroLayout.setObjectName(u"heroLayout")
         self.heroLayout.setContentsMargins(14, 12, 14, 12)
@@ -77,50 +78,164 @@ class Ui_MainWindow(object):
 
         self.rootLayout.addWidget(self.heroFrame)
 
-        self.sourceFrame = QFrame(self.centralwidget)
-        self.sourceFrame.setObjectName(u"sourceFrame")
-        self.sourceFrame.setFrameShape(QFrame.Shape.StyledPanel)
-        self.sourceLayout = QHBoxLayout(self.sourceFrame)
-        self.sourceLayout.setObjectName(u"sourceLayout")
-        self.threadIdLabel = QLabel(self.sourceFrame)
-        self.threadIdLabel.setObjectName(u"threadIdLabel")
+        self.workspaceLayout = QHBoxLayout()
+        self.workspaceLayout.setSpacing(8)
+        self.workspaceLayout.setObjectName(u"workspaceLayout")
+        self.workspaceLayout.setContentsMargins(0, 0, 0, 0)
+        self.toolRail = QFrame(self.centralwidget)
+        self.toolRail.setObjectName(u"toolRail")
+        self.toolRail.setMinimumSize(QSize(44, 0))
+        self.toolRail.setMaximumSize(QSize(44, 16777215))
+        self.toolRail.setFrameShape(QFrame.Shape.StyledPanel)
+        self.toolRailLayout = QVBoxLayout(self.toolRail)
+        self.toolRailLayout.setSpacing(6)
+        self.toolRailLayout.setObjectName(u"toolRailLayout")
+        self.toolRailLayout.setContentsMargins(4, 4, 4, 4)
+        self.projectTaskRailButton = QToolButton(self.toolRail)
+        self.projectTaskRailButton.setObjectName(u"projectTaskRailButton")
+        self.projectTaskRailButton.setCheckable(True)
+        self.projectTaskRailButton.setChecked(True)
+        self.projectTaskRailButton.setAutoRaise(True)
+        self.projectTaskRailButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
-        self.sourceLayout.addWidget(self.threadIdLabel)
+        self.toolRailLayout.addWidget(self.projectTaskRailButton)
 
-        self.threadIdEdit = QLineEdit(self.sourceFrame)
-        self.threadIdEdit.setObjectName(u"threadIdEdit")
+        self.backupRailButton = QToolButton(self.toolRail)
+        self.backupRailButton.setObjectName(u"backupRailButton")
+        self.backupRailButton.setEnabled(False)
+        self.backupRailButton.setAutoRaise(True)
+        self.backupRailButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
-        self.sourceLayout.addWidget(self.threadIdEdit)
+        self.toolRailLayout.addWidget(self.backupRailButton)
 
-        self.loadButton = QPushButton(self.sourceFrame)
-        self.loadButton.setObjectName(u"loadButton")
+        self.cleanupRailButton = QToolButton(self.toolRail)
+        self.cleanupRailButton.setObjectName(u"cleanupRailButton")
+        self.cleanupRailButton.setEnabled(False)
+        self.cleanupRailButton.setAutoRaise(True)
+        self.cleanupRailButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
-        self.sourceLayout.addWidget(self.loadButton)
+        self.toolRailLayout.addWidget(self.cleanupRailButton)
 
-        self.sourceStatusLabel = QLabel(self.sourceFrame)
-        self.sourceStatusLabel.setObjectName(u"sourceStatusLabel")
-        self.sourceStatusLabel.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
+        self.auditRailButton = QToolButton(self.toolRail)
+        self.auditRailButton.setObjectName(u"auditRailButton")
+        self.auditRailButton.setEnabled(False)
+        self.auditRailButton.setAutoRaise(True)
+        self.auditRailButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
-        self.sourceLayout.addWidget(self.sourceStatusLabel)
+        self.toolRailLayout.addWidget(self.auditRailButton)
+
+        self.toolRailSpacer = QSpacerItem(20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
+
+        self.toolRailLayout.addItem(self.toolRailSpacer)
 
 
-        self.rootLayout.addWidget(self.sourceFrame)
+        self.workspaceLayout.addWidget(self.toolRail)
 
         self.mainSplitter = QSplitter(self.centralwidget)
         self.mainSplitter.setObjectName(u"mainSplitter")
         self.mainSplitter.setOrientation(Qt.Orientation.Horizontal)
         self.mainSplitter.setHandleWidth(8)
         self.mainSplitter.setChildrenCollapsible(False)
+        self.taskPane = QWidget(self.mainSplitter)
+        self.taskPane.setObjectName(u"taskPane")
+        self.taskPane.setMinimumSize(QSize(400, 0))
+        self.taskLayout = QVBoxLayout(self.taskPane)
+        self.taskLayout.setObjectName(u"taskLayout")
+        self.taskLayout.setContentsMargins(0, 0, 8, 0)
+        self.taskHeaderLayout = QHBoxLayout()
+        self.taskHeaderLayout.setSpacing(8)
+        self.taskHeaderLayout.setObjectName(u"taskHeaderLayout")
+        self.taskTitle = QLabel(self.taskPane)
+        self.taskTitle.setObjectName(u"taskTitle")
+        font = QFont()
+        font.setPointSize(15)
+        self.taskTitle.setFont(font)
+
+        self.taskHeaderLayout.addWidget(self.taskTitle)
+
+        self.taskHeaderSpacer = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+
+        self.taskHeaderLayout.addItem(self.taskHeaderSpacer)
+
+        self.taskPaneCollapseButton = QToolButton(self.taskPane)
+        self.taskPaneCollapseButton.setObjectName(u"taskPaneCollapseButton")
+        self.taskPaneCollapseButton.setAutoRaise(True)
+        self.taskPaneCollapseButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+
+        self.taskHeaderLayout.addWidget(self.taskPaneCollapseButton)
+
+
+        self.taskLayout.addLayout(self.taskHeaderLayout)
+
+        self.taskHelp = QLabel(self.taskPane)
+        self.taskHelp.setObjectName(u"taskHelp")
+        self.taskHelp.setWordWrap(True)
+
+        self.taskLayout.addWidget(self.taskHelp)
+
+        self.threadIdLabel = QLabel(self.taskPane)
+        self.threadIdLabel.setObjectName(u"threadIdLabel")
+
+        self.taskLayout.addWidget(self.threadIdLabel)
+
+        self.manualTaskLayout = QHBoxLayout()
+        self.manualTaskLayout.setSpacing(6)
+        self.manualTaskLayout.setObjectName(u"manualTaskLayout")
+        self.threadIdEdit = QLineEdit(self.taskPane)
+        self.threadIdEdit.setObjectName(u"threadIdEdit")
+
+        self.manualTaskLayout.addWidget(self.threadIdEdit)
+
+        self.loadButton = QPushButton(self.taskPane)
+        self.loadButton.setObjectName(u"loadButton")
+
+        self.manualTaskLayout.addWidget(self.loadButton)
+
+
+        self.taskLayout.addLayout(self.manualTaskLayout)
+
+        self.taskContextStatusLabel = QLabel(self.taskPane)
+        self.taskContextStatusLabel.setObjectName(u"taskContextStatusLabel")
+        self.taskContextStatusLabel.setMaximumSize(QSize(16777215, 28))
+        self.taskContextStatusLabel.setWordWrap(False)
+
+        self.taskLayout.addWidget(self.taskContextStatusLabel)
+
+        self.taskSearchEdit = QLineEdit(self.taskPane)
+        self.taskSearchEdit.setObjectName(u"taskSearchEdit")
+
+        self.taskLayout.addWidget(self.taskSearchEdit)
+
+        self.taskListView = QTreeWidget(self.taskPane)
+        self.taskListView.setObjectName(u"taskListView")
+        self.taskListView.setAlternatingRowColors(True)
+        self.taskListView.setUniformRowHeights(True)
+        self.taskListView.setRootIsDecorated(True)
+        self.taskListView.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.taskListView.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+
+        self.taskLayout.addWidget(self.taskListView)
+
+        self.taskListStatusLabel = QLabel(self.taskPane)
+        self.taskListStatusLabel.setObjectName(u"taskListStatusLabel")
+        self.taskListStatusLabel.setWordWrap(True)
+
+        self.taskLayout.addWidget(self.taskListStatusLabel)
+
+        self.taskRefreshButton = QPushButton(self.taskPane)
+        self.taskRefreshButton.setObjectName(u"taskRefreshButton")
+
+        self.taskLayout.addWidget(self.taskRefreshButton)
+
+        self.mainSplitter.addWidget(self.taskPane)
         self.timelinePane = QWidget(self.mainSplitter)
         self.timelinePane.setObjectName(u"timelinePane")
-        self.timelinePane.setMinimumSize(QSize(260, 0))
+        self.timelinePane.setMinimumSize(QSize(300, 0))
         self.timelineLayout = QVBoxLayout(self.timelinePane)
         self.timelineLayout.setObjectName(u"timelineLayout")
         self.timelineLayout.setContentsMargins(0, 0, 0, 0)
         self.timelineTitle = QLabel(self.timelinePane)
         self.timelineTitle.setObjectName(u"timelineTitle")
-        font = QFont()
-        font.setPointSize(15)
         self.timelineTitle.setFont(font)
 
         self.timelineLayout.addWidget(self.timelineTitle)
@@ -142,7 +257,7 @@ class Ui_MainWindow(object):
         self.mainSplitter.addWidget(self.timelinePane)
         self.contentPane = QWidget(self.mainSplitter)
         self.contentPane.setObjectName(u"contentPane")
-        self.contentPane.setMinimumSize(QSize(380, 0))
+        self.contentPane.setMinimumSize(QSize(420, 0))
         self.contentLayout = QVBoxLayout(self.contentPane)
         self.contentLayout.setObjectName(u"contentLayout")
         self.contentLayout.setContentsMargins(8, 0, 8, 0)
@@ -167,7 +282,7 @@ class Ui_MainWindow(object):
         self.mainSplitter.addWidget(self.contentPane)
         self.actionPane = QWidget(self.mainSplitter)
         self.actionPane.setObjectName(u"actionPane")
-        self.actionPane.setMinimumSize(QSize(260, 0))
+        self.actionPane.setMinimumSize(QSize(290, 0))
         self.actionLayout = QVBoxLayout(self.actionPane)
         self.actionLayout.setObjectName(u"actionLayout")
         self.actionLayout.setContentsMargins(0, 0, 0, 0)
@@ -229,17 +344,26 @@ class Ui_MainWindow(object):
 
         self.mainSplitter.addWidget(self.actionPane)
 
-        self.rootLayout.addWidget(self.mainSplitter)
+        self.workspaceLayout.addWidget(self.mainSplitter)
+
+
+        self.rootLayout.addLayout(self.workspaceLayout)
 
         self.footerFrame = QFrame(self.centralwidget)
         self.footerFrame.setObjectName(u"footerFrame")
         self.footerFrame.setFrameShape(QFrame.Shape.StyledPanel)
-        self.footerLayout = QGridLayout(self.footerFrame)
+        self.footerFrame.setMaximumSize(QSize(16777215, 76))
+        self.footerLayout = QVBoxLayout(self.footerFrame)
+        self.footerLayout.setSpacing(4)
         self.footerLayout.setObjectName(u"footerLayout")
+        self.footerMainLayout = QHBoxLayout()
+        self.footerMainLayout.setSpacing(8)
+        self.footerMainLayout.setObjectName(u"footerMainLayout")
         self.tokenLabel = QLabel(self.footerFrame)
         self.tokenLabel.setObjectName(u"tokenLabel")
+        self.tokenLabel.setAlignment(Qt.AlignmentFlag.AlignLeading|Qt.AlignmentFlag.AlignVCenter)
 
-        self.footerLayout.addWidget(self.tokenLabel, 0, 0, 1, 1)
+        self.footerMainLayout.addWidget(self.tokenLabel)
 
         self.savingProgress = QProgressBar(self.footerFrame)
         self.savingProgress.setObjectName(u"savingProgress")
@@ -247,15 +371,10 @@ class Ui_MainWindow(object):
         self.savingProgress.setMaximum(100)
         self.savingProgress.setValue(0)
 
-        self.footerLayout.addWidget(self.savingProgress, 0, 1, 1, 1)
-
-        self.errorLabel = QLabel(self.footerFrame)
-        self.errorLabel.setObjectName(u"errorLabel")
-        self.errorLabel.setWordWrap(True)
-
-        self.footerLayout.addWidget(self.errorLabel, 1, 0, 1, 2)
+        self.footerMainLayout.addWidget(self.savingProgress)
 
         self.buttonLayout = QHBoxLayout()
+        self.buttonLayout.setSpacing(8)
         self.buttonLayout.setObjectName(u"buttonLayout")
         self.cancelButton = QPushButton(self.footerFrame)
         self.cancelButton.setObjectName(u"cancelButton")
@@ -275,7 +394,17 @@ class Ui_MainWindow(object):
         self.buttonLayout.addWidget(self.applyButton)
 
 
-        self.footerLayout.addLayout(self.buttonLayout, 0, 2, 2, 1)
+        self.footerMainLayout.addLayout(self.buttonLayout)
+
+
+        self.footerLayout.addLayout(self.footerMainLayout)
+
+        self.errorLabel = QLabel(self.footerFrame)
+        self.errorLabel.setObjectName(u"errorLabel")
+        self.errorLabel.setMaximumSize(QSize(16777215, 32))
+        self.errorLabel.setWordWrap(True)
+
+        self.footerLayout.addWidget(self.errorLabel)
 
 
         self.rootLayout.addWidget(self.footerFrame)
@@ -286,7 +415,11 @@ class Ui_MainWindow(object):
         self.summaryLabel.setBuddy(self.summaryEdit)
 #endif // QT_CONFIG(shortcut)
         QWidget.setTabOrder(self.threadIdEdit, self.loadButton)
-        QWidget.setTabOrder(self.loadButton, self.timelineView)
+        QWidget.setTabOrder(self.loadButton, self.taskSearchEdit)
+        QWidget.setTabOrder(self.taskSearchEdit, self.taskListView)
+        QWidget.setTabOrder(self.taskListView, self.taskRefreshButton)
+        QWidget.setTabOrder(self.taskRefreshButton, self.taskPaneCollapseButton)
+        QWidget.setTabOrder(self.taskPaneCollapseButton, self.timelineView)
         QWidget.setTabOrder(self.timelineView, self.contentBrowser)
         QWidget.setTabOrder(self.contentBrowser, self.actionCombo)
         QWidget.setTabOrder(self.actionCombo, self.reasonBrowser)
@@ -311,16 +444,72 @@ class Ui_MainWindow(object):
         self.appTitleLabel.setText(QCoreApplication.translate("MainWindow", u"CodexSessionManager", None))
         self.appSubtitleLabel.setText(QCoreApplication.translate("MainWindow", u"\u5b89\u5168\u5730\u5ba1\u67e5\u3001\u7cbe\u7b80\u548c\u6d3e\u751f Codex \u4e0a\u4e0b\u6587", None))
         self.headerBadge.setText(QCoreApplication.translate("MainWindow", u"\u539f\u4efb\u52a1\u53ea\u8bfb\u4fdd\u62a4", None))
-        self.threadIdLabel.setText(QCoreApplication.translate("MainWindow", u"\u4efb\u52a1 ID", None))
+        self.projectTaskRailButton.setText(QCoreApplication.translate("MainWindow", u"\u9879\u76ee", None))
+#if QT_CONFIG(tooltip)
+        self.projectTaskRailButton.setToolTip(QCoreApplication.translate("MainWindow", u"\u9879\u76ee\u4e0e\u4efb\u52a1", None))
+#endif // QT_CONFIG(tooltip)
+#if QT_CONFIG(accessibility)
+        self.projectTaskRailButton.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u9879\u76ee\u4e0e\u4efb\u52a1", None))
+#endif // QT_CONFIG(accessibility)
+        self.backupRailButton.setText(QCoreApplication.translate("MainWindow", u"\u5907\u4efd", None))
+#if QT_CONFIG(tooltip)
+        self.backupRailButton.setToolTip(QCoreApplication.translate("MainWindow", u"\u5907\u4efd\u4e0e\u6062\u590d\uff08\u9884\u89c8\uff09", None))
+#endif // QT_CONFIG(tooltip)
+#if QT_CONFIG(accessibility)
+        self.backupRailButton.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u5907\u4efd\u4e0e\u6062\u590d\uff0c\u9884\u89c8\u529f\u80fd", None))
+#endif // QT_CONFIG(accessibility)
+        self.cleanupRailButton.setText(QCoreApplication.translate("MainWindow", u"\u6e05\u7406", None))
+#if QT_CONFIG(tooltip)
+        self.cleanupRailButton.setToolTip(QCoreApplication.translate("MainWindow", u"\u6e05\u7406\u4e0e\u5f52\u6863\uff08\u9884\u89c8\uff09", None))
+#endif // QT_CONFIG(tooltip)
+#if QT_CONFIG(accessibility)
+        self.cleanupRailButton.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u6e05\u7406\u4e0e\u5f52\u6863\uff0c\u9884\u89c8\u529f\u80fd", None))
+#endif // QT_CONFIG(accessibility)
+        self.auditRailButton.setText(QCoreApplication.translate("MainWindow", u"\u5ba1\u8ba1", None))
+#if QT_CONFIG(tooltip)
+        self.auditRailButton.setToolTip(QCoreApplication.translate("MainWindow", u"\u5ba1\u8ba1\u8bb0\u5f55\uff08\u9884\u89c8\uff09", None))
+#endif // QT_CONFIG(tooltip)
+#if QT_CONFIG(accessibility)
+        self.auditRailButton.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u5ba1\u8ba1\u8bb0\u5f55\uff0c\u9884\u89c8\u529f\u80fd", None))
+#endif // QT_CONFIG(accessibility)
+        self.taskTitle.setText(QCoreApplication.translate("MainWindow", u"\u9879\u76ee\u4e0e\u4efb\u52a1", None))
+        self.taskPaneCollapseButton.setText(QCoreApplication.translate("MainWindow", u"\u6536\u8d77", None))
+#if QT_CONFIG(tooltip)
+        self.taskPaneCollapseButton.setToolTip(QCoreApplication.translate("MainWindow", u"\u6536\u8d77\u9879\u76ee\u4e0e\u4efb\u52a1\u9762\u677f", None))
+#endif // QT_CONFIG(tooltip)
+#if QT_CONFIG(accessibility)
+        self.taskPaneCollapseButton.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u6536\u8d77\u9879\u76ee\u4e0e\u4efb\u52a1\u9762\u677f", None))
+#endif // QT_CONFIG(accessibility)
+        self.taskHelp.setText(QCoreApplication.translate("MainWindow", u"\u6309\u9879\u76ee\u5206\u7ec4\uff1b\u9009\u62e9\u4efb\u52a1\u540e\u76f4\u63a5\u52a0\u8f7d\u4e0a\u4e0b\u6587\u3002", None))
+        self.threadIdLabel.setText(QCoreApplication.translate("MainWindow", u"\u624b\u52a8\u8f93\u5165\u4efb\u52a1 ID", None))
         self.threadIdEdit.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u8f93\u5165 Codex \u4efb\u52a1 ID", None))
 #if QT_CONFIG(accessibility)
         self.threadIdEdit.setAccessibleName(QCoreApplication.translate("MainWindow", u"Codex \u4efb\u52a1 ID", None))
 #endif // QT_CONFIG(accessibility)
-        self.loadButton.setText(QCoreApplication.translate("MainWindow", u"\u52a0\u8f7d\u4efb\u52a1", None))
+        self.loadButton.setText(QCoreApplication.translate("MainWindow", u"\u52a0\u8f7d", None))
 #if QT_CONFIG(accessibility)
         self.loadButton.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u52a0\u8f7d Codex \u4efb\u52a1", None))
 #endif // QT_CONFIG(accessibility)
-        self.sourceStatusLabel.setText(QCoreApplication.translate("MainWindow", u"\u5c1a\u672a\u52a0\u8f7d", None))
+        self.taskContextStatusLabel.setText(QCoreApplication.translate("MainWindow", u"\u5c1a\u672a\u52a0\u8f7d\u4efb\u52a1", None))
+#if QT_CONFIG(tooltip)
+        self.taskContextStatusLabel.setToolTip(QCoreApplication.translate("MainWindow", u"\u5f53\u524d\u6b63\u5728\u5ba1\u67e5\u7684\u4efb\u52a1\u72b6\u6001", None))
+#endif // QT_CONFIG(tooltip)
+        self.taskSearchEdit.setPlaceholderText(QCoreApplication.translate("MainWindow", u"\u641c\u7d22\u9879\u76ee\u3001\u4efb\u52a1\u540d\u79f0\u6216 ID", None))
+#if QT_CONFIG(accessibility)
+        self.taskSearchEdit.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u641c\u7d22 Codex \u9879\u76ee\u548c\u4efb\u52a1", None))
+#endif // QT_CONFIG(accessibility)
+        ___qtreewidgetitem = self.taskListView.headerItem()
+        ___qtreewidgetitem.setText(2, QCoreApplication.translate("MainWindow", u"\u72b6\u6001", None))
+        ___qtreewidgetitem.setText(1, QCoreApplication.translate("MainWindow", u"\u4efb\u52a1 ID", None))
+        ___qtreewidgetitem.setText(0, QCoreApplication.translate("MainWindow", u"\u4efb\u52a1\u540d\u79f0", None))
+#if QT_CONFIG(accessibility)
+        self.taskListView.setAccessibleName(QCoreApplication.translate("MainWindow", u"Codex \u9879\u76ee\u548c\u4efb\u52a1\u5217\u8868", None))
+#endif // QT_CONFIG(accessibility)
+        self.taskListStatusLabel.setText(QCoreApplication.translate("MainWindow", u"\u5c1a\u672a\u52a0\u8f7d\u4efb\u52a1\u5217\u8868", None))
+        self.taskRefreshButton.setText(QCoreApplication.translate("MainWindow", u"\u5237\u65b0\u4efb\u52a1\u5217\u8868", None))
+#if QT_CONFIG(accessibility)
+        self.taskRefreshButton.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u5237\u65b0 Codex \u9879\u76ee\u548c\u4efb\u52a1\u5217\u8868", None))
+#endif // QT_CONFIG(accessibility)
         self.timelineTitle.setText(QCoreApplication.translate("MainWindow", u"\u65f6\u95f4\u7ebf", None))
         self.timelineHelp.setText(QCoreApplication.translate("MainWindow", u"\u9ed8\u8ba4\u6309 turn \u64cd\u4f5c\uff1b\u5c55\u5f00\u540e\u53ef\u67e5\u770b item\u3002", None))
 #if QT_CONFIG(accessibility)
@@ -360,9 +549,9 @@ class Ui_MainWindow(object):
 #if QT_CONFIG(accessibility)
         self.savingProgress.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u9884\u8ba1\u4e0a\u4e0b\u6587\u8282\u7701\u6bd4\u4f8b", None))
 #endif // QT_CONFIG(accessibility)
-        self.errorLabel.setText("")
         self.cancelButton.setText(QCoreApplication.translate("MainWindow", u"\u5173\u95ed", None))
         self.savePlanButton.setText(QCoreApplication.translate("MainWindow", u"\u4fdd\u5b58 TrimPlan", None))
         self.applyButton.setText(QCoreApplication.translate("MainWindow", u"\u521b\u5efa\u6d3e\u751f\u7cbe\u7b80\u4efb\u52a1", None))
+        self.errorLabel.setText("")
     # retranslateUi
 

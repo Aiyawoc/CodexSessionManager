@@ -68,6 +68,7 @@ def review_precompact(
         trigger="hook",
         source_turn_id=turn_id,
         hook_mode=True,
+        load_task_list=False,
     )
     result: list[TrimPlan] = []
     loop = QEventLoop()
@@ -83,7 +84,7 @@ def review_precompact(
 
     window.plan_saved.connect(saved)
     window.window_closed.connect(loop.quit)
-    window.ui.sourceStatusLabel.setToolTip(f"cwd={cwd}")
+    window.ui.taskContextStatusLabel.setToolTip(f"cwd={cwd}")
     window.show()
     deadline_timer.start(remaining_ms)
     loop.exec()

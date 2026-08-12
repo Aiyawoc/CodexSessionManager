@@ -112,6 +112,12 @@ csm trim apply PLAN.json --confirm PLAN_ID
 
 动作包括 `keep`、`exclude`、`summary` 和 `protect`。当前请求、进行中 turn、有效目标、审批决定、未解决错误、未知 item，以及相关联的工具调用/结果和文件变更/验证均受硬保护。GUI 默认按 turn 操作，item 级为高级视图；所有扫描、App Server 请求和分析均在线程池中执行。
 
+GUI 左侧按项目 cwd 或 Git remote 分组显示任务名称、任务 ID 和状态，支持搜索后直接选择任务，也支持在同一栏手动输入任务 ID 加载。
+
+项目与任务标题右侧的收起图标可隐藏左侧面板；收起后释放的宽度按比例分配给时间线和原文区域，最右侧裁剪动作栏保持原宽度。
+
+窗口最左侧保留固定宽度的功能栏；收起项目与任务栏后，项目/任务图标仍可用于恢复面板，其余图标用于预览备份、清理和审计等后续功能。时间线表格的第一列会自动填满剩余宽度，时间线与原文之间的分割线可以直接拖动。
+
 连续前缀在 App Server 支持时使用 `thread/fork(lastTurnId)`；若当前协议没有该字段，则只在新 fork 上执行受检 `thread/rollback`。非连续裁剪创建新任务并注入带来源 manifest 的 `ContextProjection`，不会自动启动模型 turn。
 
 ## Hook

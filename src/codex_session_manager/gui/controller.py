@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
-from PySide6.QtCore import QItemSelection, QThreadPool, Signal, Slot
+from PySide6.QtCore import QItemSelection, QSize, Qt, QThreadPool, Signal, Slot
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QHeaderView, QMainWindow, QMessageBox
+from PySide6.QtWidgets import QHeaderView, QMainWindow, QMessageBox, QStyle, QTreeWidgetItem
 
 from codex_session_manager.app_server import connect_and_probe
 from codex_session_manager.audit import AuditStore
@@ -64,6 +65,7 @@ class TrimReviewWindow(QMainWindow):
         trigger: Literal["manual", "auto", "hook"] = "manual",
         source_turn_id: str | None = None,
         hook_mode: bool = False,
+        load_task_list: bool = True,
         parent: Any = None,
     ) -> None:
         super().__init__(parent)
@@ -77,21 +79,33 @@ class TrimReviewWindow(QMainWindow):
         self.thread_pool = QThreadPool.globalInstance()
         self.document: ReviewDocument | None = None
         self.timeline_model: TurnTimelineModel | None = None
+        self.task_snapshots: tuple[ThreadSnapshot, ...] = ()
         self.selections: dict[str, TrimSelection] = {}
         self.current_target: TurnSnapshot | ThreadItemSnapshot | None = None
         self.current_plan: TrimPlan | None = None
         self._updating_controls = False
         self._generation = 0
+        self._task_generation = 0
+        self._task_selection_guard = False
         self._closing = False
         self._write_in_progress = False
+        self._task_pane_expanded = True
+        self._expanded_splitter_sizes: tuple[int, ...] = (450, 340, 500, 300)
         self._connect_signals()
         self._configure_views()
+        self._configure_tool_rail()
         self.ui.errorLabel.hide()
-        self.ui.mainSplitter.setSizes([330, 580, 300])
+        self.ui.mainSplitter.setSizes([450, 340, 500, 300])
         if hook_mode:
             self.ui.applyButton.hide()
+            self.ui.taskPane.hide()
+            self.ui.toolRail.hide()
+            self.ui.taskPaneCollapseButton.hide()
+            self._task_pane_expanded = False
             self.ui.cancelButton.setText("取消并继续原生压缩")
-            self.ui.sourceStatusLabel.setText("Hook 审查模式：只保存计划，不创建派生任务")
+            self.ui.taskContextStatusLabel.setText("Hook 审查模式：只保存计划")
+        elif load_task_list:
+            self.load_task_list()
         if thread_id:
             self.ui.threadIdEdit.setText(thread_id)
             self.load_thread(thread_id)
@@ -102,15 +116,63 @@ class TrimReviewWindow(QMainWindow):
         header = self.ui.timelineView.header()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for section in (1, 2, 3):
-            header.setSectionResizeMode(section, QHeaderView.ResizeMode.ResizeToContents)
+        for section, width in ((1, 100), (2, 55), (3, 65)):
+            header.setSectionResizeMode(section, QHeaderView.ResizeMode.Fixed)
+            header.resizeSection(section, width)
         self.ui.timelineView.setIndentation(16)
         self.ui.timelineView.setHeaderHidden(False)
+        self.ui.timelineView.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.ui.contentBrowser.setLineWrapMode(self.ui.contentBrowser.LineWrapMode.WidgetWidth)
         self.ui.summaryEdit.setMinimumHeight(120)
         self.ui.reasonBrowser.setMinimumHeight(72)
+        self.ui.heroLayout.setAlignment(self.ui.brandMark, Qt.AlignmentFlag.AlignVCenter)
+        self.ui.heroLayout.setAlignment(self.ui.heroTextLayout, Qt.AlignmentFlag.AlignVCenter)
+        self.ui.heroLayout.setAlignment(self.ui.headerBadge, Qt.AlignmentFlag.AlignVCenter)
+        self.ui.heroTextLayout.setSpacing(0)
+        self.ui.footerMainLayout.setStretch(1, 1)
+        self.ui.footerLayout.setAlignment(self.ui.footerMainLayout, Qt.AlignmentFlag.AlignVCenter)
+        self.ui.footerMainLayout.setAlignment(self.ui.buttonLayout, Qt.AlignmentFlag.AlignVCenter)
+        task_header = self.ui.taskListView.header()
+        task_header.setStretchLastSection(False)
+        task_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        task_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        task_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.ui.taskListView.setColumnWidth(0, 170)
+        self.ui.taskListView.setColumnWidth(1, 195)
+        self.ui.taskListView.setIndentation(14)
+        self.ui.taskListView.setHeaderHidden(False)
+        self.ui.mainSplitter.setStretchFactor(0, 0)
+        self.ui.mainSplitter.setStretchFactor(1, 1)
+        self.ui.mainSplitter.setStretchFactor(2, 1)
+        self.ui.mainSplitter.setStretchFactor(3, 0)
+
+    def _configure_tool_rail(self) -> None:
+        """Use native platform glyphs for the rail without shipping icon assets."""
+
+        style = self.style()
+        icons = (
+            (self.ui.projectTaskRailButton, QStyle.StandardPixmap.SP_FileDialogListView),
+            (self.ui.backupRailButton, QStyle.StandardPixmap.SP_DriveHDIcon),
+            (self.ui.cleanupRailButton, QStyle.StandardPixmap.SP_TrashIcon),
+            (self.ui.auditRailButton, QStyle.StandardPixmap.SP_MessageBoxInformation),
+        )
+        for button, standard_pixmap in icons:
+            button.setIcon(style.standardIcon(standard_pixmap))
+            button.setIconSize(QSize(20, 20))
+            button.setFixedSize(34, 34)
+        self.ui.taskPaneCollapseButton.setIcon(
+            style.standardIcon(QStyle.StandardPixmap.SP_ArrowLeft)
+        )
+        self.ui.taskPaneCollapseButton.setIconSize(QSize(18, 18))
+        self.ui.taskPaneCollapseButton.setFixedSize(34, 34)
+        self.ui.projectTaskRailButton.setChecked(True)
 
     def _connect_signals(self) -> None:
+        self.ui.taskSearchEdit.textChanged.connect(self._filter_task_list)
+        self.ui.taskListView.itemSelectionChanged.connect(self._task_selected)
+        self.ui.taskRefreshButton.clicked.connect(self.load_task_list)
+        self.ui.projectTaskRailButton.clicked.connect(self._toggle_task_pane)
+        self.ui.taskPaneCollapseButton.clicked.connect(self._toggle_task_pane)
         self.ui.loadButton.clicked.connect(self._load_from_edit)
         self.ui.threadIdEdit.returnPressed.connect(self._load_from_edit)
         self.ui.actionCombo.currentIndexChanged.connect(self._action_changed)
@@ -119,6 +181,233 @@ class TrimReviewWindow(QMainWindow):
         self.ui.savePlanButton.clicked.connect(self._save_plan)
         self.ui.applyButton.clicked.connect(self._apply_plan)
         self.ui.cancelButton.clicked.connect(self.close)
+
+    @Slot()
+    def _toggle_task_pane(self) -> None:
+        """Collapse or restore the project/task pane without shrinking the action pane."""
+
+        if self.hook_mode:
+            return
+        splitter = self.ui.mainSplitter
+        if self._task_pane_expanded:
+            sizes = splitter.sizes()
+            if len(sizes) != 4:
+                sizes = list(self._expanded_splitter_sizes)
+            self._expanded_splitter_sizes = tuple(sizes)
+            task_width = max(0, sizes[0])
+            timeline_width = max(1, sizes[1])
+            content_width = max(1, sizes[2])
+            center_width = timeline_width + content_width
+            timeline_gain = round(task_width * timeline_width / center_width)
+            # Hiding the first pane also removes its splitter handle; keep that
+            # reclaimed 8 px in the center instead of letting Qt widen the
+            # fixed-width action pane during redistribution.
+            content_gain = task_width - timeline_gain + splitter.handleWidth()
+            self.ui.taskPane.hide()
+            splitter.setSizes(
+                [
+                    0,
+                    timeline_width + timeline_gain,
+                    content_width + content_gain,
+                    sizes[3],
+                ]
+            )
+            self._task_pane_expanded = False
+            self.ui.taskPaneCollapseButton.setToolTip("收起项目与任务面板")
+            self.ui.projectTaskRailButton.setChecked(False)
+            return
+
+        self.ui.taskPane.show()
+        splitter.setSizes(list(self._expanded_splitter_sizes))
+        self._task_pane_expanded = True
+        self.ui.taskPaneCollapseButton.setToolTip("收起项目与任务面板")
+        self.ui.projectTaskRailButton.setChecked(True)
+
+    def load_task_list(self) -> None:
+        """Load lightweight task summaries without blocking the Qt thread."""
+
+        self._task_generation += 1
+        generation = self._task_generation
+        self.ui.taskRefreshButton.setEnabled(False)
+        self.ui.taskListStatusLabel.setText("正在通过 App Server 加载任务列表…")
+
+        def load() -> tuple[ThreadSnapshot, ...]:
+            client, _capabilities = connect_and_probe(request_timeout=45)
+            try:
+                return InventoryService(client).list(
+                    include_active=True,
+                    include_archived=True,
+                    include_turns=False,
+                )
+            finally:
+                client.close()
+
+        worker = FunctionWorker(load)
+        worker.signals.result.connect(
+            lambda value, current=generation: self._task_list_loaded(current, value)
+        )
+        worker.signals.error.connect(
+            lambda message, current=generation: self._task_list_failed(current, message)
+        )
+        worker.signals.finished.connect(
+            lambda current=generation: self._task_list_finished(current)
+        )
+        self.thread_pool.start(worker)
+
+    def _task_list_loaded(self, generation: int, value: object) -> None:
+        if generation != self._task_generation or self._closing:
+            return
+        if not isinstance(value, tuple) or not all(
+            isinstance(snapshot, ThreadSnapshot) for snapshot in value
+        ):
+            self._task_list_failed(generation, "任务列表返回类型异常。")
+            return
+        self.task_snapshots = value
+        self._populate_task_list(value)
+        self.ui.taskListStatusLabel.setText(f"共 {len(value)} 个任务 · 可按名称或 ID 搜索")
+
+    def _task_list_failed(self, generation: int, message: str) -> None:
+        if generation != self._task_generation or self._closing:
+            return
+        self.ui.taskListStatusLabel.setText("任务列表加载失败；仍可手动输入任务 ID。")
+        self._show_error(f"任务列表加载失败：{message}")
+
+    def _task_list_finished(self, generation: int) -> None:
+        if generation == self._task_generation and not self._closing:
+            self.ui.taskRefreshButton.setEnabled(True)
+
+    @Slot(str)
+    def _filter_task_list(self, _query: str) -> None:
+        self._populate_task_list(self.task_snapshots)
+
+    @Slot()
+    def _task_selected(self) -> None:
+        if self._task_selection_guard or self._closing:
+            return
+        item = self.ui.taskListView.currentItem()
+        if item is None:
+            return
+        thread_id = item.data(0, Qt.ItemDataRole.UserRole)
+        if not isinstance(thread_id, str) or not thread_id:
+            return
+        self.ui.threadIdEdit.setText(thread_id)
+        self.load_thread(thread_id)
+
+    def _populate_task_list(self, snapshots: tuple[ThreadSnapshot, ...]) -> None:
+        query = self.ui.taskSearchEdit.text().strip().casefold()
+        selected_id = self._selected_task_id()
+        groups: dict[str, tuple[str, list[ThreadSnapshot]]] = {}
+        for snapshot in snapshots:
+            if query and not self._task_matches(snapshot, query):
+                continue
+            group_key, group_label = self._project_group(snapshot)
+            if group_key not in groups:
+                groups[group_key] = (group_label, [])
+            groups[group_key][1].append(snapshot)
+
+        self._task_selection_guard = True
+        try:
+            self.ui.taskListView.clear()
+            for group_key in sorted(groups, key=str.casefold):
+                group_label, members = groups[group_key]
+                group = QTreeWidgetItem([group_label, "", ""])
+                group.setToolTip(0, self._project_tooltip(members[0]))
+                group.setFirstColumnSpanned(True)
+                for snapshot in sorted(members, key=self._task_sort_key, reverse=True):
+                    title = snapshot.title.strip() or "未命名任务"
+                    status = self._status_label(snapshot)
+                    item = QTreeWidgetItem([title, snapshot.id, status])
+                    item.setData(0, Qt.ItemDataRole.UserRole, snapshot.id)
+                    item.setToolTip(0, self._task_tooltip(snapshot))
+                    item.setToolTip(1, snapshot.id)
+                    group.addChild(item)
+                self.ui.taskListView.addTopLevelItem(group)
+                group.setExpanded(True)
+            if selected_id:
+                self._select_task_in_list(selected_id)
+        finally:
+            self._task_selection_guard = False
+
+    def _select_task_in_list(self, thread_id: str) -> None:
+        for group_index in range(self.ui.taskListView.topLevelItemCount()):
+            group = self.ui.taskListView.topLevelItem(group_index)
+            if group is None:
+                continue
+            for item_index in range(group.childCount()):
+                item = group.child(item_index)
+                if item.data(0, Qt.ItemDataRole.UserRole) == thread_id:
+                    self.ui.taskListView.setCurrentItem(item)
+                    item.setSelected(True)
+                    return
+
+    def _selected_task_id(self) -> str | None:
+        item = self.ui.taskListView.currentItem()
+        if item is None:
+            return None
+        value = item.data(0, Qt.ItemDataRole.UserRole)
+        return value if isinstance(value, str) else None
+
+    @staticmethod
+    def _task_matches(snapshot: ThreadSnapshot, query: str) -> bool:
+        haystack = "\n".join(
+            value
+            for value in (
+                snapshot.id,
+                snapshot.title,
+                snapshot.preview,
+                snapshot.cwd or "",
+                snapshot.git_remote or "",
+            )
+            if value
+        )
+        return query in haystack.casefold()
+
+    @staticmethod
+    def _project_group(snapshot: ThreadSnapshot) -> tuple[str, str]:
+        if snapshot.cwd:
+            path = Path(snapshot.cwd)
+            project_name = path.name or str(path)
+            return snapshot.cwd, project_name
+        if snapshot.git_remote:
+            remote = snapshot.git_remote.rstrip("/")
+            project_name = remote.rsplit("/", 1)[-1].removesuffix(".git") or remote
+            return snapshot.git_remote, project_name
+        return "__unknown_project__", "未指定项目"
+
+    @staticmethod
+    def _task_sort_key(snapshot: ThreadSnapshot) -> tuple[float, str]:
+        timestamp = snapshot.updated_at or snapshot.created_at
+        return (timestamp.timestamp() if timestamp else 0.0, snapshot.id)
+
+    @staticmethod
+    def _status_label(snapshot: ThreadSnapshot) -> str:
+        labels = {
+            ThreadStatus.NOT_LOADED: "未加载",
+            ThreadStatus.IDLE: "空闲",
+            ThreadStatus.ACTIVE: "进行中",
+            ThreadStatus.SYSTEM_ERROR: "系统错误",
+            ThreadStatus.UNKNOWN: "未知",
+        }
+        label = labels.get(snapshot.status, snapshot.status.value)
+        return f"{label} · 已归档" if snapshot.archived else label
+
+    @staticmethod
+    def _task_tooltip(snapshot: ThreadSnapshot) -> str:
+        lines = [snapshot.title or "未命名任务", snapshot.id]
+        if snapshot.cwd:
+            lines.append(f"项目：{snapshot.cwd}")
+        if snapshot.git_remote:
+            lines.append(f"Git：{snapshot.git_remote}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _project_tooltip(snapshot: ThreadSnapshot) -> str:
+        lines: list[str] = []
+        if snapshot.cwd:
+            lines.append(f"项目：{snapshot.cwd}")
+        if snapshot.git_remote:
+            lines.append(f"Git：{snapshot.git_remote}")
+        return "\n".join(lines) or "未指定项目路径或 Git remote"
 
     @Slot()
     def _load_from_edit(self) -> None:
@@ -170,11 +459,16 @@ class TrimReviewWindow(QMainWindow):
         self.current_plan = value.suggested_plan
         self.timeline_model = TurnTimelineModel(value.snapshot, self.selections, self)
         self.ui.timelineView.setModel(self.timeline_model)
+        self._configure_views()
         self.ui.timelineView.expandToDepth(0)
         self.ui.timelineView.selectionModel().selectionChanged.connect(self._selection_changed)
-        self.ui.sourceStatusLabel.setText(
-            f"{value.snapshot.title or value.snapshot.id} · {value.snapshot.status.value} · {len(value.snapshot.turns)} turns"
+        task_status = (
+            f"{value.snapshot.title or value.snapshot.id} · "
+            f"{value.snapshot.status.value} · {len(value.snapshot.turns)} turns"
         )
+        self.ui.taskContextStatusLabel.setText(task_status)
+        self.ui.taskContextStatusLabel.setToolTip(task_status)
+        self._select_task_in_list(value.snapshot.id)
         self.ui.savePlanButton.setEnabled(True)
         self.ui.applyButton.setEnabled(
             not self.hook_mode and value.snapshot.status is not ThreadStatus.ACTIVE
@@ -446,7 +740,8 @@ class TrimReviewWindow(QMainWindow):
             and self.document.capabilities.write_enabled
         )
         if message:
-            self.ui.sourceStatusLabel.setText(message)
+            self.ui.taskContextStatusLabel.setText(message)
+            self.ui.taskContextStatusLabel.setToolTip(message)
 
     def _show_error(self, message: str) -> None:
         self.ui.errorLabel.setText("⚠ " + message)
@@ -465,5 +760,6 @@ class TrimReviewWindow(QMainWindow):
             return
         self._closing = True
         self._generation += 1
+        self._task_generation += 1
         self.window_closed.emit()
         super().closeEvent(event)

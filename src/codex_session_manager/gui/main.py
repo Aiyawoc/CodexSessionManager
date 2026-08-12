@@ -12,7 +12,7 @@ from codex_session_manager.gui.controller import TrimReviewWindow
 
 def run_gui(*, thread_id: str | None = None) -> int:
     app, _owned = ensure_application()
-    window = TrimReviewWindow(thread_id=thread_id)
+    window = TrimReviewWindow(thread_id=thread_id, load_task_list=True)
     window.show()
     smoke_exit = os.environ.get("CSM_GUI_SMOKE_EXIT_MS")
     if smoke_exit:

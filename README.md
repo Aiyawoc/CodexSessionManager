@@ -112,6 +112,12 @@ csm trim apply PLAN.json --confirm PLAN_ID
 
 Actions are `keep`, `exclude`, `summary`, and `protect`. The current request, in-progress turns, valid goals, approval decisions, unresolved errors, unknown items, and associated tool call/result and file-change/verification groups are hard-protected. The GUI operates at turn level by default, with item-level controls in the advanced view; scans, App Server requests, and analysis run in worker threads.
 
+The GUI's left pane groups task names, IDs, and statuses by project cwd or Git remote. It supports searching and selecting a task directly, while also keeping a manual task-ID loader in the same pane.
+
+The collapse icon beside the project/task title hides the pane. Its freed width is distributed between the timeline and source panes, while the rightmost trim-action pane keeps its width.
+
+A fixed-width feature rail remains at the far left. When the project/task pane is collapsed, its project/task icon still restores the pane while the other icons preview future backup, cleanup, and audit features. The timeline table stretches its first column to the remaining width, and the divider between the timeline and source panes is draggable.
+
 When supported by the App Server, a continuous prefix uses `thread/fork(lastTurnId)`. If the protocol lacks that field, a checked `thread/rollback` is used only on a new fork. Non-contiguous trimming creates a new task and injects a source-manifest `ContextProjection`; it never starts a model turn automatically.
 
 ## Hooks

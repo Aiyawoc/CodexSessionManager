@@ -26,10 +26,56 @@ QMainWindow, QDialog, QWidget#centralwidget {{
     color: {TEXT};
 }}
 
-QFrame#heroFrame, QFrame#sourceFrame, QFrame#footerFrame {{
+QFrame#heroFrame, QFrame#footerFrame {{
     background: {PANEL};
     border: 1px solid {OUTLINE};
     border-radius: 10px;
+}}
+
+QFrame#toolRail {{
+    background: {PANEL};
+    border: 1px solid {OUTLINE};
+    border-radius: 8px;
+}}
+
+QToolButton#projectTaskRailButton, QToolButton#backupRailButton,
+QToolButton#cleanupRailButton, QToolButton#auditRailButton {{
+    min-width: 32px;
+    min-height: 32px;
+    max-width: 34px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: {TEXT_MUTED};
+    font-size: 15px;
+    font-weight: 600;
+}}
+
+QToolButton#projectTaskRailButton:hover,
+QToolButton#projectTaskRailButton:checked {{
+    background: {ACCENT_SOFT};
+    border-color: #c8d8ff;
+    color: #174a9e;
+}}
+
+QToolButton#taskPaneCollapseButton {{
+    min-width: 34px;
+    min-height: 34px;
+    background: {ACCENT_SOFT};
+    border: 1px solid #c8d8ff;
+    border-radius: 6px;
+    color: #174a9e;
+}}
+
+QToolButton#taskPaneCollapseButton:hover {{
+    background: #dce8ff;
+    border-color: {ACCENT};
+}}
+
+QToolButton#backupRailButton:disabled, QToolButton#cleanupRailButton:disabled,
+QToolButton#auditRailButton:disabled {{
+    background: {PANEL_MUTED};
+    border-color: {OUTLINE};
+    color: {TEXT_MUTED};
 }}
 
 QLabel#brandMark {{
@@ -43,13 +89,27 @@ QLabel#brandMark {{
 
 QLabel#appTitleLabel {{
     color: {TEXT};
-    font-size: 19px;
+    font-size: 18px;
     font-weight: 600;
 }}
 
-QLabel#appSubtitleLabel, QLabel#timelineHelp, QLabel#contentMetaLabel,
-QLabel#sourceStatusLabel {{
+QLabel#appSubtitleLabel {{
     color: {TEXT_MUTED};
+    font-size: 12px;
+}}
+
+QLabel#timelineHelp, QLabel#contentMetaLabel,
+QLabel#taskContextStatusLabel, QLabel#taskHelp,
+QLabel#taskListStatusLabel {{
+    color: {TEXT_MUTED};
+}}
+
+QLabel#threadIdLabel {{
+    font-weight: 600;
+}}
+
+QLabel#taskContextStatusLabel {{
+    font-size: 11px;
 }}
 
 QLabel#headerBadge {{
@@ -61,7 +121,7 @@ QLabel#headerBadge {{
     font-weight: 600;
 }}
 
-QLabel#timelineTitle, QLabel#contentTitle, QLabel#actionTitle {{
+QLabel#timelineTitle, QLabel#contentTitle, QLabel#actionTitle, QLabel#taskTitle {{
     color: {TEXT};
     font-size: 15px;
     font-weight: 600;
@@ -121,7 +181,7 @@ QPushButton:disabled {{
     border-color: #e2e8f0;
 }}
 
-QPushButton#loadButton, QPushButton#suggestButton,
+QPushButton#loadButton, QPushButton#suggestButton, QPushButton#taskRefreshButton,
 QPushButton#savePlanButton, QPushButton#reviewButton {{
     background: {ACCENT};
     border-color: {ACCENT};
@@ -129,6 +189,7 @@ QPushButton#savePlanButton, QPushButton#reviewButton {{
 }}
 
 QPushButton#loadButton:hover, QPushButton#suggestButton:hover,
+QPushButton#taskRefreshButton:hover,
 QPushButton#savePlanButton:hover, QPushButton#reviewButton:hover {{
     background: {ACCENT_HOVER};
     border-color: {ACCENT_HOVER};
@@ -145,8 +206,9 @@ QPushButton#applyButton:hover {{
     border-color: #176238;
 }}
 
-QTreeView {{
+QTreeView, QTreeWidget {{
     background: {PANEL};
+    color: {TEXT};
     alternate-background-color: {PANEL_MUTED};
     border: 1px solid {OUTLINE};
     border-radius: 8px;
@@ -154,19 +216,24 @@ QTreeView {{
     padding: 4px;
 }}
 
-QTreeView::item {{
+QTreeView::item, QTreeWidget::item {{
+    color: {TEXT};
     min-height: 28px;
     padding: 4px 6px;
     border-radius: 5px;
 }}
 
-QTreeView::item:hover {{
+QTreeView::item:hover, QTreeWidget::item:hover {{
     background: {ACCENT_SOFT};
 }}
 
-QTreeView::item:selected {{
+QTreeView::item:selected, QTreeWidget::item:selected {{
     background: {ACCENT_SOFT};
     color: #174a9e;
+}}
+
+QTreeWidget::item:disabled {{
+    color: {TEXT_MUTED};
 }}
 
 QHeaderView::section {{
@@ -179,12 +246,13 @@ QHeaderView::section {{
 }}
 
 QSplitter::handle:horizontal {{
-    width: 8px;
-    background: transparent;
+    width: 6px;
+    background: #dbe7ff;
+    border-radius: 3px;
 }}
 
 QSplitter::handle:horizontal:hover {{
-    background: #dbe7ff;
+    background: {ACCENT};
     border-radius: 4px;
 }}
 

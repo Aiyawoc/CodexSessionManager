@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+  <title id="title">CodexSessionManager 安全模型</title>
+  <desc id="desc">GUI、CLI、Skill 和 Hook 入口先创建不可变计划，通过重新校验后只经官方 Codex App Server 写入。备份与审计证据独立保存，协议能力未知时退化为只读。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8fa3ba"/>
+    </marker>
+    <style>
+      .heading { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 22px; font-weight: 600; fill: #1f2937; }
+      .label { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 16px; font-weight: 600; fill: #1f2937; }
+      .small { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 13px; font-weight: 400; fill: #66758a; }
+      .step { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 12px; font-weight: 700; fill: #ffffff; }
+      .line { fill: none; stroke: #8fa3ba; stroke-width: 2; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect x="1" y="1" width="1198" height="418" rx="18" fill="#f8faff" stroke="#d9e2ee" stroke-width="2"/>
+  <text class="heading" x="40" y="45">安全优先的写入路径</text>
+  <text class="small" x="1160" y="43" text-anchor="end">上下文裁剪始终保留原对话</text>
+
+  <path class="line" d="M 250 142 H 302"/>
+  <path class="line" d="M 530 142 H 582"/>
+  <path class="line" d="M 842 142 H 894"/>
+
+  <g transform="translate(40 78)">
+    <rect width="210" height="128" rx="14" fill="#ffffff" stroke="#b7c6d9" stroke-width="2"/>
+    <circle cx="25" cy="25" r="14" fill="#3567d6"/>
+    <text class="step" x="25" y="29" text-anchor="middle">1</text>
+    <text class="label" x="24" y="61">GUI · CLI</text>
+    <text class="label" x="24" y="84">Skill · Hook</text>
+    <text class="small" x="24" y="109">共用同一套安全层</text>
+  </g>
+
+  <g transform="translate(302 78)">
+    <rect width="228" height="128" rx="14" fill="#e8f0ff" stroke="#9eb8ed" stroke-width="2"/>
+    <circle cx="25" cy="25" r="14" fill="#3567d6"/>
+    <text class="step" x="25" y="29" text-anchor="middle">2</text>
+    <text class="label" x="24" y="61">任务快照</text>
+    <text class="label" x="24" y="84">不可变计划</text>
+    <text class="small" x="24" y="109">绑定 SHA-256 的决策</text>
+  </g>
+
+  <g transform="translate(582 78)">
+    <rect width="260" height="128" rx="14" fill="#ffffff" stroke="#9eb8ed" stroke-width="2"/>
+    <circle cx="25" cy="25" r="14" fill="#3567d6"/>
+    <text class="step" x="25" y="29" text-anchor="middle">3</text>
+    <text class="label" x="24" y="61">执行前重新校验</text>
+    <text class="small" x="24" y="86">能力 · 状态 · 内容指纹</text>
+    <text class="small" x="24" y="108">有效期 · 派生后代闭包</text>
+  </g>
+
+  <g transform="translate(894 78)">
+    <rect width="266" height="128" rx="14" fill="#eaf7ef" stroke="#9bcfaf" stroke-width="2"/>
+    <circle cx="25" cy="25" r="14" fill="#1f7a45"/>
+    <text class="step" x="25" y="29" text-anchor="middle">4</text>
+    <text class="label" x="24" y="61">官方 Codex</text>
+    <text class="label" x="24" y="84">App Server</text>
+    <text class="small" x="24" y="109">唯一受支持的在线写入路径</text>
+  </g>
+
+  <path class="line" d="M 416 207 V 259"/>
+  <path class="line" d="M 712 207 V 259"/>
+
+  <g transform="translate(282 262)">
+    <rect width="268" height="112" rx="14" fill="#ffffff" stroke="#b7c6d9" stroke-width="2"/>
+    <text class="label" x="24" y="39">加密备份</text>
+    <text class="label" x="24" y="63">与审计证据</text>
+    <text class="small" x="24" y="89">age · 校验清单 · 来源记录</text>
+  </g>
+
+  <g transform="translate(578 262)">
+    <rect width="268" height="112" rx="14" fill="#fff7e6" stroke="#e7c276" stroke-width="2"/>
+    <text class="label" x="24" y="39">能力未知或不完整？</text>
+    <text class="label" x="24" y="63">退化为只读</text>
+    <text class="small" x="24" y="89">盘点 · 备份 · 验证 · 计划</text>
+  </g>
+</svg>

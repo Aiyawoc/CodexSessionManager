@@ -1,237 +1,223 @@
 # CodexSessionManager
 
-[English README](README.md) | 中文
-
 <p align="center">
-  <img src="docs/images/gui-overview.png" alt="CodexSessionManager GUI 界面总览" width="100%">
-</p>
-<p align="center">
-  <sub>
-    在同一工作区中审查项目、对话、时间线、上下文和裁剪动作。·
-    <a href="docs/CodexSessionManager-GUI-Guide-bilingual.pptx">双语 GUI 操作说明（PPTX）</a>
-  </sub>
+  <img src="docs/images/gui-overview-cn.png" alt="CodexSessionManager 项目、对话、时间线、上下文与裁剪界面" width="100%">
 </p>
 
-> **为什么开发这个项目？** 长期使用 Codex 后，对话与上下文会分散并累积在多个项目中，安全盘点、备份、清理和精简也随之变得困难。CodexSessionManager 将这些流程集中到可审计的界面中，同时保持原任务只读，并避免直接修改 Codex 内部存储。
+<p align="center">
+  <strong>面向 Codex 对话盘点、备份、清理、导入和上下文裁剪的安全优先 GUI 与 CLI。</strong><br>
+  <a href="README.md">English</a> · 简体中文 · <a href="docs/CodexSessionManager-GUI-Guide-bilingual.pptx">双语 GUI 操作指南</a>
+</p>
 
-> **代码生成声明：** 本项目代码完全由 ChatGPT 生成，并经过人工审查、测试和发布决策；用于生产环境前请独立验证实现。
+长期使用 Codex 后，对话会分散在多个项目中，上下文也会持续膨胀。CodexSessionManager 将审查、加密备份、安全清理与无损上下文裁剪集中到一个可审计的桌面工具中。
 
-> **测试版提示：** `v1.0.0` 是仅供隔离测试的 prerelease。macOS arm64 版本仅作 ad-hoc 签名、未经公证；Windows x64 版本未签名。系统可能显示 Gatekeeper 或 SmartScreen 警告，请先核对随附 SHA-256，且不要将任一构建视为生产版本。
+<a id="features"></a>
+## ✨ 功能特性
 
-CodexSessionManager（`csm`）是面向 Codex App 任务的安全管理工具，包含 CLI、PySide6 裁剪 GUI、显式调用 Skill、可选 PreCompact/PostCompact Hook，以及自带 Python、Qt 和 age 的 macOS 与 Windows 独立运行包。
+- 按项目、活跃时间、来源和父子关系分组、搜索 Codex 对话。
+- 以流式方式创建 age 加密 `.csmbackup`，并执行完整性复验。
+- 所有归档、恢复、导入、裁剪和清除写操作均先生成不可变计划。
+- 通过派生任务精简上下文，原对话内容始终保持不变。
+- 审查模型可见内容、Markdown、隐藏标签、依赖关系和预计 Token 节省量。
+- 在本地筛查疑似凭据和个人信息，并对命中内容进行醒目标记。
+- 支持 GUI、CLI、显式调用 Codex Skill，以及可选的 fail-open PreCompact/PostCompact Hook。
+- 提供自包含 macOS arm64 与 Windows x64 包，无需最终用户安装 Python、Qt、uv 或 age。
 
-在线读取和写入只通过官方 Codex App Server 完成；程序不会直接改写 Codex JSONL 或 SQLite。上下文裁剪始终创建派生任务，原任务不变。任何归档、恢复、导入、裁剪或永久清除都必须消费带 SHA-256 的不可变计划，并在执行前复核协议能力、内容指纹、状态和后代闭包。
+### 安全默认值对比
 
----
-
-## 目录
-
-- [快速启动](#快速启动)
-  - [安装并启动 GUI](#安装并启动-gui)
-  - [在 GUI 中裁剪上下文](#在-gui-中裁剪上下文)
-  - [安装隔离测试副本](#安装隔离测试副本)
-- [开发环境](#开发环境)
-- [日常使用](#日常使用)
-- [安全工作流](#安全工作流)
-- [上下文裁剪](#上下文裁剪)
-- [Hook](#hook)
-- [自动化测试流程](#自动化测试流程)
-- [桌面构建与测试版发布](#桌面构建与测试版发布)
-- [项目结构](#项目结构)
-
-## 快速启动
-
-| 入口 | 适用场景 | 说明 |
+| 需求 | 临时或手工作业方式 | CodexSessionManager |
 | --- | --- | --- |
-| macOS `CodexSessionManager.app` | Apple Silicon 日常盘点与裁剪 | standalone 内含 Python、Qt、插件和 age |
-| Windows `CodexSessionManager.exe` | Windows x64 日常盘点与裁剪 | 解压测试 ZIP 后运行内置用户级安装脚本 |
-| Codex 中的 `$manage-codex-sessions` | 由 Codex 打开 GUI 或执行安全工作流 | 安装后重启 Codex；Skill 会优先使用 `csm`，并可回退到稳定 App 内入口 |
-| `~/.local/bin/csm` | CLI、备份、计划和审计 | 安装器创建的用户级命令，仅执行 CLI 子命令 |
-| `scripts/launch_test_app.sh` | 隔离 GUI 测试 | 在复制的 Codex home 中启动，不接触真实用户目录 |
+| 审查大量对话 | 分别搜索项目和原始历史 | 按项目分组盘点并统一查看时间线 |
+| 清理旧对话 | 缺少可复现依据便直接删除或归档 | dry-run 计划、指纹校验、后代展开，再通过 App Server 写入 |
+| 精简上下文 | 改写原历史或接受一次性整体压缩 | 在新派生任务中保留、排除、摘要或保护内容 |
+| 备份与迁移 | 复制内部文件并依赖版本恰好兼容 | 加密逻辑记录、校验清单、来源信息、完整复验和新 ID 恢复 |
 
-### 安装并启动 GUI
+<a id="quick-start"></a>
+## ⚙️ 快速开始
 
-从 [`v1.0.0` prerelease](https://github.com/Aiyawoc/CodexSessionManager/releases/tag/v1.0.0) 下载测试包和对应 `.sha256` 文件，并在启动前核对散列。
+> [!WARNING]
+> `v1.0.0` 是**测试版 prerelease**。macOS 包仅作 ad-hoc 签名且未经公证；Windows 包未签名。启动前必须核对同名 SHA-256 文件，不要将这两个包视为生产版本。
 
-在 macOS arm64 上，可这样安装并启动本地构建：
+**运行条件**
+
+- 发布包：Apple Silicon macOS 或 Windows x64；需要本机已有 Codex App/CLI，才能访问 App Server。
+- 源码运行：[uv](https://docs.astral.sh/uv/) 与 Git。uv 会管理项目固定的 CPython 3.13.14 环境。
+
+### 1. 下载测试版
+
+从 [`v1.0.0` 测试版](https://github.com/Aiyawoc/CodexSessionManager/releases/tag/v1.0.0)下载压缩包及对应 `.sha256` 文件：
+
+- [macOS arm64 ZIP](https://github.com/Aiyawoc/CodexSessionManager/releases/download/v1.0.0/CodexSessionManager-macOS-arm64-1.0.0-test.zip) · [SHA-256](https://github.com/Aiyawoc/CodexSessionManager/releases/download/v1.0.0/CodexSessionManager-macOS-arm64-1.0.0-test.zip.sha256)
+- [Windows x64 ZIP](https://github.com/Aiyawoc/CodexSessionManager/releases/download/v1.0.0/CodexSessionManager-Windows-x64-1.0.0-test.zip) · [SHA-256](https://github.com/Aiyawoc/CodexSessionManager/releases/download/v1.0.0/CodexSessionManager-Windows-x64-1.0.0-test.zip.sha256)
+
+### 2. 校验并启动
+
+macOS arm64：
 
 ```bash
-scripts/install_user.sh dist/CodexSessionManager.app
-"$HOME/Applications/CodexSessionManager.app/Contents/MacOS/CodexSessionManager"
+shasum -a 256 -c CodexSessionManager-macOS-arm64-1.0.0-test.zip.sha256
+ditto -x -k CodexSessionManager-macOS-arm64-1.0.0-test.zip .
+"./CodexSessionManager.app/Contents/MacOS/CodexSessionManager" cli doctor
+"./CodexSessionManager.app/Contents/MacOS/CodexSessionManager"
 ```
 
-安装器使用用户目录和原子替换，不需要管理员权限。它还会把 App 内置 Skill 链接到 `~/.agents/skills/manage-codex-sessions`；若 `$manage-codex-sessions` 没有立即出现，请重启 Codex。下载的测试包只有 ad-hoc 签名且未经公证，macOS 可能隔离它。只有在核对 SHA-256 并确认文件确实来自本仓库后，才可手工移除 quarantine；正式分发应改用 Developer ID 签名与公证。
-
-在 Windows x64 上，解压 ZIP、审阅内置安装脚本，然后从 PowerShell 执行：
+Windows x64 PowerShell：
 
 ```powershell
-Get-FileHash .\CodexSessionManager-Windows-x64-1.0.0-test.zip -Algorithm SHA256
+$Archive = ".\CodexSessionManager-Windows-x64-1.0.0-test.zip"
+$Expected = ((Get-Content "$Archive.sha256").Trim() -split '\s+')[0]
+$Actual = (Get-FileHash $Archive -Algorithm SHA256).Hash
+if ($Actual.ToLower() -ne $Expected.ToLower()) { throw "SHA-256 mismatch" }
+Expand-Archive $Archive -DestinationPath . -Force
 PowerShell -NoProfile -ExecutionPolicy Bypass -File .\CodexSessionManager-Windows-x64\Install-CodexSessionManager.ps1
 & "$env:LOCALAPPDATA\CodexSessionManager\CodexSessionManager.exe"
 ```
 
-Windows 安装器写入 `%LOCALAPPDATA%\CodexSessionManager`，保留上一版本用于回退，把 Skill 安装到 `~/.agents/skills`，并把稳定应用目录加入用户 `PATH`。测试版没有 Authenticode 签名，Windows 可能显示 SmartScreen 警告。两个平台都不会在安装 App 时自动启用 Hook。
-
-重启 Codex 后，可直接调用 `$manage-codex-sessions`，并要求“打开某个对话的上下文裁剪界面”。Skill 会先解析 `csm`，再回退到当前平台已安装包内的稳定入口。PreCompact 自动提示只有在用户另行执行 `csm hook install --yes` 并在 Codex `/hooks` 中审查、信任配置后才启用。
-
-启动后，左侧“项目与任务”列表会按项目分组显示对话名称和距今时间：
-
-1. 在共用输入框中搜索项目/对话，或输入完整对话 ID 后点击“加载 ID”。
-2. 在时间线中选择 turn/item，在“上下文”查看内容和保护关系。
-3. 在右侧选择“保留 / 排除 / 摘要 / 保护”，必要时编辑摘要。
-4. 点击“保存方案”只会保存已审查、不可变的 TrimPlan，不会改变任何对话；点击“派生精简任务”则会保存并把方案应用到新建派生任务。原任务始终只读保护。
-
-“原任务只读保护”右侧的语言下拉列表可在简体中文（默认）和英文之间即时切换。项目面板标题右侧的“收起”可隐藏左侧列表；再次点击最左侧项目/任务图标可恢复。三个分栏之间保留可拖动的命中区域，中央显示 1px 蓝灰分割线，拖动后可调整时间线和原文宽度。
-
-### 在 GUI 中裁剪上下文
-
-GUI 默认按 turn 操作，item 级选择用于高级审查。当前请求、进行中的 turn、有效目标、未解决错误、未知 item，以及成组的工具调用/结果和文件变更/验证会被硬保护。预计 token 数和节省比例显示在底部；风险提示未消除前不要直接应用计划。
-
-“敏感筛查”只在本机使用确定性规则检查模型可见文本，不上传内容。它识别私钥头、常见云服务/API 密钥、JWT、口令或令牌赋值、邮箱、中国大陆手机号，并对身份证号和支付卡号执行校验位检查；占位符、已脱敏值和无效号码会被忽略。启用后任务列表仅保留疑似匹配的对话，“上下文”中匹配区间以红底白字标记；结果属于辅助提示，仍可能存在误报或漏报。
-
-### 安装隔离测试副本
-
-测试脚本会复制当前 Codex home，创建独立 `HOME`、数据、配置、缓存和日志目录，并安装一份 standalone App：
-
-```bash
-scripts/install_test_app.sh
-```
-
-安装完成后脚本会打印 `TEST_ROOT`、`APP`、`LAUNCHER`、`SKILL` 和一次性生成的 `LAUNCH_SCRIPT`。直接启动生成的脚本即可打开隔离 GUI：
-
-```bash
-"/private/tmp/csm-codex-home-test.xxxxxx/launch-test-app.sh"
-```
-
-也可以使用仓库内的通用启动器：
-
-```bash
-scripts/launch_test_app.sh "/private/tmp/csm-codex-home-test.xxxxxx"
-```
-
-测试安装默认跳过外部 App Server 探测，便于验证 App 自带运行时；`doctor --skip-app-server` 会检查内置 Python、PySide6、Qt 插件、age、签名和可写目录。复制会跳过 Unix socket 等运行时特殊文件，但测试副本可能包含认证信息；测试结束后只删除脚本打印的精确 `TEST_ROOT`。
-
-## 开发环境
-
-项目固定 CPython 3.13.14，不使用 `/usr/bin/python3`，也不向系统 Python 安装依赖。uv 会在项目隔离环境中取得并管理所需 Python：
+也可以直接从源码运行基础 GUI 与 CLI：
 
 ```bash
 uv sync --locked --compile-bytecode
-uv run csm doctor
-scripts/check.sh
-```
-
-依赖按 `runtime`、`gui`、`dev`、`build` 分组并由 `uv.lock` 锁定。Hook 和 Skill 运行期间不会执行 `uv sync`、下载 Python或安装依赖。
-打包使用独立 `build/.venv-build`，只同步 `runtime + gui + build`；该位置也避免 Qt 部署扫描器把打包环境误判为应用 QML 资源。
-
-## 日常使用
-
-源码模式：
-
-```bash
 uv run csm --help
-uv run csm threads list
-uv run csm threads show THREAD_ID --include-content
-uv run csm cleanup plan --older-than-days 90
-uv run csm trim review THREAD_ID
+uv run CodexSessionManager
 ```
 
-安装后的单一分发入口：
+备份复验和完整 `doctor` 检查还需要 `age` 可执行文件。平台构建脚本会获取并验证固定版本；开发环境也可以通过 `CSM_AGE_BIN` 指定已有 age。
 
-```text
-CodexSessionManager                  打开 GUI
-CodexSessionManager cli ...          执行 CLI
-CodexSessionManager hook precompact  执行 Hook 协议
-```
+### 3. 完成最小 GUI 操作
 
-用户级安装不会要求管理员权限：
+1. 搜索项目或对话，也可以输入完整对话 ID。
+2. 选择 turn 或 item，然后设置为**保留、排除、摘要或保护**。
+3. 使用**保存方案**只保存已审查计划；使用**派生精简任务**创建新的精简对话。
+
+### 构建与发布状态
+
+[![Windows CI](https://github.com/Aiyawoc/CodexSessionManager/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Aiyawoc/CodexSessionManager/actions/workflows/ci.yml)
+[![Test release](https://img.shields.io/github/v/release/Aiyawoc/CodexSessionManager?include_prereleases&label=test%20release)](https://github.com/Aiyawoc/CodexSessionManager/releases)
+![Python 3.13.14](https://img.shields.io/badge/Python-3.13.14-3776AB?logo=python&logoColor=white)
+![PySide6 6.11.1](https://img.shields.io/badge/PySide6-6.11.1-41CD52?logo=qt&logoColor=white)
+![Platforms](https://img.shields.io/badge/platforms-macOS%20arm64%20%7C%20Windows%20x64-60758A)
+[![MIT license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+> [!NOTE]
+> 本项目代码完全由 ChatGPT 生成。代码仍必须经过人工审查、自动化测试和目标平台验证；在依赖任何写操作前，请独立检查实现与测试证据。
+
+<a id="contents"></a>
+## 目录
+
+- [✨ 功能特性](#features)
+- [⚙️ 快速开始](#quick-start)
+- [📌 适用场景](#use-cases)
+- [安全模型](#safety-model)
+- [📖 使用文档](#documentation)
+- [🔧 配置说明](#configuration)
+- [开发、测试与打包](#development)
+- [❓ 常见问题 FAQ](#faq)
+- [🤝 贡献指南](#contributing)
+- [📄 开源协议](#license)
+
+<a id="use-cases"></a>
+## 📌 适用场景
+
+| 场景 | CSM 提供的能力 |
+| --- | --- |
+| 长期维护多个 Codex 项目 | 按项目分组的对话列表、搜索、距今时间、多选和关系追踪 |
+| 上下文即将触发压缩 | 用户手动审查，或在原生压缩前使用可选 PreCompact 轻提示 |
+| 清理较旧或长期未活动对话 | 本地规则候选、dry-run 归档计划、批次上限和人工确认 |
+| 对话备份或跨账号迁移 | CSM 加密备份、逻辑恢复、Codex rollout 导入和 ChatGPT 导出分支展开 |
+| 敏感内容排查 | 不上传对话内容的本地确定性筛查与红色高亮 |
+| 需要可审计的维护流程 | 不可变计划哈希、来源指纹、能力校验和 CSM 自有审计链 |
+
+本项目主要面向在多个仓库中长期使用 Codex、需要管理大量对话，或希望避免直接操作 Codex 内部存储的开发者与维护者。
+
+<a id="safety-model"></a>
+## 安全模型
+
+![CodexSessionManager 安全模型：各入口先创建不可变计划，通过重新校验后只经官方 App Server 写入](docs/images/safety-model-cn.svg)
+
+- Codex 在线读取和写入只通过官方 App Server；CSM 不改写 Codex JSONL 或 SQLite。
+- 协议能力未知、不完整或未经审计时停止写入，但仍开放盘点、备份、验证和计划。
+- 每个写操作都消费绑定 SHA-256 的计划，并重新校验状态、内容指纹、协议能力、有效期和 spawned descendants。
+- 自动操作最多归档。永久清除必须使用独立计划、已验证备份证据、可信归档历史和明确人工确认。
+- 上下文裁剪只创建新任务；原任务保持不变，系统/开发者指令从当前项目重新加载。
+- 工具调用与结果、文件变更与验证按组保留或摘要，不拆成不安全的片段。
+- Hook 采用 fail-open：超时、关闭、崩溃或启动失败时继续 Codex 原生压缩。
+
+<a id="documentation"></a>
+## 📖 使用文档
+
+### 稳定用户级安装
+
+直接运行解压出的 macOS App 不会安装 Skill 或 CLI 启动器。在与发布标签一致的源码检出中，可安装到稳定用户路径：
 
 ```bash
-scripts/install_user.sh dist/CodexSessionManager.app
+scripts/install_user.sh /absolute/path/to/CodexSessionManager.app
 ~/.local/bin/csm doctor
 ```
 
-安装器使用原子替换，保留上一版本用于回退。macOS 稳定路径为 `~/Applications/CodexSessionManager.app`，Windows 稳定路径为 `%LOCALAPPDATA%\CodexSessionManager`；Hook 不引用源码目录或 `.venv`。
+安装器会原子替换 `~/Applications/CodexSessionManager.app`、保留上一版本用于回退、创建 `~/.local/bin/csm`，并链接 App 内 Skill。快速开始中的 Windows 安装器会在 `%LOCALAPPDATA%\CodexSessionManager` 完成等效的用户级安装。两个安装器都不会自动启用 Hook。
 
-若要使用当前 `~/.codex` 的副本进行隔离测试，使用测试安装脚本。它会在系统临时目录创建独立的 `HOME`、`codex-home`、数据和日志目录，不覆盖真实用户安装：
+### GUI 操作流程
+
+<p align="center">
+  <img src="docs/images/context-trimming-demo-cn.gif" alt="使用虚构对话数据演示十二秒上下文裁剪流程" width="100%">
+</p>
+<p align="center"><sub>12 秒可复现演示 · 对话 ID、路径、仓库与对话内容均为虚构数据</sub></p>
+
+1. **项目与任务**按项目 cwd 或 Git remote 对话分组。搜索和完整 ID 加载共用一个输入框，多选操作仍受安全门禁约束。
+2. **时间线**显示模型可见的 turn/item，并默认过滤空内部事件；Token 数量使用紧凑单位。
+3. **上下文**内容可编辑，支持显示隐藏标签、分段渲染、Markdown 预览和本地敏感命中高亮。
+4. **裁剪动作**支持 `keep`、`exclude`、`summary` 和 `protect`。当前请求、进行中 turn、有效目标、未解决错误和未知 item 等硬保护内容不能被静默删除。
+
+“保存方案”只将已审查的 `TrimPlan` 写入 CSM 数据目录，不修改 Codex。“派生精简任务”会先重新校验计划、等待原任务 idle，再创建新的派生任务。
+
+### CLI 工作流
 
 ```bash
-scripts/install_test_app.sh
+csm doctor
+csm threads list
+csm threads show CONVERSATION_ID --include-content
+csm trim review --thread-id CONVERSATION_ID
+csm audit show
 ```
 
-脚本结束时会打印测试目录和启动命令；也可以自动启动隔离 GUI：
-
-```bash
-CSM_OPEN_TEST_APP=1 scripts/install_test_app.sh
-```
-
-脚本同时生成 `TEST_ROOT/launch-test-app.sh`，可在之后重复启动同一测试副本；通用启动器为 `scripts/launch_test_app.sh TEST_ROOT`。
-
-安装器会在宿主机自动探测 `codex` CLI，并将其路径及 Node 运行目录写入测试启动脚本，因此 GUI 可以通过隔离的 `CODEX_HOME` 加载现有任务。若机器上的 CLI 不在 `PATH`，请先设置 `CSM_CODEX_BIN=/绝对路径/codex` 后再安装；没有 CLI 时仍可运行 GUI，但任务列表无法通过 App Server 加载。
-
-若手动启动测试 GUI，请使用脚本打印的 `EXECUTABLE` 及环境变量直接执行 bundle 内二进制；不要使用 `open App.app`，因为 LaunchServices 不保证继承当前 shell 的 `CODEX_HOME`。
-
-可通过环境变量 `CSM_SOURCE_CODEX_HOME` 指定复制源，通过第二个参数指定一个必须为空的测试根目录。测试根目录包含 Codex home 副本，可能含认证信息，测试完成后应整体删除该精确目录。
-复制过程中会跳过 Unix socket、FIFO 和设备等运行时特殊文件；建议复制前退出 Codex，以便 SQLite 主库与 WAL 文件形成更一致的测试快照。
-安装阶段默认跳过外部 Codex App Server 探测，以便在没有 `codex`、uv 或 Python 的 PATH 中验证 `.app` 自带运行时；安装器会自动记录可用 CLI，之后生成的启动脚本和 CLI 示例会复用该路径。
-
-## 安全工作流
-
-典型的归档流程：
+归档前先创建并验证加密备份：
 
 ```bash
 csm backup create backup.csmbackup \
-  --thread THREAD_ID \
+  --thread CONVERSATION_ID \
   --recipient age1... \
   --identity /secure/path/identity.txt
 csm cleanup plan --action archive --older-than-days 90
 csm cleanup apply PLAN.json --confirm PLAN_ID
 ```
 
-- 默认 90 天未活动进入候选，单批最多 100 个根任务。
-- 自动操作上限为归档；永久清除始终要求人工计划、精确计划 ID 和永久确认短语。
-- 父任务操作会展开 spawned descendants；活动中、固定、临时或读取不完整的任务不会进入写计划。
-- `parent_id` 与 `forked_from_id` 作为独立图边同时展开；缺失父节点、成环或多个根闭包重叠时停止写入。
-- 归档至少 14 天且存在 CSM 可信归档时间和已验证加密备份后，才可能进入人工清除候选；归档证据必须与当时使用的精确备份 manifest 绑定并可在审计哈希链中验证，反归档前会先保守作废该时间凭据。
-- 每个根任务永久删除前再次重读归档状态、14 天门、备份证据、loaded 状态、后台终端和本机进程。
-- 写入超时后先查询真实状态，不进行盲目重试。
-- 只有已审计的 Codex 版本 + 完整 App Server schema SHA-256 组合开放写入；未知协议或映射不稳定时退化为只读、备份和计划。当前写入 allowlist 固定 Codex 0.142.1 的实测 schema。
+主要命令组：
 
-`.csmbackup` 以 tar 流直接送入 age，manifest 位于流尾。创建只使用加密临时文件，并以不可覆盖的原子发布方式生成目标；验证会完整解密、从嵌入的 `ThreadSnapshot` 重新计算 `backup_fingerprint`，再与逻辑来源和 manifest 逐项比对，但不落地明文容器。恢复第二遍解密必须再次出现所有已验证成员。只有这类全包验证结果才能写入审计链并成为归档/清除证据。口令模式由 age 直接在终端读取；GUI 和自动任务只允许 recipient-key 模式。
+| 命令 | 用途 |
+| --- | --- |
+| `csm threads list\|show` | 只读盘点与内容查看 |
+| `csm backup create\|verify` | 流式 age 加密备份与完整复验 |
+| `csm cleanup plan\|apply` | 可恢复的归档/反归档工作流 |
+| `csm purge plan\|apply` | 独立门禁的永久删除工作流 |
+| `csm restore plan\|apply` | 使用新对话 ID 进行逻辑恢复 |
+| `csm import {chatgpt\|codex} ...` | 规划并应用官方 ChatGPT 导出或 Codex rollout 数据导入 |
+| `csm trim review\|suggest\|apply` | GUI/人工审查、本地建议与派生裁剪 |
+| `csm hook install\|status\|uninstall` | 可选 PreCompact/PostCompact 集成 |
+| `csm audit show\|verify` | 查看并验证 CSM 审计链 |
 
-`CSM_CODEX_HOME` 与外部 `CODEX_HOME` 若同时设置，必须解析到同一数据根；否则所有入口（包括 Hook 管理命令）均拒绝继续，避免把一个账号的任务与另一个账号的备份/Hook 状态混合。
+口令模式由 age 直接从终端读取口令。不要把备份口令写入命令参数、环境变量、日志、Issue 或模型上下文。GUI 和无人值守工作流应使用 age recipient。
 
-恢复和跨账号导入会创建新对话 ID。支持：
+### Codex Skill
 
-- CSM 加密备份的逻辑恢复；
-- ChatGPT 官方导出的根到叶分支展开；
-- 其他账号 Codex rollout JSONL 文件或目录；
-- 完全相同跳过、已有完整前缀跳过、来源更完整优先、分叉并存；
-- 未确认项目映射时导入 CSM 隔离区；工具调用只保留惰性来源信息，绝不执行或重放。
+稳定安装器会把 `manage-codex-sessions` 安装到 `~/.agents/skills`。重启 Codex 后显式调用：
 
-## 上下文裁剪
-
-```bash
-csm trim suggest THREAD_ID
-csm trim review THREAD_ID
-csm trim apply PLAN.json --confirm PLAN_ID
+```text
+$manage-codex-sessions 打开当前对话的上下文裁剪
 ```
 
-动作包括 `keep`、`exclude`、`summary` 和 `protect`。当前请求、进行中 turn、有效目标、审批决定、未解决错误、未知 item，以及相关联的工具调用/结果和文件变更/验证均受硬保护。GUI 默认按 turn 操作，item 级为高级视图；所有扫描、App Server 请求和分析均在线程池中执行。
+Skill 不会在普通编码任务中自动运行。它会解析稳定的 `csm` 启动器或 App 内可执行文件，并与 GUI、CLI 共用同一套计划和安全门禁。
 
-GUI 左侧按项目 cwd 或 Git remote 分组显示对话名称和距今时间，不再占用单独的状态列；状态保留在提示信息中。搜索与手动输入对话 ID 共用一个输入框；列表支持多选、右键更名、复制对话 ID、归档和永久删除。归档与删除仍必须通过不可变计划、后代闭包、备份、状态和审计门禁，永久删除还要求 14 天可信归档时间及两次人工确认。
-
-右下角“敏感筛查”按钮会在后台逐条读取对话，并用本地规则筛查疑似密钥、令牌、私钥、邮箱、手机号、身份证号和支付卡号。筛查结果只保留类别与计数，不保存或显示命中的敏感值，也不会将内容上传到外部服务。该功能是可能误报的本地初筛，不能证明某个凭据仍然有效或已经泄露。
-
-项目与任务标题右侧的收起图标可隐藏左侧面板；收起后释放的宽度按比例分配给时间线和原文区域，最右侧裁剪动作栏保持原宽度。
-
-窗口最左侧保留固定宽度的项目/任务入口，不展示未实现的备份、清理和审计占位图标。收起项目与任务栏后，该图标仍可用于恢复面板。时间线表格的第一列会自动填满剩余宽度，三个垂直分栏都可拖动，1px 蓝灰分割线位于板块之间的中心。
-
-连续前缀在 App Server 支持时使用 `thread/fork(lastTurnId)`；若当前协议没有该字段，则只在新 fork 上执行受检 `thread/rollback`。非连续裁剪创建新任务并注入带来源 manifest 的 `ContextProjection`，不会自动启动模型 turn。
-
-## Hook
-
-Hook 是可选功能，不会随应用安装而静默启用：
+### 可选 Hook
 
 ```bash
 csm hook status
@@ -239,83 +225,162 @@ csm hook install --yes
 csm hook uninstall --yes
 ```
 
-PreCompact 先显示 15 秒轻提示；关闭、超时、崩溃、启动失败或数据目录不可写时均继续原生压缩。只有 TrimPlan 成功持久化后才输出 `continue:false`。Hook 只保存计划，不会在进行中的 turn 内创建派生任务；stdout 始终只含一个最终 JSON 对象，日志写入独立文件。
+安装 App 不会静默启用 Hook。安装 Hook 后仍需在 Codex `/hooks` 中审查并信任具体命令。PreCompact 会先显示轻提示；只有方案成功持久化后才返回 `continue: false`，也不会在进行中的 turn 内创建派生任务。
 
-安装 Hook 后仍应在 Codex `/hooks` 中审查并信任具体命令。
+### 延伸文档
 
-## 自动化测试流程
+- [双语 GUI 操作指南（PPTX）](docs/CodexSessionManager-GUI-Guide-bilingual.pptx)
+- [Skill 命令工作流](skills/manage-codex-sessions/references/commands.md)
+- [Skill 安全不变量](skills/manage-codex-sessions/references/safety.md)
+- [`v1.0.0` 测试版说明](docs/releases/v1.0.0-test.md)
+- [项目开发约束](AGENTS.md)
 
-源码门禁可独立运行；完整流程默认从当前源码重新构建 App，避免用旧 bundle 掩盖打包问题：
+<a id="configuration"></a>
+## 🔧 配置说明
+
+CSM 默认使用各平台的用户级标准目录。环境变量主要用于明确选择账号、隔离测试或高级安装场景。
+
+| 环境变量 | 用途 |
+| --- | --- |
+| `CSM_CODEX_HOME` | CSM 使用的明确 Codex 数据根目录 |
+| `CODEX_HOME` | Codex 官方数据根覆盖；两个 home 变量同时设置时必须解析到同一路径 |
+| `CSM_CODEX_BIN` | Codex CLI/App Server 启动器的绝对路径或命令名 |
+| `CSM_APP_PATH` | 生成 Hook 命令时使用的稳定 App 根目录或可执行文件 |
+| `CSM_DATA_DIR` | 计划、导入、备份和审计数据库目录 |
+| `CSM_CONFIG_DIR` | CSM 配置目录 |
+| `CSM_CACHE_DIR` | 缓存目录 |
+| `CSM_LOG_DIR` | 应用与 Hook 日志目录 |
+| `CSM_AGE_BIN` | 仅用于开发环境的 age 路径覆盖；standalone 使用已验证的内置二进制 |
+
+如果 `CSM_CODEX_HOME` 与 `CODEX_HOME` 指向不同目录，所有入口都会拒绝继续，避免把一个账号的任务状态与另一个账号的计划或审计证据混用。
+
+稳定安装路径为 macOS 的 `~/Applications/CodexSessionManager.app` 和 Windows 的 `%LOCALAPPDATA%\CodexSessionManager`。Hook 必须指向稳定安装位置，不能指向源码目录或 `.venv`。
+
+<a id="development"></a>
+## 开发、测试与打包
+
+### 开发环境
+
+```bash
+git clone https://github.com/Aiyawoc/CodexSessionManager.git
+cd CodexSessionManager
+uv sync --locked --compile-bytecode
+scripts/check.sh
+```
+
+`scripts/check.sh` 会检查 Qt 生成文件、Ruff 格式与 lint、严格 mypy、PySide6 offscreen 测试和 Skill 契约。源码、安装、Skill、Hook 和生命周期还可以分别运行：
 
 ```bash
 scripts/test_source_workflow.sh
-scripts/test_full_workflow.sh
-```
-
-已有可信 bundle 时，可分别复测安装、Skill 和 Hook，也可执行不重新构建的本地 smoke：
-
-```bash
 scripts/test_install_workflow.sh dist/CodexSessionManager.app
 scripts/test_skill_workflow.sh dist/CodexSessionManager.app
 scripts/test_hook_workflow.sh dist/CodexSessionManager.app
-scripts/test_full_workflow.sh --reuse-app dist/CodexSessionManager.app
+scripts/test_full_workflow.sh
 ```
 
-自动化流程分层覆盖：
+这些检查只使用隔离临时数据，不能替代真实账号 App Server 联调、实体设备 UI 验收、签名与公证、SmartScreen 信誉或生产验收。
 
-- 源码：锁定环境、生成文件一致性、Shell 语法与执行权限、Ruff、严格 mypy、offscreen pytest、Skill 结构与命令契约、进程级假 App Server、真实 age 加密备份与审计生命周期，以及隔离 `doctor`。
-- bundle：内置 Python、PySide6、Qt 插件、age 完整性、无开发运行时的 CLI/GUI/Hook smoke、中文与空格路径及代码签名检查。
-- 安装：空白临时 `HOME` 中的冲突保护、原子安装与重复安装、上一版本保留、版本一致性、稳定 launcher、Skill 链接，以及“安装 App 不自动启用 Hook”。
-- Skill：源码、bundle、已安装副本三方校验和内容一致性，显式调用策略、稳定入口及全部文档命令的 CLI 可达性。
-- Hook：保留外部 handler、安装配置与 600/30 秒超时、`manual|auto` matcher、权限和备份、状态、单行 JSON fail-open、重复安装，以及只卸载 CSM handler。
-- 生命周期：在临时数据中执行加密备份、验证、归档、等待期证据、永久清除计划和审计链验证；不接触真实 Codex 数据。
+在 macOS 上对当前 Codex home 的副本进行测试：
 
-安装、Skill、Hook 流程始终创建空白的临时 `HOME`、`CODEX_HOME` 和应用数据目录，不复制真实认证或任务。失败排查时可设置 `CSM_KEEP_TEST_ROOT=1` 保留脚本打印的精确临时目录。
+```bash
+scripts/install_test_app.sh
+scripts/launch_test_app.sh /absolute/path/printed/as/TEST_ROOT
+```
 
-这些自动化结果仍不等同于真实账号或生产验收。真实 Codex 中的 Skill 发现与模型遵循、`/hooks` 信任及真实触发、App Server 写操作、真实 Cocoa 窗口/缩放/输入法、Developer ID 签名、公证、staple 和干净机器安装仍需分别留存证据。
+复制出的测试目录可能包含认证信息。条件允许时先退出 Codex，并且只删除安装器打印的精确 `TEST_ROOT`。
 
-## 桌面构建与测试版发布
+### 桌面打包
 
-### macOS arm64
+在真实 Apple Silicon macOS 上构建 arm64：
 
 ```bash
 scripts/build_macos_app.sh
 scripts/accept_macos_bundle.sh dist/CodexSessionManager.app
 ```
 
-构建使用 `pyside6-deploy` / Nuitka standalone，携带 Python、Qt、Qt 插件和经 SHA-256 + Sigsum 验证的官方 age 1.3.1 arm64 二进制。项目携带一个严格校验后临时应用的 Nuitka 4.0 macOS UTF-8 路径补丁，用于满足应用位于中文路径时的启动要求；构建结束会恢复 `build/.venv-build` 中的原始 Nuitka 源码。Nuitka 成功 report 也是打包门禁，不接受 `pyside6-deploy` 遗留的部分 `.app`。
-
-无 `CSM_DEVELOPER_ID` 时，普通构建标记为 `local-adhoc`。用户明确要求测试版 prerelease 时，可设置 `CSM_TEST_RELEASE=1` 标记为 `macos-test-adhoc`；它仍未公证，绝不能描述为生产版本。正式分发必须另行执行 Developer ID 签名、公证和 staple：
-
-```bash
-CSM_DEVELOPER_ID='Developer ID Application: ...' scripts/build_macos_app.sh
-scripts/notarize_macos_app.sh dist/CodexSessionManager.app
-```
-
-arm64 App 只在真实 Apple Silicon macOS 上构建和验收；Intel 版本必须在 x86_64 主机独立构建。
-构建机需要 uv、Xcode Command Line Tools 和 Go（仅用于从固定模块版本构建 Sigsum 验证器）；这些都不会进入最终用户运行要求。
-
-### Windows x64
-
-在真实 Windows AMD64 主机运行：
+在 Windows AMD64 或手动 GitHub Actions 工作流中构建 Windows x64：
 
 ```powershell
 .\scripts\check_windows.ps1
 .\scripts\build_windows_app.ps1 -Version 1.0.0
 ```
 
-Windows 构建复用同一份 `uv.lock`、CPython 3.13.14、PySide6 6.11.1 和 Nuitka standalone，并携带经固定 SHA-256 + Sigsum 校验的官方 age 1.3.1 Windows 二进制。验收会把 bundle 复制到带空格和中文的路径，在 `PATH` 中没有 Python 与 uv 的环境运行。产物为 `dist\CodexSessionManager-Windows-x64-1.0.0-test.zip`；当前测试通道明确保持未签名。
+两个平台均使用 `pyside6-deploy` / Nuitka standalone，并携带固定版本的 Python、Qt、插件、应用依赖和已验证 age 二进制。正式公开分发仍要求 macOS Developer ID 签名、公证与 staple，以及适当的 Windows Authenticode 签名。
 
-GitHub Actions 分别提供 [Windows CI](.github/workflows/ci.yml) 和手动触发的 [Windows 测试包构建](.github/workflows/build-windows.yml)。Action 成功只证明 GitHub 托管 Windows runner 上的检查与 standalone 验收，不证明 Authenticode 签名、SmartScreen 信誉、真实用户电脑安装或真实 Codex 账号写入。
+<a id="faq"></a>
+## ❓ 常见问题 FAQ
 
-### 发布分类
+<details>
+<summary><strong>CSM 会修改 Codex JSONL 或 SQLite 吗？</strong></summary>
 
-未签名 Windows 产物和 ad-hoc 签名 macOS 产物只能附加到 GitHub **prerelease**，且标题、说明、文件名和 bundle 内通道都必须明确标识为测试版。正式发布需要 macOS Developer ID 签名、公证与 staple，以及适当的 Windows Authenticode 证书。每个产物必须附带 SHA-256 文件。
+不会。在线读取与写入通过 App Server 完成。原始 rollout 数据可以作为加密灾备内容保留，但 CSM 不把直接编辑内部文件视为受支持的恢复或裁剪接口。
+</details>
 
-## 项目结构
+<details>
+<summary><strong>最终用户需要安装 Python、uv、Qt 或 age 吗？</strong></summary>
 
-- `src/codex_session_manager/`：App Server 客户端、模型、计划、备份、导入、清理、裁剪、Hook 和 GUI。
-- `skills/manage-codex-sessions/`：显式调用 Skill 和安全工作流参考。
-- `tests/`：进程级假 App Server、真实 age 生命周期、备份边界、计划漂移、Skill、Hook 和 GUI 测试。
-- `scripts/`：统一测试流程、检查、age 验证、图标、构建、安装、公证和隔离验收。
-- `agent_team/`：后台独立复核的派工与整合账本。
+使用 standalone 包时不需要。macOS 和 Windows 包已携带独立运行时与已验证 age。源码开发需要 uv；uv 会获取固定 Python 版本，不修改系统 Python。
+</details>
+
+<details>
+<summary><strong>为什么 Gatekeeper 或 SmartScreen 会警告？</strong></summary>
+
+`v1.0.0` 明确是测试版。macOS 仅作 ad-hoc 签名且未经公证；Windows 没有 Authenticode 签名和 SmartScreen 信誉。请先核对发布页校验值与来源，不要绕过未验证文件的安全警告。
+</details>
+
+<details>
+<summary><strong>为什么对话列表为空，或 App Server 不可用？</strong></summary>
+
+先运行 `csm doctor`。确认 Codex CLI 已安装且可访问，或用 `CSM_CODEX_BIN` 指向其绝对路径；同时检查 `CODEX_HOME` 与 `CSM_CODEX_HOME` 是否指向预期且相同的数据根。
+</details>
+
+<details>
+<summary><strong>“保存方案”和“派生精简任务”有什么区别？</strong></summary>
+
+**保存方案**只把已审查的不可变方案写入 CSM 数据目录。**派生精简任务**会重新校验该方案并创建新的 Codex 任务，原任务保持不变。
+</details>
+
+<details>
+<summary><strong>CSM 能永久删除对话吗？</strong></summary>
+
+可以，但绝不会自动执行。永久清除需要独立不可变计划、已验证加密备份、可信归档证据、等待期检查、后代展开和明确人工确认；自动操作最多归档。
+</details>
+
+<details>
+<summary><strong>敏感筛查能证明某个密钥有效或已经泄露吗？</strong></summary>
+
+不能。它使用本地确定性模式，并在适用时做校验和验证。它可能误报，也可能漏掉不常见格式；该功能只用于辅助审查，不是凭据验证服务。
+</details>
+
+<details>
+<summary><strong>能否合并其它账号的对话？</strong></summary>
+
+CSM 可以为 CSM 备份、Codex rollout 数据和官方 ChatGPT 导出生成逻辑导入计划。导入对话使用新 ID、保留来源信息且不重放工具调用；无法确认的项目映射会进入隔离区等待审查。
+</details>
+
+<details>
+<summary><strong>当前发布支持哪些平台？</strong></summary>
+
+测试版覆盖 macOS arm64 与 Windows x64，尚未发布 Intel macOS 或 Linux 包。目标平台验收必须在对应真实平台或 GitHub Windows runner 上完成。
+</details>
+
+<a id="contributing"></a>
+## 🤝 贡献指南
+
+欢迎提交范围明确的 Issue 和 Pull Request。
+
+1. 描述问题、预期行为、复现范围与平台；不要附带凭据或真实对话数据。
+2. 行为变化需要新增或更新测试；GUI、CLI、Skill 和 Hook 必须继续共用计划与安全层。
+3. 提交 PR 前运行 `scripts/check.sh` 及相关专项工作流。
+4. 用户可见命令、平台支持或安全行为变化时，同步更新中英文 README。
+
+修改实现前请先阅读 [AGENTS.md](AGENTS.md)。不要增加直接 Codex JSONL/SQLite 写入、Hook 内隐式联网安装，或绕过不可变计划的写入路径。
+
+当前项目代码完全由 ChatGPT 生成，但生成代码不会自行完成验证。无论贡献来源如何，都必须经过人工审查、可复现测试和诚实的目标环境证据。
+
+<a id="license"></a>
+## 📄 开源协议
+
+CodexSessionManager 使用 [MIT License](LICENSE)。打包的依赖与工具保留各自许可证，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+⭐ 如果本项目对你有帮助，欢迎 Star 支持，我会持续维护迭代。

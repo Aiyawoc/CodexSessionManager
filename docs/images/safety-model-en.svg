@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+  <title id="title">CodexSessionManager safety model</title>
+  <desc id="desc">GUI, CLI, Skill, and Hook entry points create immutable plans, pass revalidation gates, and write only through the official Codex App Server. Backup and audit evidence are retained separately, while unknown capabilities fall back to read-only mode.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8fa3ba"/>
+    </marker>
+    <style>
+      .heading { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 22px; font-weight: 600; fill: #1f2937; }
+      .label { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 16px; font-weight: 600; fill: #1f2937; }
+      .small { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 13px; font-weight: 400; fill: #66758a; }
+      .step { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 12px; font-weight: 700; fill: #ffffff; }
+      .line { fill: none; stroke: #8fa3ba; stroke-width: 2; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect x="1" y="1" width="1198" height="418" rx="18" fill="#f8faff" stroke="#d9e2ee" stroke-width="2"/>
+  <text class="heading" x="40" y="45">Safety-first write path</text>
+  <text class="small" x="1160" y="43" text-anchor="end">Original conversations remain unchanged during trimming</text>
+
+  <path class="line" d="M 250 142 H 302"/>
+  <path class="line" d="M 530 142 H 582"/>
+  <path class="line" d="M 842 142 H 894"/>
+
+  <g transform="translate(40 78)">
+    <rect width="210" height="128" rx="14" fill="#ffffff" stroke="#b7c6d9" stroke-width="2"/>
+    <circle cx="25" cy="25" r="14" fill="#3567d6"/>
+    <text class="step" x="25" y="29" text-anchor="middle">1</text>
+    <text class="label" x="24" y="61">GUI · CLI</text>
+    <text class="label" x="24" y="84">Skill · Hook</text>
+    <text class="small" x="24" y="109">One shared safety layer</text>
+  </g>
+
+  <g transform="translate(302 78)">
+    <rect width="228" height="128" rx="14" fill="#e8f0ff" stroke="#9eb8ed" stroke-width="2"/>
+    <circle cx="25" cy="25" r="14" fill="#3567d6"/>
+    <text class="step" x="25" y="29" text-anchor="middle">2</text>
+    <text class="label" x="24" y="61">Snapshots</text>
+    <text class="label" x="24" y="84">Immutable plans</text>
+    <text class="small" x="24" y="109">SHA-256-bound decisions</text>
+  </g>
+
+  <g transform="translate(582 78)">
+    <rect width="260" height="128" rx="14" fill="#ffffff" stroke="#9eb8ed" stroke-width="2"/>
+    <circle cx="25" cy="25" r="14" fill="#3567d6"/>
+    <text class="step" x="25" y="29" text-anchor="middle">3</text>
+    <text class="label" x="24" y="61">Revalidation gate</text>
+    <text class="small" x="24" y="86">Capability · state · fingerprint</text>
+    <text class="small" x="24" y="108">Expiry · spawned descendants</text>
+  </g>
+
+  <g transform="translate(894 78)">
+    <rect width="266" height="128" rx="14" fill="#eaf7ef" stroke="#9bcfaf" stroke-width="2"/>
+    <circle cx="25" cy="25" r="14" fill="#1f7a45"/>
+    <text class="step" x="25" y="29" text-anchor="middle">4</text>
+    <text class="label" x="24" y="61">Official Codex</text>
+    <text class="label" x="24" y="84">App Server</text>
+    <text class="small" x="24" y="109">Only supported online write path</text>
+  </g>
+
+  <path class="line" d="M 416 207 V 259"/>
+  <path class="line" d="M 712 207 V 259"/>
+
+  <g transform="translate(282 262)">
+    <rect width="268" height="112" rx="14" fill="#ffffff" stroke="#b7c6d9" stroke-width="2"/>
+    <text class="label" x="24" y="39">Encrypted backup</text>
+    <text class="label" x="24" y="63">and audit evidence</text>
+    <text class="small" x="24" y="89">age · checksums · provenance</text>
+  </g>
+
+  <g transform="translate(578 262)">
+    <rect width="268" height="112" rx="14" fill="#fff7e6" stroke="#e7c276" stroke-width="2"/>
+    <text class="label" x="24" y="39">Unknown capability?</text>
+    <text class="label" x="24" y="63">Fall back to read-only</text>
+    <text class="small" x="24" y="89">Inventory · backup · verify · plan</text>
+  </g>
+</svg>

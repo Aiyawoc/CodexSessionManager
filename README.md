@@ -1,237 +1,223 @@
 # CodexSessionManager
 
-[中文 README](README-cn.md) | English
-
 <p align="center">
-  <img src="docs/images/gui-overview.png" alt="CodexSessionManager GUI overview" width="100%">
-</p>
-<p align="center">
-  <sub>
-    Review projects, conversations, timeline items, context, and trimming actions in one workspace. ·
-    <a href="docs/CodexSessionManager-GUI-Guide-bilingual.pptx">Bilingual GUI guide (PPTX)</a>
-  </sub>
+  <img src="docs/images/gui-overview-en.png" alt="CodexSessionManager project, conversation, timeline, context, and trimming interface" width="100%">
 </p>
 
-> **Why this project?** Long-running Codex work accumulates conversations and context across many projects, making safe review, backup, cleanup, and context reduction increasingly difficult. CodexSessionManager brings those workflows into one auditable interface while keeping source tasks read-only and avoiding direct edits to Codex's internal storage.
+<p align="center">
+  <strong>A safety-first GUI and CLI for auditing, backing up, cleaning, importing, and trimming Codex conversations.</strong><br>
+  English · <a href="README-cn.md">简体中文</a> · <a href="docs/CodexSessionManager-GUI-Guide-bilingual.pptx">Bilingual GUI guide</a>
+</p>
 
-> **Code-generation disclosure:** The code in this project was generated entirely by ChatGPT. It has received human review, testing, and release decisions; verify it independently before production use.
+Long-running Codex work spreads conversations across projects and lets context grow unchecked. CodexSessionManager brings review, encrypted backup, guarded cleanup, and non-destructive context trimming into one auditable desktop tool.
 
-> **Test-release notice:** `v1.0.0` is a prerelease for isolated testing. The macOS arm64 asset is ad-hoc signed and not notarized; the Windows x64 asset is unsigned. Expect Gatekeeper or SmartScreen warnings, verify the published SHA-256 files, and do not treat either asset as a production build.
+<a id="features"></a>
+## ✨ Key features
 
-CodexSessionManager (`csm`) is a safety-oriented management tool for Codex App tasks. It includes a CLI, a PySide6 context-trimming GUI, an explicitly invoked Skill, optional PreCompact/PostCompact Hooks, and self-contained macOS and Windows bundles with Python, Qt, and age.
+- Group and search Codex conversations by project, activity, source, and relationship.
+- Create streaming, age-encrypted `.csmbackup` archives with full integrity verification.
+- Plan archive, restore, import, trim, and purge operations before any write occurs.
+- Reduce context through a derived task while keeping the original conversation unchanged.
+- Review model-visible content, Markdown, hidden tags, dependencies, and estimated token savings.
+- Scan locally for likely credentials and personal data; matched text can be highlighted for review.
+- Use the GUI, CLI, explicit Codex Skill, or optional fail-open PreCompact/PostCompact Hooks.
+- Run self-contained macOS arm64 and Windows x64 builds without installing Python, Qt, uv, or age.
 
-Online reads and writes go through the official Codex App Server only; the program never directly rewrites Codex JSONL or SQLite. Context trimming always creates a derived task and leaves the original task unchanged. Any archive, restore, import, trim, or permanent purge operation must consume an immutable SHA-256-bound plan and re-check protocol capabilities, content fingerprints, state, and descendant closure before execution.
+### Safer defaults at a glance
 
----
-
-## Contents
-
-- [Quick start](#quick-start)
-  - [Install and launch the GUI](#install-and-launch-the-gui)
-  - [Trim context in the GUI](#trim-context-in-the-gui)
-  - [Install an isolated test copy](#install-an-isolated-test-copy)
-- [Development environment](#development-environment)
-- [Daily use](#daily-use)
-- [Safety workflow](#safety-workflow)
-- [Context trimming](#context-trimming)
-- [Hooks](#hooks)
-- [Automated test workflow](#automated-test-workflow)
-- [Desktop builds and test releases](#desktop-builds-and-test-releases)
-- [Project structure](#project-structure)
-
-## Quick start
-
-| Entry point | Best for | Notes |
+| Need | Ad hoc workflow | CodexSessionManager |
 | --- | --- | --- |
-| macOS `CodexSessionManager.app` | Daily review and trimming on Apple Silicon | The standalone bundle includes Python, Qt, plugins, and age |
-| Windows `CodexSessionManager.exe` | Daily review and trimming on Windows x64 | Extract the test ZIP and run the bundled user installer |
-| `$manage-codex-sessions` in Codex | Open the GUI from Codex or run a guarded workflow | Restart Codex after installation; the Skill prefers `csm` and can fall back to the stable in-App executable |
-| `~/.local/bin/csm` | CLI, backups, plans, and audit | The user-level launcher runs CLI subcommands only |
-| `scripts/launch_test_app.sh` | Isolated GUI testing | Launches against a copied Codex home instead of the real user directory |
+| Review many conversations | Search projects and raw history separately | Project-grouped inventory and timeline review |
+| Clean old work | Delete or archive without a reproducible decision record | Dry-run plan, fingerprint checks, descendant expansion, then App Server write |
+| Reduce context | Rewrite history or accept all-or-nothing compaction | Keep, exclude, summarize, or protect content in a new derived task |
+| Back up and migrate | Copy internal files and hope versions match | Encrypted logical records, checksums, provenance, verification, and new IDs on restore |
 
-### Install and launch the GUI
+<a id="quick-start"></a>
+## ⚙️ Quick start
 
-Download both test builds and their `.sha256` files from the [`v1.0.0` prerelease](https://github.com/Aiyawoc/CodexSessionManager/releases/tag/v1.0.0), then verify the asset before opening it.
+> [!WARNING]
+> `v1.0.0` is a **test prerelease**. The macOS build is ad-hoc signed and not notarized; the Windows build is unsigned. Verify the matching SHA-256 file before launch and do not treat either build as production-ready.
 
-On macOS arm64, a locally built App can be installed and launched with:
+**Requirements**
+
+- Release build: Apple Silicon macOS or Windows x64, plus a local Codex App/CLI installation for App Server access.
+- Source build: [uv](https://docs.astral.sh/uv/) and Git. uv manages the pinned CPython 3.13.14 environment.
+
+### 1. Download a test build
+
+Download the archive and its `.sha256` file from the [`v1.0.0` test release](https://github.com/Aiyawoc/CodexSessionManager/releases/tag/v1.0.0):
+
+- [macOS arm64 ZIP](https://github.com/Aiyawoc/CodexSessionManager/releases/download/v1.0.0/CodexSessionManager-macOS-arm64-1.0.0-test.zip) · [SHA-256](https://github.com/Aiyawoc/CodexSessionManager/releases/download/v1.0.0/CodexSessionManager-macOS-arm64-1.0.0-test.zip.sha256)
+- [Windows x64 ZIP](https://github.com/Aiyawoc/CodexSessionManager/releases/download/v1.0.0/CodexSessionManager-Windows-x64-1.0.0-test.zip) · [SHA-256](https://github.com/Aiyawoc/CodexSessionManager/releases/download/v1.0.0/CodexSessionManager-Windows-x64-1.0.0-test.zip.sha256)
+
+### 2. Verify and launch
+
+macOS arm64:
 
 ```bash
-scripts/install_user.sh dist/CodexSessionManager.app
-"$HOME/Applications/CodexSessionManager.app/Contents/MacOS/CodexSessionManager"
+shasum -a 256 -c CodexSessionManager-macOS-arm64-1.0.0-test.zip.sha256
+ditto -x -k CodexSessionManager-macOS-arm64-1.0.0-test.zip .
+"./CodexSessionManager.app/Contents/MacOS/CodexSessionManager" cli doctor
+"./CodexSessionManager.app/Contents/MacOS/CodexSessionManager"
 ```
 
-The installer uses a user-owned directory and an atomic replacement, so administrator access is not required. It also links the bundled Skill into `~/.agents/skills/manage-codex-sessions`; restart Codex if `$manage-codex-sessions` does not appear immediately. The downloadable test asset is ad-hoc signed but not notarized, so macOS may quarantine it. Remove quarantine only after checking the SHA-256 and confirming that the asset came from this repository; a formal distribution must instead use Developer ID signing and notarization.
-
-On Windows x64, extract the ZIP, inspect the bundled installer, and run it from PowerShell:
+Windows x64 PowerShell:
 
 ```powershell
-Get-FileHash .\CodexSessionManager-Windows-x64-1.0.0-test.zip -Algorithm SHA256
+$Archive = ".\CodexSessionManager-Windows-x64-1.0.0-test.zip"
+$Expected = ((Get-Content "$Archive.sha256").Trim() -split '\s+')[0]
+$Actual = (Get-FileHash $Archive -Algorithm SHA256).Hash
+if ($Actual.ToLower() -ne $Expected.ToLower()) { throw "SHA-256 mismatch" }
+Expand-Archive $Archive -DestinationPath . -Force
 PowerShell -NoProfile -ExecutionPolicy Bypass -File .\CodexSessionManager-Windows-x64\Install-CodexSessionManager.ps1
 & "$env:LOCALAPPDATA\CodexSessionManager\CodexSessionManager.exe"
 ```
 
-The Windows installer uses `%LOCALAPPDATA%\CodexSessionManager`, retains the previous installation for rollback, installs the bundled Skill under `~/.agents/skills`, and adds the stable application directory to the user `PATH`. Because the test executable has no Authenticode signature, Windows may show SmartScreen warnings. Hook installation remains a separate, explicit action on both platforms.
-
-After restarting Codex, invoke `$manage-codex-sessions` and ask it to open context trimming for a conversation. The Skill resolves `csm` first, then the platform's stable bundled executable. Automatic PreCompact review remains disabled until the user separately runs `csm hook install --yes` and reviews/trusts the definition in Codex `/hooks`.
-
-After launch, the **Projects & Tasks** pane groups conversation names and relative activity times by project:
-
-1. Use the shared field to search projects/conversations, or enter a full conversation ID and click **Load ID**.
-2. Select a turn/item in the timeline and inspect its content and protection reasons.
-3. Choose **Keep / Exclude / Summary / Protect** in the action pane and edit a summary when needed.
-4. Click **Save plan** to persist the reviewed, immutable TrimPlan without changing any conversation, or click **Create trimmed task** to save and apply it to a new derived task. The original task remains read-only.
-
-The language selector to the right of the read-only badge switches the live interface between Simplified Chinese (default) and English. The **Collapse** control beside the project/task title hides the left pane. Click the project/task icon in the fixed rail to restore it. Each divider keeps an 8px draggable hit area with a centered 1px blue-gray line, so the timeline and source panes can be resized without changing the action pane width.
-
-### Trim context in the GUI
-
-The GUI operates at turn level by default; item-level selection is available for advanced review. The current request, in-progress turns, valid goals, unresolved errors, unknown items, and grouped tool-call/result and file-change/verification records are hard-protected. Estimated tokens and savings appear in the footer; resolve risk warnings before applying a plan.
-
-**Sensitive scan** uses deterministic local rules on model-visible text and does not upload content. It detects private-key headers, common cloud/API keys, JWTs, password or token assignments, email addresses, and Mainland China phone numbers, plus checksum-validated Chinese resident IDs and payment-card numbers. Placeholders, redacted values, and invalid numbers are ignored. When enabled, the task list shows only likely matches and the **Context** pane marks matched ranges as white text on red. This is review assistance and can still produce false positives or miss unusual secret formats.
-
-### Install an isolated test copy
-
-The test installer copies the current Codex home, creates an isolated `HOME`, data, config, cache, and log directory, and installs a standalone App:
-
-```bash
-scripts/install_test_app.sh
-```
-
-At completion it prints `TEST_ROOT`, `APP`, `LAUNCHER`, `SKILL`, and a generated `LAUNCH_SCRIPT`. Run the generated script to open the isolated GUI:
-
-```bash
-"/private/tmp/csm-codex-home-test.xxxxxx/launch-test-app.sh"
-```
-
-Or use the reusable repository launcher:
-
-```bash
-scripts/launch_test_app.sh "/private/tmp/csm-codex-home-test.xxxxxx"
-```
-
-The test install skips the external App Server probe by default so the bundled runtime can be checked on a minimal `PATH`. `doctor --skip-app-server` verifies the embedded Python, PySide6, Qt plugins, age, signature, and writable directories. The copy skips Unix sockets and other runtime special files, but it may contain authentication data; after testing, delete only the exact `TEST_ROOT` printed by the installer.
-
-## Development environment
-
-The project is pinned to CPython 3.13.14. It does not use `/usr/bin/python3` or install dependencies into the system Python. uv obtains and manages the required Python in an isolated project environment:
+Or run the basic GUI and CLI directly from source:
 
 ```bash
 uv sync --locked --compile-bytecode
-uv run csm doctor
-scripts/check.sh
-```
-
-Dependencies are grouped as `runtime`, `gui`, `dev`, and `build` and locked in `uv.lock`. Hooks and Skills never run `uv sync`, download Python, or install dependencies at trigger time.
-Packaging uses a separate `build/.venv-build` environment and syncs only `runtime + gui + build`; keeping it separate also prevents Qt deployment scanners from treating the packaging environment as application QML resources.
-
-## Daily use
-
-From a source checkout:
-
-```bash
 uv run csm --help
-uv run csm threads list
-uv run csm threads show THREAD_ID --include-content
-uv run csm cleanup plan --older-than-days 90
-uv run csm trim review THREAD_ID
+uv run CodexSessionManager
 ```
 
-Each installed application has one distribution entry point:
+Backup verification and a complete `doctor` check also require an `age` executable. The platform build scripts fetch and verify the pinned binary; development environments may instead provide `CSM_AGE_BIN`.
 
-```text
-CodexSessionManager                  open the GUI
-CodexSessionManager cli ...          run the CLI
-CodexSessionManager hook precompact  run the Hook protocol
-```
+### 3. Try the minimum GUI workflow
 
-User-level installation does not require administrator privileges:
+1. Search for a project/conversation, or enter a complete conversation ID.
+2. Select a turn or item, then choose **Keep**, **Exclude**, **Summary**, or **Protect**.
+3. Use **Save plan** to store the reviewed plan without changing Codex, or **Create trimmed task** to create a new derived conversation.
+
+### Build and release status
+
+[![Windows CI](https://github.com/Aiyawoc/CodexSessionManager/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Aiyawoc/CodexSessionManager/actions/workflows/ci.yml)
+[![Test release](https://img.shields.io/github/v/release/Aiyawoc/CodexSessionManager?include_prereleases&label=test%20release)](https://github.com/Aiyawoc/CodexSessionManager/releases)
+![Python 3.13.14](https://img.shields.io/badge/Python-3.13.14-3776AB?logo=python&logoColor=white)
+![PySide6 6.11.1](https://img.shields.io/badge/PySide6-6.11.1-41CD52?logo=qt&logoColor=white)
+![Platforms](https://img.shields.io/badge/platforms-macOS%20arm64%20%7C%20Windows%20x64-60758A)
+[![MIT license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+> [!NOTE]
+> The repository's code was generated entirely by ChatGPT. Human review, automated tests, and target-platform validation are still required; inspect the code independently before relying on write operations.
+
+<a id="contents"></a>
+## Contents
+
+- [✨ Key features](#features)
+- [⚙️ Quick start](#quick-start)
+- [📌 Use cases](#use-cases)
+- [Safety model](#safety-model)
+- [📖 Documentation](#documentation)
+- [🔧 Configuration](#configuration)
+- [Development, testing, and packaging](#development)
+- [❓ FAQ](#faq)
+- [🤝 Contributing](#contributing)
+- [📄 License](#license)
+
+<a id="use-cases"></a>
+## 📌 Use cases
+
+| Scenario | What CSM provides |
+| --- | --- |
+| Many long-running Codex projects | One project-grouped list with conversation search, relative activity, multi-selection, and relationship tracking |
+| Context approaching compaction | Manual review or an optional PreCompact prompt before native compaction proceeds |
+| Old or inactive conversations | Rule-based candidates, dry-run archive plans, batch limits, and human confirmation |
+| Backup or account migration | Encrypted CSM backups, logical restore, Codex rollout import, and ChatGPT export branch expansion |
+| Sensitive-data review | Local deterministic scanning and red highlighting without uploading conversation content |
+| Auditable maintenance | Immutable plan hashes, source fingerprints, capability checks, and a CSM-owned audit chain |
+
+The primary audience is developers and maintainers who use Codex across multiple repositories, keep long-lived conversations, or need a reviewable alternative to manipulating Codex's internal storage.
+
+<a id="safety-model"></a>
+## Safety model
+
+![CodexSessionManager safety model: entry points create immutable plans, pass revalidation gates, and write only through the official App Server](docs/images/safety-model-en.svg)
+
+- Online Codex reads and writes use the official App Server. CSM does not rewrite Codex JSONL or SQLite.
+- Unknown, incomplete, or unaudited protocol capabilities disable writes and leave inventory, backup, verification, and planning available.
+- Every write consumes a SHA-256-bound plan and re-checks state, content fingerprints, capabilities, expiry, and spawned descendants.
+- Automatic operations stop at archive. Permanent purge requires a separate plan, verified backup evidence, trusted archive history, and explicit confirmation.
+- Context trimming creates a new task. The source task remains unchanged and system/developer instructions are reloaded from the current project.
+- Tool calls/results and file changes/verifications are retained or summarized as groups, not split into unsafe fragments.
+- Hook failures are fail-open: timeout, close, crash, or launch failure continues native compaction.
+
+<a id="documentation"></a>
+## 📖 Documentation
+
+### Stable user installation
+
+Launching the extracted macOS App directly does not install the Skill or CLI launcher. From a checkout matching the release tag, install it into the stable user path with:
 
 ```bash
-scripts/install_user.sh dist/CodexSessionManager.app
+scripts/install_user.sh /absolute/path/to/CodexSessionManager.app
 ~/.local/bin/csm doctor
 ```
 
-The installer performs an atomic replacement and keeps the previous version for rollback. Stable paths are `~/Applications/CodexSessionManager.app` on macOS and `%LOCALAPPDATA%\CodexSessionManager` on Windows; Hooks never reference the source checkout or `.venv`.
+The installer atomically replaces `~/Applications/CodexSessionManager.app`, retains the previous App for rollback, creates `~/.local/bin/csm`, and links the bundled Skill. The Windows installer shown in Quick start provides the equivalent user-level installation under `%LOCALAPPDATA%\CodexSessionManager`. Neither installer enables Hooks automatically.
 
-To test against a copy of the current `~/.codex`, use the isolated test installer. It creates separate `HOME`, `codex-home`, data, and log directories under the system temporary directory and does not overwrite the real user installation:
+### GUI workflow
+
+<p align="center">
+  <img src="docs/images/context-trimming-demo-en.gif" alt="Twelve-second context-trimming demo using fictional conversation data" width="100%">
+</p>
+<p align="center"><sub>12-second deterministic demo · fictional IDs, paths, repository, and conversation content</sub></p>
+
+1. **Projects & Tasks** groups conversations by project cwd or Git remote. Search and complete-ID loading share one field; multi-selection supports guarded batch actions.
+2. **Timeline** shows model-visible turns/items and hides empty internal events by default. Token totals use compact units.
+3. **Context** is editable and supports hidden-tag display, segmented source rendering, Markdown preview, and local sensitive-range highlighting.
+4. **Trim actions** apply `keep`, `exclude`, `summary`, or `protect`. Hard-protected requests, active turns, goals, unresolved errors, and unknown items cannot be silently removed.
+
+Saving a plan only persists the reviewed `TrimPlan`; it does not write to Codex. Creating a trimmed task first revalidates the plan, waits for the source to become idle, and then creates a new derived task.
+
+### CLI workflows
 
 ```bash
-scripts/install_test_app.sh
+csm doctor
+csm threads list
+csm threads show CONVERSATION_ID --include-content
+csm trim review --thread-id CONVERSATION_ID
+csm audit show
 ```
 
-The script prints the test directory and launch command when it finishes. It can also start the isolated GUI automatically:
-
-```bash
-CSM_OPEN_TEST_APP=1 scripts/install_test_app.sh
-```
-
-The installer also creates `TEST_ROOT/launch-test-app.sh` for repeated launches of the same test copy. The reusable launcher is `scripts/launch_test_app.sh TEST_ROOT`.
-
-The installer automatically detects the host `codex` CLI and writes its path plus the Node runtime directory into the test launcher, allowing the GUI to load existing tasks through the isolated `CODEX_HOME`. If the CLI is not on `PATH`, set `CSM_CODEX_BIN=/absolute/path/to/codex` before installing. Without a CLI the GUI can still start, but its task list cannot be loaded through App Server.
-
-To launch the test GUI manually, use the printed `EXECUTABLE` and environment variables to run the binary inside the bundle directly; do not use `open App.app`, because LaunchServices does not guarantee that the shell's `CODEX_HOME` is inherited.
-
-Set `CSM_SOURCE_CODEX_HOME` to choose the copy source, or pass a second argument for a test root that must not already exist. The test root contains a copy of the Codex home and may contain authentication data, so remove that exact directory after testing.
-The copy skips Unix sockets, FIFOs, devices, and other runtime special files. Exit Codex before copying when possible so the SQLite main database and WAL files form a more consistent snapshot.
-Installation skips the external Codex App Server probe by default so the bundled runtime can be tested with no `codex`, uv, or Python on `PATH`. When a CLI is available, the installer records it and reuses the path in the generated launcher and CLI example.
-
-## Safety workflow
-
-A typical archive workflow is:
+Create and verify an encrypted backup before planning an archive:
 
 ```bash
 csm backup create backup.csmbackup \
-  --thread THREAD_ID \
+  --thread CONVERSATION_ID \
   --recipient age1... \
   --identity /secure/path/identity.txt
 csm cleanup plan --action archive --older-than-days 90
 csm cleanup apply PLAN.json --confirm PLAN_ID
 ```
 
-- Tasks inactive for 90 days are candidates by default; one batch contains at most 100 root tasks.
-- Automatic operations are capped at archiving. Permanent purge always requires a human-created plan, the exact plan ID, and a permanent confirmation phrase.
-- Parent operations expand spawned descendants. Active, pinned, ephemeral, or incompletely read tasks are excluded from write plans.
-- `parent_id` and `forked_from_id` are expanded as independent graph edges. Missing parents, cycles, or overlapping root closures stop writes.
-- A task can become a manual purge candidate only after at least 14 days of archive evidence, a trusted CSM archive time, and a verified encrypted backup. Archive evidence is bound to the exact backup manifest used at the time and verified through the audit hash chain; the time credential is conservatively invalidated before unarchiving.
-- Before permanently deleting each root task, the executor re-reads archive state, the 14-day gate, backup evidence, loaded state, background terminals, and local processes.
-- After a write timeout, query actual state first; never blindly retry.
-- Writes are enabled only for an audited Codex version plus a complete App Server schema SHA-256 pair. Unknown protocols or unstable mappings degrade to read-only, backup, and planning. The current write allowlist is the measured schema for Codex 0.142.1.
+Important command groups:
 
-`.csmbackup` streams a tar archive directly into age, with the manifest at the end of the stream. Creation uses only an encrypted temporary destination and publishes it atomically without overwriting an existing file. Verification fully decrypts the package, recomputes `backup_fingerprint` from each embedded `ThreadSnapshot`, and compares it with the logical source and manifest without creating a plaintext container. Restore performs a second decryption pass and requires every verified member to appear again. Only this full-package verification can be recorded in the audit chain and serve as archive/purge evidence. In passphrase mode age reads the passphrase directly from the terminal; the GUI and automated tasks accept recipient-key mode only.
+| Command | Purpose |
+| --- | --- |
+| `csm threads list\|show` | Read-only inventory and content inspection |
+| `csm backup create\|verify` | Streaming age-encrypted backup and full verification |
+| `csm cleanup plan\|apply` | Reversible archive/unarchive workflow |
+| `csm purge plan\|apply` | Separately gated permanent deletion workflow |
+| `csm restore plan\|apply` | Logical restore with new conversation IDs |
+| `csm import {chatgpt\|codex} ...` | Plan and apply imports from official ChatGPT exports or Codex rollout data |
+| `csm trim review\|suggest\|apply` | GUI/manual review, local suggestions, and derived trimming |
+| `csm hook install\|status\|uninstall` | Optional PreCompact/PostCompact integration |
+| `csm audit show\|verify` | Inspect and verify the CSM audit chain |
 
-If `CSM_CODEX_HOME` and external `CODEX_HOME` are both set, they must resolve to the same data root. Otherwise every entry point, including Hook management commands, refuses to continue so tasks from one account cannot be mixed with backup or Hook state from another.
+Passphrase mode reads the secret directly from the terminal. Do not place backup passphrases in command arguments, environment variables, logs, issues, or model context. GUI and unattended workflows use age recipients instead.
 
-Restore and cross-account import create new conversation IDs. Supported sources include:
+### Codex Skill
 
-- logical restore from a CSM encrypted backup;
-- root-to-leaf branch expansion from an official ChatGPT export;
-- Codex rollout JSONL files or directories from another account;
-- exact duplicates skipped, complete existing prefixes skipped, more complete sources preferred, and forks kept separately;
-- unconfirmed project mappings imported into a CSM quarantine area; tool calls retain lazy provenance only and are never executed or replayed.
+The stable installers place `manage-codex-sessions` under `~/.agents/skills`. Restart Codex, then invoke it explicitly:
 
-## Context trimming
-
-```bash
-csm trim suggest THREAD_ID
-csm trim review THREAD_ID
-csm trim apply PLAN.json --confirm PLAN_ID
+```text
+$manage-codex-sessions open context trimming for this conversation
 ```
 
-Actions are `keep`, `exclude`, `summary`, and `protect`. The current request, in-progress turns, valid goals, approval decisions, unresolved errors, unknown items, and associated tool call/result and file-change/verification groups are hard-protected. The GUI operates at turn level by default, with item-level controls in the advanced view; scans, App Server requests, and analysis run in worker threads.
+The Skill does not run automatically during ordinary coding work. It resolves the stable `csm` launcher or bundled executable and follows the same plan and safety gates as the GUI and CLI.
 
-The GUI's left pane groups conversation names and relative activity times by project cwd or Git remote, without spending a separate column on status; status remains available in tooltips. Search and manual conversation-ID loading share one field. The list supports multi-selection plus context-menu rename, copy-conversation-ID, archive, and permanent-delete actions. Archive and delete still pass immutable-plan, descendant-closure, backup, state, and audit gates; permanent deletion also requires 14 days of trusted archive history and two explicit confirmations.
-
-The **Sensitive scan** button at the lower right scans conversations one by one in a worker thread using local rules for likely keys, tokens, private keys, email addresses, phone numbers, identity numbers, and payment cards. Results retain categories and counts only—never the matched sensitive value—and no conversation content is uploaded to an external service. This is a potentially noisy local screening aid; it does not prove that a credential is valid or has been leaked.
-
-The collapse icon beside the project/task title hides the pane. Its freed width is distributed between the timeline and source panes, while the rightmost trim-action pane keeps its width.
-
-A fixed-width project/task entry remains at the far left; unfinished backup, cleanup, and audit placeholder icons are not shown. When the project/task pane is collapsed, that icon still restores it. The timeline table stretches its first column to the remaining width, and all three vertical dividers are draggable with a centered 1px blue-gray line.
-
-When supported by the App Server, a continuous prefix uses `thread/fork(lastTurnId)`. If the protocol lacks that field, a checked `thread/rollback` is used only on a new fork. Non-contiguous trimming creates a new task and injects a source-manifest `ContextProjection`; it never starts a model turn automatically.
-
-## Hooks
-
-Hooks are optional and are not silently enabled by application installation:
+### Optional Hooks
 
 ```bash
 csm hook status
@@ -239,83 +225,162 @@ csm hook install --yes
 csm hook uninstall --yes
 ```
 
-PreCompact first shows a 15-second lightweight prompt. Closing it, timing out, crashing, failing to start, or encountering an unwritable data directory all continue native compaction. The Hook emits `continue:false` only after a TrimPlan has been persisted successfully. It saves a plan but never creates a derived task during an in-progress turn; stdout contains exactly one final JSON object and logs go to a separate file.
+Installation does not silently enable Hooks. After installation, review and trust the exact command in Codex `/hooks`. PreCompact shows a lightweight prompt; it returns `continue: false` only after a plan is safely persisted, and never creates a derived task inside the active turn.
 
-After installing Hooks, review and trust the exact command in Codex `/hooks`.
+### Further reading
 
-## Automated test workflow
+- [Bilingual GUI guide (PPTX)](docs/CodexSessionManager-GUI-Guide-bilingual.pptx)
+- [Skill command workflows](skills/manage-codex-sessions/references/commands.md)
+- [Skill safety invariants](skills/manage-codex-sessions/references/safety.md)
+- [`v1.0.0` test-release notes](docs/releases/v1.0.0-test.md)
+- [Project development constraints](AGENTS.md)
 
-Run the source gate independently, or run the complete workflow, which rebuilds the App from the current source by default so a stale bundle cannot hide packaging failures:
+<a id="configuration"></a>
+## 🔧 Configuration
+
+CSM uses platform-native user directories by default. Environment variables are intended for explicit account selection, isolated tests, or advanced installations.
+
+| Variable | Purpose |
+| --- | --- |
+| `CSM_CODEX_HOME` | Explicit Codex data root used by CSM |
+| `CODEX_HOME` | Codex's official data-root override; if both home variables are set, they must resolve to the same path |
+| `CSM_CODEX_BIN` | Absolute path or command name for the Codex CLI/App Server launcher |
+| `CSM_APP_PATH` | Stable installed App root or executable used when generating Hook commands |
+| `CSM_DATA_DIR` | Plans, imports, backups, and audit database root |
+| `CSM_CONFIG_DIR` | CSM configuration root |
+| `CSM_CACHE_DIR` | Cache root |
+| `CSM_LOG_DIR` | Application and Hook log root |
+| `CSM_AGE_BIN` | Development-only age executable override; standalone builds use their verified bundled binary |
+
+If `CSM_CODEX_HOME` and `CODEX_HOME` point to different roots, every entry point refuses to continue. This prevents one account's task state from being combined with another account's plans or audit evidence.
+
+Stable installation paths are `~/Applications/CodexSessionManager.app` on macOS and `%LOCALAPPDATA%\CodexSessionManager` on Windows. Hooks must target these stable locations, never a source checkout or `.venv`.
+
+<a id="development"></a>
+## Development, testing, and packaging
+
+### Development setup
+
+```bash
+git clone https://github.com/Aiyawoc/CodexSessionManager.git
+cd CodexSessionManager
+uv sync --locked --compile-bytecode
+scripts/check.sh
+```
+
+`scripts/check.sh` verifies generated Qt files, Ruff formatting/lint, strict mypy, offscreen PySide6 tests, and the Skill contract. More focused workflows are available for source, installation, Skill, Hook, and lifecycle checks:
 
 ```bash
 scripts/test_source_workflow.sh
-scripts/test_full_workflow.sh
-```
-
-For an existing trusted bundle, installation, Skill, and Hook checks can run separately. A faster local smoke run may reuse that bundle:
-
-```bash
 scripts/test_install_workflow.sh dist/CodexSessionManager.app
 scripts/test_skill_workflow.sh dist/CodexSessionManager.app
 scripts/test_hook_workflow.sh dist/CodexSessionManager.app
-scripts/test_full_workflow.sh --reuse-app dist/CodexSessionManager.app
+scripts/test_full_workflow.sh
 ```
 
-The layered workflow covers:
+These checks use isolated temporary data. They do not replace real-account App Server testing, physical-device UI testing, signing/notarization, SmartScreen reputation, or production acceptance.
 
-- Source: locked environment, generated-file parity, shell syntax and executable bits, Ruff, strict mypy, offscreen pytest, Skill structure and command contracts, a process-level fake App Server, a real-age encrypted backup/audit lifecycle, and an isolated `doctor` run.
-- Bundle: embedded Python, PySide6, Qt plugins, age integrity, CLI/GUI/Hook smoke tests with no development runtime, Chinese and space-containing paths, and code-signature verification.
-- Installation: conflict preservation in an empty temporary `HOME`, atomic install and reinstall, previous-version retention, version parity, the stable launcher, the Skill link, and proof that installing the App does not silently enable Hooks.
-- Skill: validation and content parity across source, bundled, and installed packages, the explicit-invocation policy, stable entry points, and CLI reachability for every documented command.
-- Hooks: preservation of foreign handlers, exact installation settings and 600/30-second timeouts, the `manual|auto` matcher, permissions and backup, status, one-line JSON fail-open behavior, reinstall behavior, and removal of CSM handlers only.
-- Lifecycle: encrypted backup, verification, archive, waiting-period evidence, a permanent-purge plan, and audit-chain verification against temporary data only.
+To test a macOS App against a copy of the current Codex home:
 
-The installation, Skill, and Hook workflows always create empty temporary `HOME`, `CODEX_HOME`, and application-data directories. They do not copy real credentials or tasks. Set `CSM_KEEP_TEST_ROOT=1` to retain the exact temporary fixture printed by the script after a failure.
+```bash
+scripts/install_test_app.sh
+scripts/launch_test_app.sh /absolute/path/printed/as/TEST_ROOT
+```
 
-These automated results are not real-account or production acceptance. Skill discovery and model adherence in Codex, `/hooks` trust and real triggers, App Server writes, a real Cocoa window/scaling/IME session, Developer ID signing, notarization, stapling, and clean-machine installation still require separate evidence.
+The copied test root may contain authentication data. Close Codex before copying when possible, and remove only the exact `TEST_ROOT` printed by the installer.
 
-## Desktop builds and test releases
+### Desktop packaging
 
-### macOS arm64
+macOS arm64, on real Apple Silicon hardware:
 
 ```bash
 scripts/build_macos_app.sh
 scripts/accept_macos_bundle.sh dist/CodexSessionManager.app
 ```
 
-The build uses `pyside6-deploy` / Nuitka standalone and carries Python, Qt, Qt plugins, and the official age 1.3.1 arm64 binary verified with SHA-256 and Sigsum. A strictly checked temporary patch for Nuitka 4.0's macOS UTF-8 path handling allows the app to start from a Chinese path; the build restores the original Nuitka source in `build/.venv-build` when it finishes. A successful Nuitka report is also a packaging gate, so a partial `.app` left by `pyside6-deploy` is not accepted.
-
-Without `CSM_DEVELOPER_ID`, the normal result is a `local-adhoc` build. An explicitly requested test prerelease can be labeled `macos-test-adhoc` by setting `CSM_TEST_RELEASE=1`; it remains unnotarized and must never be described as a production release. Formal distribution requires separate Developer ID signing, notarization, and stapling:
-
-```bash
-CSM_DEVELOPER_ID='Developer ID Application: ...' scripts/build_macos_app.sh
-scripts/notarize_macos_app.sh dist/CodexSessionManager.app
-```
-
-The arm64 App is built and accepted only on real Apple Silicon macOS hardware; an Intel build must be produced independently on an x86_64 host.
-The build machine needs uv, Xcode Command Line Tools, and Go (only to build the Sigsum verifier from pinned module versions); none of these are required by end users.
-
-### Windows x64
-
-On a real Windows AMD64 host:
+Windows x64, on Windows AMD64 or the manual GitHub Actions workflow:
 
 ```powershell
 .\scripts\check_windows.ps1
 .\scripts\build_windows_app.ps1 -Version 1.0.0
 ```
 
-The build uses the same `uv.lock`, CPython 3.13.14, PySide6 6.11.1, Nuitka standalone mode, and a pinned SHA-256 + Sigsum-verified age 1.3.1 Windows binary. It runs bundle acceptance from a path containing spaces and Chinese characters, with Python and uv absent from `PATH`. The result is `dist\CodexSessionManager-Windows-x64-1.0.0-test.zip`; the current test channel is intentionally unsigned.
+Both builds use `pyside6-deploy` / Nuitka standalone mode and include pinned Python, Qt, plugins, application dependencies, and a verified age binary. Formal public distribution still requires Developer ID signing/notarization/stapling on macOS and an appropriate Authenticode signature on Windows.
 
-GitHub Actions provides separate [Windows CI](.github/workflows/ci.yml) and a manually dispatched [Windows test-bundle build](.github/workflows/build-windows.yml). A successful Action proves the checks and standalone acceptance on the hosted Windows runner; it does not prove Authenticode signing, SmartScreen reputation, a physical end-user installation, or real Codex-account writes.
+<a id="faq"></a>
+## ❓ FAQ
 
-### Release classification
+<details>
+<summary><strong>Does CSM modify Codex's JSONL or SQLite files?</strong></summary>
 
-Unsigned Windows and ad-hoc-signed macOS artifacts may be attached only to a GitHub **prerelease** whose title, notes, filenames, and in-bundle channel identify them as test builds. A formal release requires Developer ID signing/notarization/stapling on macOS and an appropriate Authenticode certificate on Windows. Every asset is accompanied by a SHA-256 file.
+No. Online reads and writes use the App Server. Raw rollout data may be retained inside an encrypted disaster-recovery backup, but CSM does not treat direct internal-file editing as a supported restore or trimming API.
+</details>
 
-## Project structure
+<details>
+<summary><strong>Do end users need Python, uv, Qt, or age?</strong></summary>
 
-- `src/codex_session_manager/`: App Server client, models, plans, backup, import, cleanup, trimming, Hooks, and GUI.
-- `skills/manage-codex-sessions/`: explicitly invoked Skill and safety workflow references.
-- `tests/`: process-level fake App Server, real-age lifecycle, backup-boundary, plan-drift, Skill, Hook, and GUI tests.
-- `scripts/`: unified test workflows, checks, age verification, icons, build, installation, notarization, and isolated acceptance.
-- `agent_team/`: ledger for independent background reviews and integration.
+No for standalone builds. The macOS and Windows bundles carry their own runtime and verified age executable. Source development requires uv; uv obtains the pinned Python version without changing the system Python.
+</details>
+
+<details>
+<summary><strong>Why does Gatekeeper or SmartScreen warn about the download?</strong></summary>
+
+`v1.0.0` is explicitly a test release. macOS is ad-hoc signed and not notarized; Windows has no Authenticode signature or SmartScreen reputation. Verify the published checksum and source before evaluating it. Do not bypass a warning for an unverified file.
+</details>
+
+<details>
+<summary><strong>Why is the conversation list empty or App Server unavailable?</strong></summary>
+
+Run `csm doctor`. Confirm the Codex CLI is installed and reachable, or set `CSM_CODEX_BIN` to its absolute path. Also verify that `CODEX_HOME` and `CSM_CODEX_HOME` refer to the intended, identical data root.
+</details>
+
+<details>
+<summary><strong>What is the difference between “Save plan” and “Create trimmed task”?</strong></summary>
+
+**Save plan** only writes a reviewed immutable plan to CSM's data directory. **Create trimmed task** revalidates that plan and creates a new Codex task; the original remains unchanged.
+</details>
+
+<details>
+<summary><strong>Can CSM permanently delete conversations?</strong></summary>
+
+Yes, but never automatically. Purge requires a separate immutable plan, a verified encrypted backup, trusted archive evidence, waiting-period checks, descendant expansion, and explicit human confirmation. Archive is the maximum automatic action.
+</details>
+
+<details>
+<summary><strong>Does sensitive scan prove that a secret is valid or leaked?</strong></summary>
+
+No. It uses deterministic local patterns and checksum validation where applicable. It can produce false positives and miss unusual formats; it is a review aid, not a credential-validation service.
+</details>
+
+<details>
+<summary><strong>Can I merge conversations from another account?</strong></summary>
+
+CSM can plan logical imports from CSM backups, Codex rollout data, and official ChatGPT exports. Imported conversations receive new IDs, keep source provenance, and never replay tool calls. Uncertain project mappings remain quarantined for review.
+</details>
+
+<details>
+<summary><strong>Which platforms are currently released?</strong></summary>
+
+The test release covers macOS arm64 and Windows x64. There is no released Intel macOS or Linux build. Target-platform acceptance must be performed on the corresponding real platform or hosted Windows runner.
+</details>
+
+<a id="contributing"></a>
+## 🤝 Contributing
+
+Focused issues and pull requests are welcome.
+
+1. Describe the problem, expected behavior, reproduction scope, and platform without attaching credentials or real conversation data.
+2. Add or update tests for behavior changes; keep GUI, CLI, Skill, and Hook entry points on the shared plan/safety layer.
+3. Run `scripts/check.sh` and the relevant focused workflow before opening a pull request.
+4. Update both README files when user-visible commands, platform support, or safety behavior changes.
+
+Read [AGENTS.md](AGENTS.md) before making implementation changes. Do not add direct Codex JSONL/SQLite writes, implicit network installation in Hooks, or write paths that bypass immutable plans.
+
+The current project code was generated entirely by ChatGPT, but generated code is not self-validating. Contributions of any origin still require human review, reproducible tests, and honest target-environment evidence.
+
+<a id="license"></a>
+## 📄 License
+
+CodexSessionManager is released under the [MIT License](LICENSE). Bundled dependencies and tools retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+⭐ If this project is useful to you, consider giving it a Star. Continued maintenance and iteration are planned.

@@ -55,7 +55,13 @@ try {
     )
     Assert-GeneratedText $GeneratedMain "src/codex_session_manager/gui/ui_main_window.py"
     Assert-GeneratedText $GeneratedPrompt "src/codex_session_manager/gui/ui_precompact_prompt.py"
-    Assert-GeneratedText $GeneratedResources "src/codex_session_manager/gui/resources_rc.py"
+    # RCC v3 embeds source-file mtimes in qt_resource_struct. GitHub's Windows
+    # checkout therefore cannot byte-match a file generated on macOS. Compare
+    # names, payloads, and tree records while ignoring only those timestamp bytes.
+    Invoke-Checked -Program "uv" -Arguments @(
+        "run", "--locked", "python", "scripts/compare_qt_resources.py",
+        $GeneratedResources, "src/codex_session_manager/gui/resources_rc.py"
+    )
 
     Invoke-Checked -Program "uv" -Arguments @("run", "--locked", "ruff", "format", "--check", ".")
     Invoke-Checked -Program "uv" -Arguments @("run", "--locked", "ruff", "check", ".")

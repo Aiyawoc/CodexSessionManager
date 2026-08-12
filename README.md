@@ -52,13 +52,16 @@ scripts/install_user.sh dist/CodexSessionManager.app
 scripts/install_test_app.sh
 ```
 
-脚本结束时会打印测试目录和启动命令；也可以直接打开 GUI：
+脚本结束时会打印测试目录和启动命令；也可以自动启动隔离 GUI：
 
 ```bash
 CSM_OPEN_TEST_APP=1 scripts/install_test_app.sh
 ```
 
+若手动启动测试 GUI，请使用脚本打印的 `EXECUTABLE` 及环境变量直接执行 bundle 内二进制；不要使用 `open App.app`，因为 LaunchServices 不保证继承当前 shell 的 `CODEX_HOME`。
+
 可通过环境变量 `CSM_SOURCE_CODEX_HOME` 指定复制源，通过第二个参数指定一个必须为空的测试根目录。测试根目录包含 Codex home 副本，可能含认证信息，测试完成后应整体删除该精确目录。
+复制过程中会跳过 Unix socket、FIFO 和设备等运行时特殊文件；建议复制前退出 Codex，以便 SQLite 主库与 WAL 文件形成更一致的测试快照。
 安装阶段默认跳过外部 Codex App Server 探测，以便在没有 `codex`、uv 或 Python 的 PATH 中验证 `.app` 自带运行时；需要联调 App Server 时，在打印的测试环境变量中另外设置 `CSM_CODEX_BIN` 后运行完整 `doctor`。
 
 ## 安全工作流

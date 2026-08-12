@@ -90,6 +90,23 @@ def _text_from(value: Any) -> str:
     return "\n".join(deduplicated)
 
 
+def _message_role(raw_type: str, role: str | None) -> str | None:
+    """Infer message roles from App Server's role-less message item types."""
+
+    if role in {"user", "assistant", "developer", "system"}:
+        return role
+    normalized = raw_type.lower().replace("_", "").replace("-", "")
+    if normalized in {"user", "usermessage"}:
+        return "user"
+    if normalized in {"assistant", "assistantmessage", "agentmessage"}:
+        return "assistant"
+    if normalized in {"developer", "developermessage"}:
+        return "developer"
+    if normalized in {"system", "systemmessage"}:
+        return "system"
+    return role
+
+
 def _item_kind(raw_type: str, role: str | None) -> ItemKind:
     normalized = raw_type.lower().replace("_", "").replace("-", "")
     if "reason" in normalized:
@@ -123,7 +140,8 @@ def _item_kind(raw_type: str, role: str | None) -> ItemKind:
 def _normalized_item(raw: Mapping[str, Any], turn_id: str, index: int) -> ThreadItemSnapshot:
     raw_type = str(raw.get("type") or raw.get("kind") or "unknown")
     role_value = raw.get("role")
-    role = role_value if isinstance(role_value, str) else None
+    raw_role = role_value if isinstance(role_value, str) else None
+    role = _message_role(raw_type, raw_role)
     kind = _item_kind(raw_type, role)
     item_id_value = raw.get("id") or raw.get("itemId")
     item_id = (
@@ -242,28 +260,32 @@ def _normalized_turn(raw: Mapping[str, Any], index: int, *, thread_active: bool)
 
 
 def _protect_current_request(turns: tuple[TurnSnapshot, ...]) -> tuple[TurnSnapshot, ...]:
-    latest_user: tuple[int, int] | None = None
+    # Keep the indexes as scalar sentinels instead of unpacking an optional
+    # tuple.  Besides being easier to audit, this tolerates partially decoded
+    # App Server payloads in standalone/Nuitka builds.
+    latest_turn_index = -1
+    latest_item_index = -1
     for turn_index, turn in enumerate(turns):
         for item_index, item in enumerate(turn.items):
             if item.kind is ItemKind.USER_MESSAGE:
-                latest_user = (turn_index, item_index)
-    if latest_user is None:
+                latest_turn_index = turn_index
+                latest_item_index = item_index
+    if latest_turn_index < 0 or latest_item_index < 0:
         return turns
-    turn_index, item_index = latest_user
-    turn = turns[turn_index]
-    item = turn.items[item_index]
+    turn = turns[latest_turn_index]
+    item = turn.items[latest_item_index]
     protected = item.model_copy(
         update={
             "hard_protected": True,
             "protected_reasons": tuple(
-                dict.fromkeys((*item.protected_reasons, "current user request"))
+                dict.fromkeys((*(item.protected_reasons or ()), "current user request"))
             ),
         }
     )
     new_items = list(turn.items)
-    new_items[item_index] = protected
+    new_items[latest_item_index] = protected
     new_turns = list(turns)
-    new_turns[turn_index] = turn.model_copy(update={"items": tuple(new_items)})
+    new_turns[latest_turn_index] = turn.model_copy(update={"items": tuple(new_items)})
     return tuple(new_turns)
 
 

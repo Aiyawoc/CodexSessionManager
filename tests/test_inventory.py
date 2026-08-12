@@ -6,6 +6,7 @@ from codex_session_manager.inventory import (
     InventoryFilter,
     attach_descendant_closures,
     matches_filter,
+    model_visible_messages,
     normalize_thread,
 )
 from codex_session_manager.models import ItemKind, ThreadSnapshot, ThreadStatus
@@ -42,6 +43,42 @@ def test_normalize_protects_current_request_unknown_and_active_items() -> None:
     assert verification.kind is ItemKind.VERIFICATION
     assert verification.hard_protected
     assert snapshot.unknown_item_count == 1
+
+
+def test_normalize_infers_roles_from_codex_message_item_types() -> None:
+    raw = {
+        "id": "messages",
+        "turns": [
+            {
+                "id": "turn-1",
+                "status": "completed",
+                "items": [
+                    {"id": "u1", "type": "userMessage", "text": "question"},
+                    {"id": "a1", "type": "agentMessage", "text": "answer"},
+                ],
+            }
+        ],
+    }
+
+    snapshot = normalize_thread(raw, content_complete=True)
+    user, assistant = snapshot.turns[0].items
+
+    assert user.kind is ItemKind.USER_MESSAGE
+    assert user.role == "user"
+    assert user.hard_protected
+    assert assistant.kind is ItemKind.ASSISTANT_MESSAGE
+    assert assistant.role == "assistant"
+    assert not assistant.hard_protected
+    assert model_visible_messages(raw) == (("user", "question"), ("assistant", "answer"))
+
+
+def test_normalize_tolerates_turn_without_items() -> None:
+    snapshot = normalize_thread(
+        {"id": "partial", "turns": [{"id": "turn-without-items", "status": "completed"}]},
+        content_complete=True,
+    )
+
+    assert snapshot.turns[0].items == ()
 
 
 def test_descendant_closure_is_transitive_and_orphan_is_incomplete() -> None:

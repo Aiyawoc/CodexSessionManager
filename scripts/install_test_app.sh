@@ -42,7 +42,7 @@ if [ "$(uname -s)" != "Darwin" ]; then
   exit 1
 fi
 
-for CSM_REQUIRED_TOOL in ditto codesign install; do
+for CSM_REQUIRED_TOOL in ditto pax codesign install; do
   if ! command -v "$CSM_REQUIRED_TOOL" >/dev/null 2>&1; then
     echo "error: required command not found: $CSM_REQUIRED_TOOL" >&2
     exit 1
@@ -97,6 +97,7 @@ chmod 700 "$CSM_TEST_ROOT"
 CSM_TEST_HOME="$CSM_TEST_ROOT/home"
 CSM_TEST_CODEX_HOME="$CSM_TEST_ROOT/codex-home"
 CSM_TEST_APP="$CSM_TEST_HOME/Applications/CodexSessionManager.app"
+CSM_TEST_EXECUTABLE="$CSM_TEST_APP/Contents/MacOS/CodexSessionManager"
 CSM_TEST_LAUNCHER="$CSM_TEST_HOME/.local/bin/csm"
 CSM_TEST_COPY="$CSM_TEST_ROOT/.codex-home.$$.partial"
 CSM_SYSTEM_PATH=/usr/bin:/bin:/usr/sbin:/sbin
@@ -106,7 +107,13 @@ mkdir -m 700 -p "$CSM_TEST_HOME" "$CSM_TEST_ROOT/data" \
 
 echo "复制 Codex home: $CSM_SOURCE_CODEX_HOME"
 echo "目标 Codex home: $CSM_TEST_CODEX_HOME"
-ditto "$CSM_SOURCE_CODEX_HOME" "$CSM_TEST_COPY"
+echo "跳过 Unix socket 和其他特殊运行时文件"
+mkdir -m 700 "$CSM_TEST_COPY"
+(
+  cd "$CSM_SOURCE_CODEX_HOME"
+  find . -mindepth 1 \( -type d -o -type f -o -type l \) -print0 |
+    pax -0 -d -rw -pe "$CSM_TEST_COPY"
+)
 mv "$CSM_TEST_COPY" "$CSM_TEST_CODEX_HOME"
 
 echo "安装测试 App: $CSM_SOURCE_APP"
@@ -133,7 +140,15 @@ CSM_LOG_DIR="$CSM_TEST_ROOT/log" \
   "$CSM_TEST_LAUNCHER" doctor --skip-app-server
 
 if [ "$CSM_OPEN_TEST_APP" = "1" ]; then
-  open "$CSM_TEST_APP"
+  env HOME="$CSM_TEST_HOME" \
+    PATH="$CSM_SYSTEM_PATH" \
+    CODEX_HOME="$CSM_TEST_CODEX_HOME" \
+    CSM_CODEX_HOME="$CSM_TEST_CODEX_HOME" \
+    CSM_DATA_DIR="$CSM_TEST_ROOT/data" \
+    CSM_CONFIG_DIR="$CSM_TEST_ROOT/config" \
+    CSM_CACHE_DIR="$CSM_TEST_ROOT/cache" \
+    CSM_LOG_DIR="$CSM_TEST_ROOT/log" \
+    "$CSM_TEST_EXECUTABLE" >/dev/null 2>&1 &
 fi
 
 cat <<EOF
@@ -143,10 +158,15 @@ cat <<EOF
   HOME=$CSM_TEST_HOME
   CODEX_HOME=$CSM_TEST_CODEX_HOME
   APP=$CSM_TEST_APP
+  EXECUTABLE=$CSM_TEST_EXECUTABLE
   LAUNCHER=$CSM_TEST_LAUNCHER
 
-启动 GUI：
-  open "$CSM_TEST_APP"
+启动隔离 GUI（请直接执行 bundle 内二进制，不要用 open，以确保环境变量生效）：
+  env HOME="$CSM_TEST_HOME" PATH="$CSM_SYSTEM_PATH" \\
+  CODEX_HOME="$CSM_TEST_CODEX_HOME" CSM_CODEX_HOME="$CSM_TEST_CODEX_HOME" \\
+  CSM_DATA_DIR="$CSM_TEST_ROOT/data" CSM_CONFIG_DIR="$CSM_TEST_ROOT/config" \\
+  CSM_CACHE_DIR="$CSM_TEST_ROOT/cache" CSM_LOG_DIR="$CSM_TEST_ROOT/log" \\
+  "$CSM_TEST_EXECUTABLE"
 
 在同一测试环境运行 CLI：
   HOME="$CSM_TEST_HOME" CODEX_HOME="$CSM_TEST_CODEX_HOME" CSM_CODEX_HOME="$CSM_TEST_CODEX_HOME" \\

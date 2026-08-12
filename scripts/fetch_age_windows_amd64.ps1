@@ -13,11 +13,13 @@ $ProofName = "$ArchiveName.proof"
 $ArchiveSha256 = "c56e8ce22f7e80cb85ad946cc82d198767b056366201d3e1a2b93d865be38154"
 $ProofSha256 = "223a4bf46d6bae52b13cee6c7e384c2d3228e9055aecfe77c5d2b59413cefabc"
 $BinarySha256 = "90f5cc37249c06e0b302e476a8a63bcefeecd9437c192b8af33e6ff2d69558dd"
+$PolicySha256 = "666d9d0b9ab2e4019769c42eaccd7d6d502a9abac45979bb9b08b7213e4f53e3"
 $BaseUrl = "https://github.com/FiloSottile/age/releases/download/v$AgeVersion"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $VendorRoot = Join-Path $RepoRoot "vendor\age"
 $VendorAge = Join-Path $VendorRoot "age.exe"
 $Verification = Join-Path $VendorRoot "verification.json"
+$Policy = Join-Path $RepoRoot "packaging\sigsum-generic-2025-1.policy"
 
 function Assert-Hash {
     param(
@@ -55,6 +57,7 @@ try {
     Invoke-WebRequest -Uri "$BaseUrl/$ProofName" -OutFile $ProofPath
     Assert-Hash -Path $ArchivePath -Expected $ArchiveSha256
     Assert-Hash -Path $ProofPath -Expected $ProofSha256
+    Assert-Hash -Path $Policy -Expected $PolicySha256
 
     $GoRoot = Join-Path $FetchRoot "go"
     $GoBin = Join-Path $FetchRoot "bin"
@@ -68,11 +71,13 @@ try {
 
     $Sigsum = Join-Path $GoBin "sigsum-verify.exe"
     $Keys = Join-Path $RepoRoot "packaging\age-sigsum-keys.pub"
+    # sigsum-go v0.13.1 joins embedded policy paths with Windows separators,
+    # which embed.FS cannot open. Use the tracked canonical policy as a file.
     $StartInfo = [Diagnostics.ProcessStartInfo]::new()
     $StartInfo.FileName = $Sigsum
     $StartInfo.UseShellExecute = $false
     $StartInfo.RedirectStandardInput = $true
-    foreach ($Argument in @("-k", $Keys, "-P", "sigsum-generic-2025-1", $ProofPath)) {
+    foreach ($Argument in @("-k", $Keys, "-p", $Policy, $ProofPath)) {
         $StartInfo.ArgumentList.Add($Argument)
     }
     $Process = [Diagnostics.Process]::new()

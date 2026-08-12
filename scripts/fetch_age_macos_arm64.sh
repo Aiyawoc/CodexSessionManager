@@ -12,9 +12,11 @@ AGE_PROOF="${AGE_ARCHIVE}.proof"
 AGE_ARCHIVE_SHA="01120ea2cbf0463d4c6bd767f99f3271bbed1cdc8a9aa718a76ba1fe4f01998b"
 AGE_PROOF_SHA="e53545de98acd8fb17aca18ab4940e46edd032418df352b7387be4bc5379a0ac"
 AGE_BINARY_SHA="0e3ea0b1bed2b30aa2dc46eef4e1723864d626c80f37319c20d9b73ca045f56f"
+SIGSUM_POLICY_SHA="666d9d0b9ab2e4019769c42eaccd7d6d502a9abac45979bb9b08b7213e4f53e3"
 AGE_BASE_URL="https://github.com/FiloSottile/age/releases/download/v${AGE_VERSION}"
 CSM_REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 CSM_VENDOR_AGE="$CSM_REPO_ROOT/vendor/age/age"
+CSM_SIGSUM_POLICY="$CSM_REPO_ROOT/packaging/sigsum-generic-2025-1.policy"
 
 # Reuse a previously verified immutable payload.  This keeps repeated local
 # builds and offline packaging runs from downloading the same release again;
@@ -38,6 +40,7 @@ curl --fail --location --proto '=https' --tlsv1.2 \
 
 printf '%s  %s\n' "$AGE_ARCHIVE_SHA" "$CSM_FETCH_ROOT/$AGE_ARCHIVE" | shasum -a 256 -c -
 printf '%s  %s\n' "$AGE_PROOF_SHA" "$CSM_FETCH_ROOT/$AGE_PROOF" | shasum -a 256 -c -
+printf '%s  %s\n' "$SIGSUM_POLICY_SHA" "$CSM_SIGSUM_POLICY" | shasum -a 256 -c -
 
 mkdir -p "$CSM_FETCH_ROOT/bin"
 cp "$CSM_REPO_ROOT/packaging/age-sigsum-keys.pub" "$CSM_FETCH_ROOT/age-sigsum-key.pub"
@@ -47,7 +50,7 @@ GOCACHE="$CSM_FETCH_ROOT/go-cache" \
   go install sigsum.org/sigsum-go/cmd/sigsum-verify@v0.13.1
 "$CSM_FETCH_ROOT/bin/sigsum-verify" \
   -k "$CSM_FETCH_ROOT/age-sigsum-key.pub" \
-  -P sigsum-generic-2025-1 \
+  -p "$CSM_SIGSUM_POLICY" \
   "$CSM_FETCH_ROOT/$AGE_PROOF" < "$CSM_FETCH_ROOT/$AGE_ARCHIVE"
 
 mkdir -p "$CSM_FETCH_ROOT/extracted"

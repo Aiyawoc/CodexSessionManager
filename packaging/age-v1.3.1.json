@@ -9,6 +9,8 @@
   "proof_sha256": "e53545de98acd8fb17aca18ab4940e46edd032418df352b7387be4bc5379a0ac",
   "sigsum_verify": "sigsum.org/sigsum-go/cmd/sigsum-verify@v0.13.1",
   "sigsum_policy": "sigsum-generic-2025-1",
+  "sigsum_policy_file": "packaging/sigsum-generic-2025-1.policy",
+  "sigsum_policy_sha256": "666d9d0b9ab2e4019769c42eaccd7d6d502a9abac45979bb9b08b7213e4f53e3",
   "signing_keys": [
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM1WpnEswJLPzvXJDiswowy48U+G+G1kmgwUE2eaRHZG",
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAz2WM5CyPLqiNjk7CLl4roDXwKhQ0QExXLebukZEZFS"

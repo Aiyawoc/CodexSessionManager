@@ -1,0 +1,22 @@
+# This is a Sigsum trust policy that has been vetted by the Sigsum project
+# See https://git.glasklar.is/sigsum/project/documentation/-/blob/main/policy-maintenance.md
+
+# https://git.glasklar.is/glasklar/services/sigsum-logs/-/blob/main/instances/seasalp.md (accessed 2025-12-04)
+log 0ec7e16843119b120377a73913ac6acbc2d03d82432e2c36b841b09a95841f25 https://seasalp.glasklar.is
+
+# https://ginkgo.tlog.mullvad.net/about (accessed 2025-12-04)
+log f00c159663d09bbda6131ee1816863b6adcacfe80b0b288000b11aba8fe38314 https://ginkgo.tlog.mullvad.net
+
+# https://git.glasklar.is/glasklar/services/witnessing/-/blob/main/witness.glasklar.is/about.md (accessed 2025-12-04)
+witness witness.glasklar.is            b2106db9065ec97f25e09c18839216751a6e26d8ed8b41e485a563d3d1498536
+
+# https://witness.mullvad.net/about (accessed 2025-12-04)
+witness witness.mullvad.net            15d6d0141543247b74bab3c1076372d9c894f619c376d64b29aa312cc00f61ad
+
+# https://github.com/tillitis/tillitis.se-tillitis-witness-1/blob/main/about.md (accessed 2025-12-04)
+witness tillitis.se/tillitis-witness-1 076be8c9ee7ea60916f0df3608c945d7730082ecb37749dad2c9ed339fea770c
+
+# Requiring 2 of 3 is intended to give reasonable balance between security and availability.
+group quorum-rule 2 witness.glasklar.is witness.mullvad.net tillitis.se/tillitis-witness-1
+
+quorum quorum-rule

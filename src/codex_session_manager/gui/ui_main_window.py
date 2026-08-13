@@ -16,11 +16,11 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QImage, QKeySequence, QLinearGradient, QPainter,
     QPalette, QPixmap, QRadialGradient, QTransform)
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox,
-    QFrame, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QMainWindow, QPlainTextEdit, QProgressBar,
-    QPushButton, QSizePolicy, QSpacerItem, QTextBrowser,
-    QTextEdit, QToolButton, QTreeView, QTreeWidget,
-    QTreeWidgetItem, QVBoxLayout, QWidget)
+    QFrame, QGridLayout, QHBoxLayout, QHeaderView,
+    QLabel, QLineEdit, QMainWindow, QPlainTextEdit,
+    QProgressBar, QPushButton, QSizePolicy, QSpacerItem,
+    QTextBrowser, QTextEdit, QToolButton, QTreeView,
+    QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from codex_session_manager.gui.widgets import CenteredHandleSplitter
 
@@ -125,7 +125,7 @@ class Ui_MainWindow(object):
         self.mainSplitter.setChildrenCollapsible(False)
         self.taskPane = QWidget(self.mainSplitter)
         self.taskPane.setObjectName(u"taskPane")
-        self.taskPane.setMinimumSize(QSize(340, 0))
+        self.taskPane.setMinimumSize(QSize(280, 0))
         self.taskLayout = QVBoxLayout(self.taskPane)
         self.taskLayout.setObjectName(u"taskLayout")
         self.taskLayout.setContentsMargins(0, 0, 4, 0)
@@ -206,25 +206,31 @@ class Ui_MainWindow(object):
 
         self.taskLayout.addWidget(self.taskListStatusLabel)
 
-        self.taskActionLayout = QHBoxLayout()
+        self.taskActionLayout = QGridLayout()
         self.taskActionLayout.setSpacing(6)
         self.taskActionLayout.setObjectName(u"taskActionLayout")
         self.taskRefreshButton = QPushButton(self.taskPane)
         self.taskRefreshButton.setObjectName(u"taskRefreshButton")
 
-        self.taskActionLayout.addWidget(self.taskRefreshButton)
+        self.taskActionLayout.addWidget(self.taskRefreshButton, 0, 0, 1, 1)
+
+        self.taskBackupButton = QPushButton(self.taskPane)
+        self.taskBackupButton.setObjectName(u"taskBackupButton")
+        self.taskBackupButton.setEnabled(False)
+
+        self.taskActionLayout.addWidget(self.taskBackupButton, 0, 1, 1, 1)
 
         self.taskArchiveButton = QPushButton(self.taskPane)
         self.taskArchiveButton.setObjectName(u"taskArchiveButton")
         self.taskArchiveButton.setEnabled(False)
 
-        self.taskActionLayout.addWidget(self.taskArchiveButton)
+        self.taskActionLayout.addWidget(self.taskArchiveButton, 1, 0, 1, 1)
 
         self.taskDeleteButton = QPushButton(self.taskPane)
         self.taskDeleteButton.setObjectName(u"taskDeleteButton")
         self.taskDeleteButton.setEnabled(False)
 
-        self.taskActionLayout.addWidget(self.taskDeleteButton)
+        self.taskActionLayout.addWidget(self.taskDeleteButton, 1, 1, 1, 1)
 
 
         self.taskLayout.addLayout(self.taskActionLayout)
@@ -232,7 +238,7 @@ class Ui_MainWindow(object):
         self.mainSplitter.addWidget(self.taskPane)
         self.timelinePane = QWidget(self.mainSplitter)
         self.timelinePane.setObjectName(u"timelinePane")
-        self.timelinePane.setMinimumSize(QSize(300, 0))
+        self.timelinePane.setMinimumSize(QSize(250, 0))
         self.timelineLayout = QVBoxLayout(self.timelinePane)
         self.timelineLayout.setSpacing(0)
         self.timelineLayout.setObjectName(u"timelineLayout")
@@ -275,7 +281,7 @@ class Ui_MainWindow(object):
         self.mainSplitter.addWidget(self.timelinePane)
         self.contentPane = QWidget(self.mainSplitter)
         self.contentPane.setObjectName(u"contentPane")
-        self.contentPane.setMinimumSize(QSize(420, 0))
+        self.contentPane.setMinimumSize(QSize(340, 0))
         self.contentLayout = QVBoxLayout(self.contentPane)
         self.contentLayout.setSpacing(0)
         self.contentLayout.setObjectName(u"contentLayout")
@@ -327,7 +333,7 @@ class Ui_MainWindow(object):
         self.mainSplitter.addWidget(self.contentPane)
         self.actionPane = QWidget(self.mainSplitter)
         self.actionPane.setObjectName(u"actionPane")
-        self.actionPane.setMinimumSize(QSize(290, 0))
+        self.actionPane.setMinimumSize(QSize(260, 0))
         self.actionLayout = QVBoxLayout(self.actionPane)
         self.actionLayout.setObjectName(u"actionLayout")
         self.actionLayout.setContentsMargins(4, 0, 0, 0)
@@ -480,7 +486,8 @@ class Ui_MainWindow(object):
         QWidget.setTabOrder(self.threadIdEdit, self.loadButton)
         QWidget.setTabOrder(self.loadButton, self.taskListView)
         QWidget.setTabOrder(self.taskListView, self.taskRefreshButton)
-        QWidget.setTabOrder(self.taskRefreshButton, self.taskArchiveButton)
+        QWidget.setTabOrder(self.taskRefreshButton, self.taskBackupButton)
+        QWidget.setTabOrder(self.taskBackupButton, self.taskArchiveButton)
         QWidget.setTabOrder(self.taskArchiveButton, self.taskDeleteButton)
         QWidget.setTabOrder(self.taskDeleteButton, self.taskPaneCollapseButton)
         QWidget.setTabOrder(self.taskPaneCollapseButton, self.timelineView)
@@ -555,6 +562,10 @@ class Ui_MainWindow(object):
         self.taskRefreshButton.setText(QCoreApplication.translate("MainWindow", u"\u5237\u65b0", None))
 #if QT_CONFIG(accessibility)
         self.taskRefreshButton.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u5237\u65b0 Codex \u9879\u76ee\u548c\u4efb\u52a1\u5217\u8868", None))
+#endif // QT_CONFIG(accessibility)
+        self.taskBackupButton.setText(QCoreApplication.translate("MainWindow", u"\u5907\u4efd\u5e76\u590d\u9a8c\u2026", None))
+#if QT_CONFIG(accessibility)
+        self.taskBackupButton.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u5907\u4efd\u5e76\u5b8c\u6574\u590d\u9a8c\u6240\u9009 Codex \u5bf9\u8bdd", None))
 #endif // QT_CONFIG(accessibility)
         self.taskArchiveButton.setText(QCoreApplication.translate("MainWindow", u"\u5f52\u6863", None))
 #if QT_CONFIG(accessibility)

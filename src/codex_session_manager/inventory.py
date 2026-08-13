@@ -21,6 +21,45 @@ from codex_session_manager.models import (
     TurnSnapshot,
 )
 
+_AUDITED_THREAD_FIELDS = frozenset(
+    {
+        "agentNickname",
+        "agentRole",
+        "cliVersion",
+        "createdAt",
+        "cwd",
+        "ephemeral",
+        "forkedFromId",
+        "gitInfo",
+        "id",
+        "modelProvider",
+        "name",
+        "parentThreadId",
+        "path",
+        "preview",
+        "recencyAt",
+        "sessionId",
+        "source",
+        "status",
+        "threadSource",
+        "turns",
+        "updatedAt",
+    }
+)
+# Compatibility aliases observed in older App Server payloads.  They remain
+# explicit so a genuinely new top-level field still disables lineage writes.
+_THREAD_COMPATIBILITY_ALIASES = frozenset(
+    {
+        "archived",
+        "gitRemote",
+        "isPinned",
+        "parentId",
+        "pinned",
+        "sourceKind",
+        "title",
+    }
+)
+
 
 class InventoryFilter(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -385,6 +424,7 @@ def normalize_thread(
     parent_value = raw.get("parentThreadId") or raw.get("parentId")
     parent_id = parent_value if isinstance(parent_value, str) else None
     unknown_item_count = sum(item.kind is ItemKind.UNKNOWN for turn in turns for item in turn.items)
+    unknown_thread_fields = set(raw) - _AUDITED_THREAD_FIELDS - _THREAD_COMPATIBILITY_ALIASES
     return ThreadSnapshot(
         id=thread_id,
         title=str(raw.get("name") or raw.get("title") or ""),
@@ -410,6 +450,7 @@ def normalize_thread(
         content_complete=content_complete and turns_shape_complete,
         size_bytes=size_bytes,
         raw_path=raw_path,
+        mapping_complete=not unknown_thread_fields,
         unknown_item_count=unknown_item_count,
     )
 
@@ -609,6 +650,68 @@ class InventoryService:
             return with_closures
         return tuple(item for item in with_closures if matches_filter(item, criteria))
 
+    def hydrate(
+        self,
+        summaries: tuple[ThreadSnapshot, ...],
+        thread_ids: tuple[str, ...],
+    ) -> tuple[ThreadSnapshot, ...]:
+        """Deep-read only requested IDs while preserving the global lineage index."""
+
+        summaries = attach_descendant_closures(summaries)
+        by_id = {snapshot.id: snapshot for snapshot in summaries}
+        requested = tuple(dict.fromkeys(thread_ids))
+        missing = [thread_id for thread_id in requested if thread_id not in by_id]
+        if missing:
+            raise ValueError("threads are no longer available: " + ", ".join(sorted(missing)))
+        merged = dict(by_id)
+        for thread_id in requested:
+            summary = by_id[thread_id]
+            raw = self.client.read_thread(thread_id, include_turns=True)
+            detail = normalize_thread(
+                raw,
+                archived=summary.archived,
+                content_complete=True,
+            )
+            merged[thread_id] = merge_thread_detail(summary, detail)
+        return attach_descendant_closures(merged.values())
+
+    def list_for_targets(
+        self,
+        target_ids: tuple[str, ...],
+        *,
+        include_active: bool = True,
+        include_archived: bool = True,
+    ) -> tuple[ThreadSnapshot, ...]:
+        """Build the full lineage index, then deep-read selected descendant closures."""
+
+        summaries = self.list(
+            include_active=include_active,
+            include_archived=include_archived,
+            include_turns=False,
+        )
+        closure_ids = target_closure_ids(summaries, target_ids)
+        return self.hydrate(summaries, closure_ids)
+
     def read(self, thread_id: str, *, include_turns: bool = True) -> ThreadSnapshot:
         raw = self.client.read_thread(thread_id, include_turns=include_turns)
         return normalize_thread(raw, content_complete=include_turns)
+
+
+def target_closure_ids(
+    snapshots: tuple[ThreadSnapshot, ...],
+    target_ids: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Resolve selected roots to a deterministic union of descendant closures."""
+
+    by_id = {snapshot.id: snapshot for snapshot in attach_descendant_closures(snapshots)}
+    requested = tuple(dict.fromkeys(target_ids))
+    if not requested:
+        raise ValueError("at least one thread must be selected")
+    missing = [thread_id for thread_id in requested if thread_id not in by_id]
+    if missing:
+        raise ValueError("threads are no longer available: " + ", ".join(sorted(missing)))
+    closure: set[str] = set()
+    for thread_id in requested:
+        snapshot = by_id[thread_id]
+        closure.update((snapshot.id, *snapshot.spawned_descendant_ids))
+    return tuple(sorted(closure))

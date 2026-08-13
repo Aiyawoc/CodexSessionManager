@@ -125,18 +125,18 @@ def _release_file_lock(stream: TextIOWrapper) -> None:
 def _plan_has_current_write_capability(plan: TrimPlan) -> bool:
     """Re-probe and dry-validate a plan before suppressing native compaction."""
 
-    from codex_session_manager.app_server import connect_and_probe
-    from codex_session_manager.inventory import InventoryService
     from codex_session_manager.trim import prefix_fork_turn, validate_selections
+    from codex_session_manager.workflows import ApplicationWorkflows
 
-    client, capabilities = connect_and_probe(request_timeout=45)
-    try:
+    workflows = ApplicationWorkflows(request_timeout=45)
+    with workflows.session() as session:
+        _client, capabilities, inventory = session.services()
         if (
             not capabilities.write_enabled
             or capabilities.fingerprint != plan.capability_fingerprint
         ):
             return False
-        source = InventoryService(client).read(plan.source_thread_id, include_turns=True)
+        source = inventory.read(plan.source_thread_id, include_turns=True)
         if source.trim_fingerprint != plan.source_thread_fingerprint:
             return False
         validate_selections(source, plan.selections)
@@ -149,8 +149,6 @@ def _plan_has_current_write_capability(plan: TrimPlan) -> bool:
             for method in ("thread/start", "thread/inject_items", "thread/name/set"):
                 capabilities.require_write(method)
         return True
-    finally:
-        client.close()
 
 
 def _continue(message: str | None = None) -> HookOutput:

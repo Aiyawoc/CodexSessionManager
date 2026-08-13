@@ -4,10 +4,12 @@ from datetime import UTC, datetime
 
 from codex_session_manager.inventory import (
     InventoryFilter,
+    InventoryService,
     attach_descendant_closures,
     matches_filter,
     model_visible_messages,
     normalize_thread,
+    target_closure_ids,
 )
 from codex_session_manager.models import ItemKind, ThreadSnapshot, ThreadStatus
 
@@ -91,6 +93,21 @@ def test_normalize_marks_incomplete_thread_and_item_shapes() -> None:
 
     assert missing_turns.content_complete is False
     assert invalid_item.content_complete is False
+
+
+def test_unknown_top_level_thread_field_disables_lineage_writes() -> None:
+    snapshot = normalize_thread(
+        {
+            "id": "future-thread",
+            "status": {"type": "idle"},
+            "turns": [],
+            "futureLineage": {"parent": "unknown"},
+        },
+        content_complete=True,
+    )
+
+    assert snapshot.content_complete
+    assert not snapshot.mapping_complete
 
 
 def test_descendant_closure_is_transitive_and_orphan_is_incomplete() -> None:
@@ -217,8 +234,6 @@ class _InventoryClient:
 
 
 def test_inventory_service_deep_read_preserves_archive_graph() -> None:
-    from codex_session_manager.inventory import InventoryService
-
     client = _InventoryClient()
     snapshots = InventoryService(client).list(include_turns=True)  # type: ignore[arg-type]
     by_id = {item.id: item for item in snapshots}
@@ -226,3 +241,56 @@ def test_inventory_service_deep_read_preserves_archive_graph() -> None:
     assert by_id["active"].spawned_descendant_ids == ("archived",)
     assert all(item.content_complete for item in snapshots)
     assert client.reads == [("active", True), ("archived", True)]
+
+
+class _TargetedInventoryClient:
+    def __init__(self) -> None:
+        self.reads: list[str] = []
+
+    def list_threads(self, *, archived: bool = False):
+        if archived:
+            return iter(())
+        return iter(
+            (
+                {"id": "root", "status": {"type": "idle"}},
+                {
+                    "id": "child",
+                    "parentThreadId": "root",
+                    "status": {"type": "idle"},
+                },
+                {"id": "unrelated", "status": {"type": "idle"}},
+            )
+        )
+
+    def read_thread(self, thread_id: str, *, include_turns: bool = False):
+        self.reads.append(thread_id)
+        return {
+            "id": thread_id,
+            "status": {"type": "idle"},
+            "turns": [{"id": f"{thread_id}-turn", "status": "completed", "items": []}],
+        }
+
+
+def test_targeted_inventory_deep_reads_only_selected_descendant_closure() -> None:
+    client = _TargetedInventoryClient()
+    snapshots = InventoryService(client).list_for_targets(("root",))  # type: ignore[arg-type]
+    by_id = {snapshot.id: snapshot for snapshot in snapshots}
+
+    assert client.reads == ["child", "root"]
+    assert by_id["root"].content_complete
+    assert by_id["child"].content_complete
+    assert not by_id["unrelated"].content_complete
+    assert target_closure_ids(snapshots, ("root", "child")) == ("child", "root")
+
+
+def test_targeted_inventory_rejects_stale_ids_before_deep_read() -> None:
+    client = _TargetedInventoryClient()
+    service = InventoryService(client)  # type: ignore[arg-type]
+
+    try:
+        service.list_for_targets(("missing",))
+    except ValueError as exc:
+        assert "missing" in str(exc)
+    else:  # pragma: no cover - assertion guard
+        raise AssertionError("missing target should fail")
+    assert client.reads == []

@@ -24,6 +24,7 @@ from typing import Any, Final, Self
 from codex_session_manager.config import codex_binary, get_paths
 from codex_session_manager.hashing import canonical_json_bytes, fingerprint, hash_file, sha256_bytes
 from codex_session_manager.models import CapabilityMatrix
+from codex_session_manager.protocol_profiles import TRUSTED_WRITE_SCHEMAS
 from codex_session_manager.version import __version__
 
 LOGGER = logging.getLogger(__name__)
@@ -56,14 +57,6 @@ WRITE_METHODS: Final[frozenset[str]] = frozenset(
         "thread/delete",
         "thread/inject_items",
         "thread/name/set",
-    }
-)
-TRUSTED_WRITE_SCHEMAS: Final[frozenset[tuple[str, str]]] = frozenset(
-    {
-        (
-            "0.142.1",
-            "3e07fdc39d62bb0afaa1509863bebee96178572372a8eeaa7e95bddb2b2f24ad",
-        ),
     }
 )
 
@@ -148,47 +141,55 @@ class SubprocessAppServer:
                 )
         environment = os.environ.copy()
         environment["CODEX_HOME"] = str(codex_home)
-        self._process = subprocess.Popen(
-            [self.executable, "app-server", "--listen", "stdio://"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-            env=environment,
-        )
-        threading.Thread(
-            target=self._read_stdout, name="csm-app-server-reader", daemon=True
-        ).start()
-        threading.Thread(
-            target=self._read_stderr, name="csm-app-server-stderr", daemon=True
-        ).start()
-        capabilities: dict[str, Any] = {
-            "optOutNotificationMethods": [
-                "item/agentMessage/delta",
-                "item/reasoning/textDelta",
-                "item/reasoning/summaryTextDelta",
-            ]
-        }
-        if self.experimental:
-            capabilities["experimentalApi"] = True
-        result = self.request(
-            "initialize",
-            {
-                "clientInfo": {
-                    "name": "codex_session_manager",
-                    "title": "CodexSessionManager",
-                    "version": __version__,
+        try:
+            self._process = subprocess.Popen(
+                [self.executable, "app-server", "--listen", "stdio://"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                env=environment,
+            )
+        except OSError as exc:
+            self._process = None
+            raise AppServerError(f"unable to start Codex App Server: {exc}") from exc
+        try:
+            threading.Thread(
+                target=self._read_stdout, name="csm-app-server-reader", daemon=True
+            ).start()
+            threading.Thread(
+                target=self._read_stderr, name="csm-app-server-stderr", daemon=True
+            ).start()
+            capabilities: dict[str, Any] = {
+                "optOutNotificationMethods": [
+                    "item/agentMessage/delta",
+                    "item/reasoning/textDelta",
+                    "item/reasoning/summaryTextDelta",
+                ]
+            }
+            if self.experimental:
+                capabilities["experimentalApi"] = True
+            result = self.request(
+                "initialize",
+                {
+                    "clientInfo": {
+                        "name": "codex_session_manager",
+                        "title": "CodexSessionManager",
+                        "version": __version__,
+                    },
+                    "capabilities": capabilities,
                 },
-                "capabilities": capabilities,
-            },
-        )
-        if not isinstance(result, dict):
-            raise ProtocolError("initialize result must be an object")
-        self.initialize_result = result
-        self.notify("initialized", {})
+            )
+            if not isinstance(result, dict):
+                raise ProtocolError("initialize result must be an object")
+            self.initialize_result = result
+            self.notify("initialized", {})
+        except BaseException:
+            self.close()
+            raise
 
     def close(self) -> None:
         process = self._process

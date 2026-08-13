@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from codex_session_manager.config import get_paths
+from codex_session_manager.config import get_paths, private_atomic_create
 
 
 def test_codex_home_honors_official_environment(monkeypatch, tmp_path: Path) -> None:
@@ -19,3 +19,13 @@ def test_codex_home_rejects_conflicting_account_roots(monkeypatch, tmp_path: Pat
 
     with pytest.raises(ValueError, match="different Codex data roots"):
         get_paths()
+
+
+def test_private_atomic_create_never_replaces_existing_evidence(tmp_path: Path) -> None:
+    destination = tmp_path / "evidence.json"
+    private_atomic_create(destination, b"first")
+
+    with pytest.raises(FileExistsError):
+        private_atomic_create(destination, b"second")
+    assert destination.read_bytes() == b"first"
+    assert not tuple(tmp_path.glob(".*.tmp"))

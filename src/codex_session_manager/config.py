@@ -8,6 +8,7 @@ import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 from platformdirs import PlatformDirs
 
@@ -170,6 +171,31 @@ def private_atomic_write(path: Path, data: bytes) -> None:
             os.fsync(stream.fileno())
         os.replace(temporary, path)
         path.chmod(0o600)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def private_atomic_create(path: Path, data: bytes) -> None:
+    """Atomically create private evidence without ever replacing a destination."""
+
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary, path)
+        with contextlib.suppress(OSError):
+            path.chmod(0o600)
+        with contextlib.suppress(OSError):
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
     finally:
         if temporary.exists():
             temporary.unlink()

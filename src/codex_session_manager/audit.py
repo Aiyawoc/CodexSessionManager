@@ -272,6 +272,11 @@ class AuditStore:
         if not resolved_path.is_file():
             raise ValueError("verified backup evidence is not a regular file")
         ciphertext_sha256, ciphertext_size = hash_file(resolved_path)
+        if (
+            ciphertext_sha256 != verification.ciphertext_sha256
+            or ciphertext_size != verification.ciphertext_size
+        ):
+            raise ValueError("verified backup ciphertext changed before audit recording")
         event = self.append(
             event_type="backup.evidence",
             actor="csm-full-bundle-verifier",

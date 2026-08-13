@@ -17,6 +17,7 @@ from codex_session_manager.inventory import (
     InventoryService,
     _parent_ids,
     matches_filter,
+    target_closure_ids,
 )
 from codex_session_manager.models import (
     ActionPlan,
@@ -100,34 +101,12 @@ class CleanupPlanner:
         effective_now = (now or utc_now()).astimezone(UTC)
         cutoff = effective_now - self.policy.stale_after
         all_snapshots = {snapshot.id: snapshot for snapshot in snapshots}
-        candidates: list[ThreadSnapshot] = []
-        for snapshot in snapshots:
-            if (
-                snapshot.archived
-                or snapshot.pinned
-                or snapshot.ephemeral
-                or not snapshot.mapping_complete
-                or not snapshot.content_complete
-            ):
-                continue
-            if snapshot.status not in SAFE_INACTIVE_STATUSES:
-                continue
-            if snapshot.updated_at is None or snapshot.updated_at >= cutoff:
-                continue
-            candidates.append(snapshot)
-        candidate_ids = {snapshot.id for snapshot in candidates}
-        roots = _non_overlapping_roots(
-            [
-                root
-                for root in _top_level_candidates(candidates, all_snapshots)
-                if {root.id, *root.spawned_descendant_ids} <= candidate_ids
-                and (criteria is None or matches_filter(root, criteria))
-            ]
+        roots = self._archive_roots(
+            snapshots,
+            cutoff=cutoff,
+            criteria=criteria,
+            require_content=True,
         )
-        if len(roots) > self.policy.maximum_roots:
-            roots = sorted(
-                roots, key=lambda item: item.updated_at or datetime.min.replace(tzinfo=UTC)
-            )[: self.policy.maximum_roots]
         targets = tuple(self._target(root, all_snapshots, cutoff) for root in roots)
         return ActionPlan.create(
             action=PlanAction.ARCHIVE,
@@ -140,6 +119,61 @@ class CleanupPlanner:
             ),
             options={"stale_before": cutoff.isoformat(), "automatic_ceiling": "archive"},
         )
+
+    def archive_hydration_ids(
+        self,
+        summaries: tuple[ThreadSnapshot, ...],
+        *,
+        now: datetime | None = None,
+        criteria: InventoryFilter | None = None,
+    ) -> tuple[str, ...]:
+        """Select summary-only archive candidates before any content reads."""
+
+        effective_now = (now or utc_now()).astimezone(UTC)
+        roots = self._archive_roots(
+            summaries,
+            cutoff=effective_now - self.policy.stale_after,
+            criteria=criteria,
+            require_content=False,
+        )
+        if not roots:
+            return ()
+        return target_closure_ids(summaries, tuple(root.id for root in roots))
+
+    def _archive_roots(
+        self,
+        snapshots: tuple[ThreadSnapshot, ...],
+        *,
+        cutoff: datetime,
+        criteria: InventoryFilter | None,
+        require_content: bool,
+    ) -> list[ThreadSnapshot]:
+        all_snapshots = {snapshot.id: snapshot for snapshot in snapshots}
+        candidates = [
+            snapshot
+            for snapshot in snapshots
+            if not snapshot.archived
+            and not snapshot.pinned
+            and not snapshot.ephemeral
+            and snapshot.mapping_complete
+            and (snapshot.content_complete or not require_content)
+            and snapshot.status in SAFE_INACTIVE_STATUSES
+            and snapshot.updated_at is not None
+            and snapshot.updated_at < cutoff
+        ]
+        candidate_ids = {snapshot.id for snapshot in candidates}
+        roots = _non_overlapping_roots(
+            [
+                root
+                for root in _top_level_candidates(candidates, all_snapshots)
+                if {root.id, *root.spawned_descendant_ids} <= candidate_ids
+                and (criteria is None or matches_filter(root, criteria))
+            ]
+        )
+        return sorted(
+            roots,
+            key=lambda item: item.updated_at or datetime.min.replace(tzinfo=UTC),
+        )[: self.policy.maximum_roots]
 
     def plan_selected_archive(
         self,
@@ -248,6 +282,28 @@ class CleanupPlanner:
             prerequisites=("descendant closure remains unchanged",),
         )
 
+    def unarchive_hydration_ids(
+        self,
+        summaries: tuple[ThreadSnapshot, ...],
+        *,
+        criteria: InventoryFilter | None = None,
+    ) -> tuple[str, ...]:
+        """Select summary-only unarchive roots before content hydration."""
+
+        selected = [
+            snapshot
+            for snapshot in summaries
+            if snapshot.archived and not snapshot.ephemeral and snapshot.mapping_complete
+        ]
+        all_snapshots = {snapshot.id: snapshot for snapshot in summaries}
+        roots = _non_overlapping_roots(_top_level_candidates(selected, all_snapshots))
+        if criteria is not None:
+            roots = [snapshot for snapshot in roots if matches_filter(snapshot, criteria)]
+        roots = roots[: self.policy.maximum_roots]
+        if not roots:
+            return ()
+        return target_closure_ids(summaries, tuple(root.id for root in roots))
+
     def plan_purge(
         self,
         snapshots: tuple[ThreadSnapshot, ...],
@@ -288,7 +344,7 @@ class CleanupPlanner:
                 for root in _top_level_candidates(eligible, all_snapshots)
                 if {root.id, *root.spawned_descendant_ids} <= eligible_ids
             ]
-        )[: self.policy.maximum_roots]
+        )[:1]
         targets = tuple(self._target(root, all_snapshots, effective_now) for root in roots)
         return ActionPlan.create(
             action=PlanAction.PURGE,
@@ -318,6 +374,8 @@ class CleanupPlanner:
         audit.verify_chain()
         all_snapshots = {snapshot.id: snapshot for snapshot in snapshots}
         roots = self._explicit_roots(selected_ids, all_snapshots)
+        if len(roots) != 1:
+            raise ValueError("permanent-deletion plans must contain exactly one root")
         targets: list[PlanTarget] = []
         for root in roots:
             closure = self._resolved_closure(root, all_snapshots)
@@ -561,6 +619,8 @@ class CleanupExecutor:
         permanent_phrase: str | None = None,
     ) -> tuple[str, ...]:
         plan.verify()
+        if plan.action is PlanAction.PURGE and len(plan.targets) != 1:
+            raise ValueError("permanent-deletion plans must contain exactly one root")
         self.audit.verify_chain()
         if plan.capability_fingerprint != self.capabilities.fingerprint:
             raise ValueError("App Server capability drift invalidated the plan")

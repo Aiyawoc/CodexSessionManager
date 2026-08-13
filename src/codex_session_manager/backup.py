@@ -503,15 +503,19 @@ class BackupReader:
         self.backend = backend
 
     def verify(self, source: Path, *, decryption: DecryptionSpec) -> BackupVerification:
+        if source.is_symlink():
+            raise BackupError("backup verification refuses symbolic links")
         if not source.is_file():
             raise FileNotFoundError(source)
+        resolved_source = source.resolve(strict=True)
+        ciphertext_before = hash_file(resolved_source)
         observed: dict[str, tuple[str, int]] = {}
         logical_provenance: dict[str, dict[str, str]] = {}
         observed_total = 0
         manifest: BackupManifest | None = None
         manifest_seen = False
         with (
-            self.backend.open_decrypt(source, decryption) as decrypted,
+            self.backend.open_decrypt(resolved_source, decryption) as decrypted,
             tarfile.open(fileobj=decrypted, mode="r|*") as archive,
         ):
             for member in archive:
@@ -590,9 +594,14 @@ class BackupReader:
             assert entry.thread_id is not None
             assert isinstance(embedded_fingerprint, str)
             embedded_source_fingerprints[entry.thread_id] = embedded_fingerprint
+        ciphertext_after = hash_file(resolved_source)
+        if ciphertext_after != ciphertext_before:
+            raise BackupError("backup ciphertext changed during verification")
         return BackupVerification(
             manifest=manifest,
             embedded_source_fingerprints=embedded_source_fingerprints,
+            ciphertext_sha256=ciphertext_after[0],
+            ciphertext_size=ciphertext_after[1],
         )
 
     def iter_logical_json(
@@ -838,33 +847,48 @@ class BackupService:
                     thread_id=None,
                 )
             )
+        if os.path.lexists(destination):
+            raise FileExistsError(destination)
+        candidate = destination.with_name(f".{destination.name}.{uuid4().hex}.candidate.csmbackup")
         writer = BackupWriter(self.backend)
-        manifest = writer.create(
-            destination,
-            sources=tuple(sources),
-            source_fingerprints=source_fingerprints,
-            encryption=encryption,
-            notes=(
-                "raw rollouts are disaster-recovery preservation only; V1 raw restore is disabled",
-            ),
-        )
-        verification = BackupReader(self.backend).verify(
-            destination,
-            decryption=verification_decryption,
-        )
-        verified = verification.manifest
-        if verified.manifest_sha256 != manifest.manifest_sha256:
-            raise BackupError("post-create verification returned a different manifest")
-        if self.audit:
-            self.audit.record_verified_backup(verification, destination)
-            self.audit.append(
-                event_type="backup.verify",
-                actor="human",
-                result="succeeded",
-                target_ids=tuple(sorted(verified.source_fingerprints)),
-                details={
-                    "manifest_sha256": verified.manifest_sha256,
-                    "entry_count": len(verified.entries),
-                },
+        try:
+            manifest = writer.create(
+                candidate,
+                sources=tuple(sources),
+                source_fingerprints=source_fingerprints,
+                encryption=encryption,
+                notes=(
+                    "raw rollouts are disaster-recovery preservation only; "
+                    "V1 raw restore is disabled",
+                ),
             )
-        return verified
+            verification = BackupReader(self.backend).verify(
+                candidate,
+                decryption=verification_decryption,
+            )
+            verified = verification.manifest
+            if verified.manifest_sha256 != manifest.manifest_sha256:
+                raise BackupError("post-create verification returned a different manifest")
+            os.link(candidate, destination)
+            with contextlib.suppress(OSError):
+                directory_fd = os.open(destination.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            if self.audit:
+                self.audit.record_verified_backup(verification, destination)
+                self.audit.append(
+                    event_type="backup.verify",
+                    actor="human",
+                    result="succeeded",
+                    target_ids=tuple(sorted(verified.source_fingerprints)),
+                    details={
+                        "manifest_sha256": verified.manifest_sha256,
+                        "entry_count": len(verified.entries),
+                    },
+                )
+            return verified
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                candidate.unlink()

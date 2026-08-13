@@ -262,6 +262,18 @@ QPushButton#taskDeleteButton:hover {{
     border-color: {DANGER};
 }}
 
+QPushButton#taskBackupButton {{
+    background: {ACCENT_SOFT};
+    border-color: {ACCENT};
+    color: {ACCENT};
+}}
+
+QPushButton#taskBackupButton:hover {{
+    background: #dce9ff;
+    border-color: {ACCENT_HOVER};
+    color: {ACCENT_HOVER};
+}}
+
 QPushButton#sensitiveScanButton {{
     background: {DANGER_SOFT};
     border-color: #f1c6c1;
@@ -286,7 +298,8 @@ QPushButton#sensitiveScanButton:checked:hover {{
 
 QPushButton#loadButton:disabled, QPushButton#suggestButton:disabled,
 QPushButton#taskRefreshButton:disabled, QPushButton#taskArchiveButton:disabled,
-QPushButton#taskDeleteButton:disabled, QPushButton#savePlanButton:disabled,
+QPushButton#taskBackupButton:disabled, QPushButton#taskDeleteButton:disabled,
+QPushButton#savePlanButton:disabled,
 QPushButton#sensitiveScanButton:disabled, QPushButton#reviewButton:disabled {{
     background: #eef2f7;
     color: #9aa7b7;

@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "1.0.0"
+    [string]$Version = "1.0.1"
 )
 
 $ErrorActionPreference = "Stop"
@@ -120,6 +120,8 @@ try {
         -Destination (Join-Path $Bundle "Install-CodexSessionManager.ps1")
 
     & (Join-Path $RepoRoot "scripts\accept_windows_bundle.ps1") `
+        -BundlePath $Bundle -ExpectedVersion $Version
+    & (Join-Path $RepoRoot "scripts\test_windows_install_workflow.ps1") `
         -BundlePath $Bundle -ExpectedVersion $Version
 
     Compress-Archive -LiteralPath $Bundle -DestinationPath $Archive -CompressionLevel Optimal

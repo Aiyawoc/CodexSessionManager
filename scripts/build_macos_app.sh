@@ -109,12 +109,16 @@ fi
 codesign --verify --deep --strict --verbose=2 "$CSM_APP"
 CSM_DOCTOR_ROOT="$CSM_REPO_ROOT/build/bundle-doctor"
 mkdir -p "$CSM_DOCTOR_ROOT/codex-home"
+set -- cli doctor
+if [ "${CSM_SKIP_APP_SERVER_ACCEPTANCE:-0}" = "1" ]; then
+  set -- "$@" --skip-app-server
+fi
 CODEX_HOME="$CSM_DOCTOR_ROOT/codex-home" \
   CSM_CODEX_HOME="$CSM_DOCTOR_ROOT/codex-home" \
   CSM_DATA_DIR="$CSM_DOCTOR_ROOT/data" \
   CSM_CONFIG_DIR="$CSM_DOCTOR_ROOT/config" \
   CSM_CACHE_DIR="$CSM_DOCTOR_ROOT/cache" \
   CSM_LOG_DIR="$CSM_DOCTOR_ROOT/log" \
-  "$CSM_APP/Contents/MacOS/CodexSessionManager" cli doctor
+  "$CSM_APP/Contents/MacOS/CodexSessionManager" "$@"
 
 echo "$CSM_APP"

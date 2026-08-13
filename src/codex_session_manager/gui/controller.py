@@ -12,6 +12,7 @@ from PySide6.QtCore import QItemSelection, QPoint, QSize, Qt, QThreadPool, QTime
 from PySide6.QtGui import QCloseEvent, QColor, QTextCharFormat, QTextCursor, QTextFormat
 from PySide6.QtWidgets import (
     QApplication,
+    QFileDialog,
     QHeaderView,
     QInputDialog,
     QLineEdit,
@@ -23,9 +24,7 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
 )
 
-from codex_session_manager.app_server import connect_and_probe
-from codex_session_manager.audit import AuditStore
-from codex_session_manager.cleanup import CleanupExecutor, CleanupPlanner
+from codex_session_manager.backup import DecryptionSpec, EncryptionSpec
 from codex_session_manager.config import AppPaths, get_paths
 from codex_session_manager.gui.i18n import (
     GuiLanguage,
@@ -45,11 +44,15 @@ from codex_session_manager.gui.protocol_tags import (
     protocol_tag_spans,
     strip_protocol_tags,
 )
+from codex_session_manager.gui.review_state import (
+    ReviewState,
+    protected_reasons,
+    target_text,
+)
 from codex_session_manager.gui.theme import DANGER, ON_DANGER, PANEL, PANEL_MUTED
 from codex_session_manager.gui.timeline_model import TurnTimelineModel
 from codex_session_manager.gui.ui_main_window import Ui_MainWindow
 from codex_session_manager.gui.worker import FunctionWorker
-from codex_session_manager.inventory import InventoryService
 from codex_session_manager.models import (
     ActionPlan,
     CapabilityMatrix,
@@ -61,17 +64,20 @@ from codex_session_manager.models import (
     TrimSelection,
     TurnSnapshot,
 )
-from codex_session_manager.plans import PlanStore
 from codex_session_manager.sensitive import (
     SensitiveScanResult,
-    scan_sensitive_snapshot,
     scan_sensitive_text,
 )
 from codex_session_manager.trim import (
     LocalTrimSuggester,
     TrimError,
-    TrimExecutor,
     validate_selections,
+)
+from codex_session_manager.workflows import (
+    ActionExecutionResult,
+    ApplicationWorkflows,
+    BackupCreationResult,
+    SensitiveScanBatch,
 )
 
 ACTION_BY_INDEX = {
@@ -91,20 +97,6 @@ class ReviewDocument:
     suggested_plan: TrimPlan
 
 
-@dataclass(frozen=True, slots=True)
-class TaskOperationResult:
-    plan: ActionPlan
-    completed_ids: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class SensitiveBatchResult:
-    matches: dict[str, SensitiveScanResult]
-    scanned: int
-    failed: int
-    cancelled: bool = False
-
-
 class TrimReviewWindow(QMainWindow):
     plan_saved = Signal(object)
     derived_created = Signal(str)
@@ -119,6 +111,7 @@ class TrimReviewWindow(QMainWindow):
         source_turn_id: str | None = None,
         hook_mode: bool = False,
         load_task_list: bool = True,
+        workflows: ApplicationWorkflows | None = None,
         parent: Any = None,
     ) -> None:
         super().__init__(parent)
@@ -126,6 +119,7 @@ class TrimReviewWindow(QMainWindow):
         self.ui.setupUi(self)  # type: ignore[no-untyped-call]
         self.paths = paths or get_paths()
         self.paths.ensure()
+        self.workflows = workflows or ApplicationWorkflows(paths=self.paths)
         self.trigger = trigger
         self.source_turn_id = source_turn_id
         self.hook_mode = hook_mode
@@ -134,6 +128,7 @@ class TrimReviewWindow(QMainWindow):
         self.timeline_model: TurnTimelineModel | None = None
         self.task_snapshots: tuple[ThreadSnapshot, ...] = ()
         self.selections: dict[str, TrimSelection] = {}
+        self.review_state: ReviewState | None = None
         self.current_target: TurnSnapshot | ThreadItemSnapshot | None = None
         self._content_drafts: dict[str, str] = {}
         self._raw_content_view_states: dict[str, tuple[int, int, int, int]] = {}
@@ -241,6 +236,7 @@ class TrimReviewWindow(QMainWindow):
         self.ui.taskListView.itemClicked.connect(self._task_clicked)
         self.ui.taskListView.customContextMenuRequested.connect(self._show_task_context_menu)
         self.ui.taskRefreshButton.clicked.connect(self.load_task_list)
+        self.ui.taskBackupButton.clicked.connect(self._backup_selected_tasks)
         self.ui.taskArchiveButton.clicked.connect(self._archive_selected_tasks)
         self.ui.taskDeleteButton.clicked.connect(self._delete_selected_tasks)
         self.ui.projectTaskRailButton.clicked.connect(self._toggle_task_pane)
@@ -297,6 +293,9 @@ class TrimReviewWindow(QMainWindow):
         task_header.setText(0, self._t("task_name"))
         task_header.setText(1, self._t("age"))
         self.ui.taskRefreshButton.setText(self._t("refresh"))
+        self.ui.taskBackupButton.setText(self._t("backup"))
+        self.ui.taskBackupButton.setToolTip(self._t("backup_selected", count=1))
+        self.ui.taskBackupButton.setAccessibleName(self._t("backup"))
         self.ui.taskArchiveButton.setText(self._t("archive"))
         self.ui.taskDeleteButton.setText(self._t("delete"))
 
@@ -448,15 +447,10 @@ class TrimReviewWindow(QMainWindow):
         self.ui.taskListStatusLabel.setText(self._t("task_list_loading"))
 
         def load() -> tuple[ThreadSnapshot, ...]:
-            client, _capabilities = connect_and_probe(request_timeout=45)
-            try:
-                return InventoryService(client).list(
-                    include_active=True,
-                    include_archived=True,
-                    include_turns=False,
-                )
-            finally:
-                client.close()
+            return self.workflows.list_threads(
+                include_active=True,
+                include_archived=True,
+            ).snapshots
 
         worker = FunctionWorker(load, self._worker_owner)
         worker.signals.result.connect(
@@ -609,6 +603,7 @@ class TrimReviewWindow(QMainWindow):
 
     def _update_task_action_state(self) -> None:
         enabled = bool(self._selected_task_ids()) and not self._task_write_in_progress
+        self.ui.taskBackupButton.setEnabled(enabled)
         self.ui.taskArchiveButton.setEnabled(enabled)
         self.ui.taskDeleteButton.setEnabled(enabled)
 
@@ -629,13 +624,16 @@ class TrimReviewWindow(QMainWindow):
         rename_action = menu.addAction(self._t("rename"))
         copy_action = menu.addAction(self._t("copy_id"))
         menu.addSeparator()
+        backup_action = menu.addAction(self._t("backup_selected", count=selected_count))
         archive_action = menu.addAction(self._t("archive_selected", count=selected_count))
         delete_action = menu.addAction(self._t("delete_selected", count=selected_count))
         rename_action.setEnabled(not self._task_write_in_progress)
+        backup_action.setEnabled(not self._task_write_in_progress)
         archive_action.setEnabled(not self._task_write_in_progress)
         delete_action.setEnabled(not self._task_write_in_progress)
         rename_action.triggered.connect(lambda _checked=False: self._rename_task(thread_id))
         copy_action.triggered.connect(lambda _checked=False: self._copy_conversation_id(thread_id))
+        backup_action.triggered.connect(self._backup_selected_tasks)
         archive_action.triggered.connect(self._archive_selected_tasks)
         delete_action.triggered.connect(self._delete_selected_tasks)
         menu.exec(self.ui.taskListView.viewport().mapToGlobal(point))
@@ -678,35 +676,11 @@ class TrimReviewWindow(QMainWindow):
             self._task_rename_succeeded,
         )
 
-    def _apply_task_rename(self, thread_id: str, new_name: str) -> TaskOperationResult:
-        client, capabilities = connect_and_probe(request_timeout=45)
-        try:
-            inventory = InventoryService(client)
-            snapshots = inventory.list(
-                include_active=True,
-                include_archived=True,
-                include_turns=True,
-            )
-            plan = CleanupPlanner().plan_rename(
-                snapshots,
-                capabilities,
-                thread_id=thread_id,
-                new_name=new_name,
-            )
-            PlanStore(self.paths).save(plan)
-            with AuditStore(self.paths) as audit:
-                completed = CleanupExecutor(
-                    client=client,
-                    inventory=inventory,
-                    capabilities=capabilities,
-                    audit=audit,
-                ).apply(plan)
-            return TaskOperationResult(plan, completed)
-        finally:
-            client.close()
+    def _apply_task_rename(self, thread_id: str, new_name: str) -> ActionExecutionResult:
+        return self.workflows.rename_thread(thread_id, new_name)
 
     def _task_rename_succeeded(self, value: object) -> None:
-        if not isinstance(value, TaskOperationResult):
+        if not isinstance(value, ActionExecutionResult):
             self._show_error(self._t("rename_invalid"))
             return
         QMessageBox.information(
@@ -721,6 +695,108 @@ class TrimReviewWindow(QMainWindow):
         self.load_task_list()
 
     @Slot()
+    def _backup_selected_tasks(self) -> None:
+        selected_ids = self._selected_task_ids()
+        if not selected_ids:
+            self._show_error(self._t("select_task"))
+            return
+        default_name = f"codex-tasks-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.csmbackup"
+        selected_path, _filter = QFileDialog.getSaveFileName(
+            self,
+            self._t("backup_destination_title"),
+            str(self.paths.backups_dir / default_name),
+            "CodexSessionManager backup (*.csmbackup)",
+        )
+        if not selected_path:
+            return
+        destination = Path(selected_path)
+        if destination.suffix != ".csmbackup":
+            destination = destination.with_name(destination.name + ".csmbackup")
+        if destination.exists():
+            self._show_error(self._t("task_operation_failed", error=FileExistsError(destination)))
+            return
+        recipient, accepted = QInputDialog.getText(
+            self,
+            self._t("backup_recipient_title"),
+            self._t("backup_recipient_prompt"),
+            QLineEdit.EchoMode.Normal,
+        )
+        recipient = recipient.strip()
+        if not accepted:
+            return
+        if not recipient:
+            self._show_error(self._t("backup_recipient_empty"))
+            return
+        identity_path, _filter = QFileDialog.getOpenFileName(
+            self,
+            self._t("backup_identity_title"),
+            str(Path.home()),
+            "age identity (*.txt);;All files (*)",
+        )
+        if not identity_path:
+            return
+        answer = QMessageBox.question(
+            self,
+            self._t("backup_confirm_title"),
+            self._t(
+                "backup_confirm",
+                selected=len(selected_ids),
+                filename=destination.name,
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._start_task_operation(
+            self._t("backup_busy"),
+            lambda: self._create_selected_backup(
+                selected_ids,
+                destination,
+                recipient,
+                Path(identity_path),
+            ),
+            self._task_backup_succeeded,
+        )
+
+    def _create_selected_backup(
+        self,
+        selected_ids: tuple[str, ...],
+        destination: Path,
+        recipient: str,
+        identity_path: Path,
+    ) -> BackupCreationResult:
+        return self.workflows.create_backup(
+            destination,
+            thread_ids=selected_ids,
+            encryption=EncryptionSpec(mode="age-recipient", recipient=recipient),
+            verification_decryption=DecryptionSpec(identity_file=identity_path),
+            include_raw=True,
+            expand_descendants=True,
+        )
+
+    def _task_backup_succeeded(self, value: object) -> None:
+        if not isinstance(value, BackupCreationResult):
+            self._show_error(self._t("backup_invalid"))
+            return
+        QMessageBox.information(
+            self,
+            self._t("backup_done_title"),
+            self._t(
+                "backup_done",
+                count=len(value.covered_thread_ids),
+                manifest_sha256=value.manifest.manifest_sha256,
+            ),
+        )
+        self.ui.taskListStatusLabel.setText(
+            self._t(
+                "backup_done",
+                count=len(value.covered_thread_ids),
+                manifest_sha256=value.manifest.manifest_sha256,
+            ).split("\n", maxsplit=1)[0]
+        )
+
+    @Slot()
     def _archive_selected_tasks(self) -> None:
         selected_ids = self._selected_task_ids()
         if not selected_ids:
@@ -733,22 +809,7 @@ class TrimReviewWindow(QMainWindow):
         )
 
     def _prepare_selected_archive(self, selected_ids: tuple[str, ...]) -> ActionPlan:
-        client, capabilities = connect_and_probe(request_timeout=45)
-        try:
-            snapshots = InventoryService(client).list(
-                include_active=True,
-                include_archived=True,
-                include_turns=True,
-            )
-            plan = CleanupPlanner().plan_selected_archive(
-                snapshots,
-                capabilities,
-                selected_ids,
-            )
-            PlanStore(self.paths).save(plan)
-            return plan
-        finally:
-            client.close()
+        return self.workflows.prepare_selected_archive(selected_ids).plan
 
     def _confirm_prepared_archive(self, value: object) -> None:
         if not isinstance(value, ActionPlan):
@@ -778,23 +839,11 @@ class TrimReviewWindow(QMainWindow):
             self._task_archive_succeeded,
         )
 
-    def _apply_prepared_archive(self, plan: ActionPlan) -> TaskOperationResult:
-        client, capabilities = connect_and_probe(request_timeout=45)
-        try:
-            inventory = InventoryService(client)
-            with AuditStore(self.paths) as audit:
-                completed = CleanupExecutor(
-                    client=client,
-                    inventory=inventory,
-                    capabilities=capabilities,
-                    audit=audit,
-                ).apply(plan, confirmation=plan.plan_id)
-            return TaskOperationResult(plan, completed)
-        finally:
-            client.close()
+    def _apply_prepared_archive(self, plan: ActionPlan) -> ActionExecutionResult:
+        return self.workflows.apply_action(plan, confirmation=plan.plan_id)
 
     def _task_archive_succeeded(self, value: object) -> None:
-        if not isinstance(value, TaskOperationResult):
+        if not isinstance(value, ActionExecutionResult):
             self._show_error(self._t("archive_invalid"))
             return
         QMessageBox.information(
@@ -830,24 +879,7 @@ class TrimReviewWindow(QMainWindow):
         )
 
     def _prepare_selected_purge(self, selected_ids: tuple[str, ...]) -> ActionPlan:
-        client, capabilities = connect_and_probe(request_timeout=45, experimental_api=True)
-        try:
-            snapshots = InventoryService(client).list(
-                include_active=True,
-                include_archived=True,
-                include_turns=True,
-            )
-            with AuditStore(self.paths) as audit:
-                plan = CleanupPlanner().plan_selected_purge(
-                    snapshots,
-                    capabilities,
-                    audit,
-                    selected_ids,
-                )
-            PlanStore(self.paths).save(plan)
-            return plan
-        finally:
-            client.close()
+        return self.workflows.prepare_selected_purge(selected_ids).plan
 
     def _confirm_prepared_purge(self, value: object) -> None:
         if not isinstance(value, ActionPlan):
@@ -893,27 +925,15 @@ class TrimReviewWindow(QMainWindow):
         plan: ActionPlan,
         confirmation: str,
         permanent_phrase: str,
-    ) -> TaskOperationResult:
-        client, capabilities = connect_and_probe(request_timeout=45, experimental_api=True)
-        try:
-            inventory = InventoryService(client)
-            with AuditStore(self.paths) as audit:
-                completed = CleanupExecutor(
-                    client=client,
-                    inventory=inventory,
-                    capabilities=capabilities,
-                    audit=audit,
-                ).apply(
-                    plan,
-                    confirmation=confirmation,
-                    permanent_phrase=permanent_phrase,
-                )
-            return TaskOperationResult(plan, completed)
-        finally:
-            client.close()
+    ) -> ActionExecutionResult:
+        return self.workflows.apply_action(
+            plan,
+            confirmation=confirmation,
+            permanent_phrase=permanent_phrase,
+        )
 
     def _task_purge_succeeded(self, value: object) -> None:
-        if not isinstance(value, TaskOperationResult):
+        if not isinstance(value, ActionExecutionResult):
             self._show_error(self._t("purge_invalid"))
             return
         QMessageBox.information(
@@ -996,29 +1016,12 @@ class TrimReviewWindow(QMainWindow):
 
         worker: FunctionWorker
 
-        def scan() -> SensitiveBatchResult:
-            client, _capabilities = connect_and_probe(request_timeout=45)
-            matches: dict[str, SensitiveScanResult] = {}
-            failed = 0
-            scanned = 0
-            try:
-                inventory = InventoryService(client)
-                for index, snapshot in enumerate(self.task_snapshots, start=1):
-                    if generation != self._sensitive_scan_generation or self._closing:
-                        return SensitiveBatchResult(matches, scanned, failed, cancelled=True)
-                    try:
-                        complete = inventory.read(snapshot.id, include_turns=True)
-                        finding = scan_sensitive_snapshot(complete)
-                    except Exception:
-                        failed += 1
-                    else:
-                        scanned += 1
-                        if finding.has_findings:
-                            matches[snapshot.id] = finding
-                    worker.signals.progress.emit((index, total))
-                return SensitiveBatchResult(matches, scanned, failed)
-            finally:
-                client.close()
+        def scan() -> SensitiveScanBatch:
+            return self.workflows.scan_sensitive_threads(
+                tuple(snapshot.id for snapshot in self.task_snapshots),
+                cancelled=lambda: generation != self._sensitive_scan_generation or self._closing,
+                progress=worker.signals.progress.emit,
+            )
 
         worker = FunctionWorker(scan, self._worker_owner)
         worker.signals.progress.connect(
@@ -1049,7 +1052,7 @@ class TrimReviewWindow(QMainWindow):
             or not self.ui.sensitiveScanButton.isChecked()
         ):
             return
-        if not isinstance(value, SensitiveBatchResult) or value.cancelled:
+        if not isinstance(value, SensitiveScanBatch) or value.cancelled:
             return
         self._sensitive_matches = value.matches
         self._sensitive_scan_complete = True
@@ -1178,18 +1181,14 @@ class TrimReviewWindow(QMainWindow):
         self._set_busy(True, self._t("thread_loading"))
 
         def load() -> ReviewDocument:
-            client, capabilities = connect_and_probe(request_timeout=45)
-            try:
-                snapshot = InventoryService(client).read(thread_id, include_turns=True)
-                suggested = LocalTrimSuggester().suggest(
-                    snapshot,
-                    capabilities=capabilities,
-                    trigger=self.trigger,
-                    source_turn_id=self.source_turn_id,
-                )
-                return ReviewDocument(snapshot, capabilities, suggested)
-            finally:
-                client.close()
+            result = self.workflows.read_thread(thread_id, include_turns=True)
+            suggested = LocalTrimSuggester().suggest(
+                result.snapshot,
+                capabilities=result.capabilities,
+                trigger=self.trigger,
+                source_turn_id=self.source_turn_id,
+            )
+            return ReviewDocument(result.snapshot, result.capabilities, suggested)
 
         worker = FunctionWorker(load, self._worker_owner)
         worker.signals.result.connect(
@@ -1208,9 +1207,11 @@ class TrimReviewWindow(QMainWindow):
             self._show_error(self._t("load_invalid"))
             return
         self.document = value
-        self.selections = {
-            selection.target_id: selection for selection in value.suggested_plan.selections
-        }
+        self.review_state = ReviewState.from_selections(
+            value.snapshot,
+            value.suggested_plan.selections,
+        )
+        self.selections = self.review_state.selections
         self.current_plan = value.suggested_plan
         self.timeline_model = TurnTimelineModel(
             value.snapshot,
@@ -1601,7 +1602,11 @@ class TrimReviewWindow(QMainWindow):
             trigger=self.trigger,
             source_turn_id=self.source_turn_id,
         )
-        self.selections = {selection.target_id: selection for selection in plan.selections}
+        self.review_state = ReviewState.from_selections(
+            self.document.snapshot,
+            plan.selections,
+        )
+        self.selections = self.review_state.selections
         if self.timeline_model:
             self.timeline_model.selections = self.selections
             self.timeline_model.refresh_actions()
@@ -1629,14 +1634,46 @@ class TrimReviewWindow(QMainWindow):
     def _save_plan(self) -> None:
         try:
             plan = self._build_plan()
-            PlanStore(self.paths).save(plan)
         except (ValueError, OSError, TrimError) as exc:
             self._show_error(self._t("plan_save_failed", error=exc))
             return
-        self.current_plan = plan
-        self.ui.errorLabel.setText(self._t("plan_saved", plan_id=plan.plan_id))
+        if self._write_in_progress:
+            self._show_error(self._t("write_in_progress"))
+            return
+        self._set_busy(True, self._t("plan_save_busy"))
+        self._write_in_progress = True
+        generation = self._generation
+        outcome: dict[str, object] = {}
+
+        def save() -> TrimPlan:
+            self.workflows.save_plan(plan)
+            return plan
+
+        worker = FunctionWorker(save, self._worker_owner)
+        worker.signals.result.connect(lambda value: outcome.__setitem__("value", value))
+        worker.signals.error.connect(lambda error: outcome.__setitem__("error", error))
+        worker.signals.finished.connect(
+            lambda current=generation: self._save_plan_finished(current, outcome)
+        )
+        self.thread_pool.start(worker)
+
+    def _save_plan_finished(self, generation: int, outcome: dict[str, object]) -> None:
+        self._write_in_progress = False
+        if generation != self._generation or self._closing:
+            return
+        self._set_busy(False)
+        error = outcome.get("error")
+        if isinstance(error, str):
+            self._show_error(self._t("plan_save_failed", error=error))
+            return
+        value = outcome.get("value")
+        if not isinstance(value, TrimPlan):
+            self._show_error(self._t("plan_save_no_result"))
+            return
+        self.current_plan = value
+        self.ui.errorLabel.setText(self._t("plan_saved", plan_id=value.plan_id))
         self.ui.errorLabel.show()
-        self.plan_saved.emit(plan)
+        self.plan_saved.emit(value)
         if self.hook_mode:
             self.close()
 
@@ -1644,26 +1681,19 @@ class TrimReviewWindow(QMainWindow):
     def _apply_plan(self) -> None:
         try:
             plan = self._build_plan()
-            PlanStore(self.paths).save(plan)
         except (ValueError, OSError, TrimError) as exc:
             self._show_error(self._t("plan_validate_failed", error=exc))
+            return
+        if self._write_in_progress:
+            self._show_error(self._t("write_in_progress"))
             return
         self._set_busy(True, self._t("apply_busy"))
         self._write_in_progress = True
         generation = self._generation
 
         def apply() -> str:
-            client, capabilities = connect_and_probe(request_timeout=45)
-            try:
-                with AuditStore(self.paths) as audit:
-                    return TrimExecutor(
-                        client=client,
-                        inventory=InventoryService(client),
-                        capabilities=capabilities,
-                        audit=audit,
-                    ).apply(plan)
-            finally:
-                client.close()
+            self.workflows.save_plan(plan)
+            return self.workflows.apply_trim(plan)
 
         worker = FunctionWorker(apply, self._worker_owner)
         worker.signals.result.connect(
@@ -1696,25 +1726,9 @@ class TrimReviewWindow(QMainWindow):
             self._set_busy(False)
 
     def _estimated_after(self) -> int:
-        if self.document is None:
+        if self.document is None or self.review_state is None:
             return 0
-        total = 0
-        for turn in self.document.snapshot.turns:
-            selection = self.selections.get(turn.id)
-            if selection and selection.action is TrimAction.EXCLUDE:
-                continue
-            if selection and selection.action is TrimAction.SUMMARY:
-                total += max(1, len((selection.summary or "").encode("utf-8")) // 3)
-                continue
-            for item in turn.items:
-                item_selection = self.selections.get(item.id)
-                if item_selection and item_selection.action is TrimAction.EXCLUDE:
-                    continue
-                if item_selection and item_selection.action is TrimAction.SUMMARY:
-                    total += max(1, len((item_selection.summary or "").encode("utf-8")) // 3)
-                else:
-                    total += item.token_estimate
-        return total
+        return self.review_state.estimated_tokens_after()
 
     def _update_estimate(self) -> None:
         if self.document is None:
@@ -1762,48 +1776,22 @@ class TrimReviewWindow(QMainWindow):
     ) -> None:
         """Keep turn- and item-level actions unambiguous before sealing a plan."""
 
-        if isinstance(target, TurnSnapshot):
-            for item in target.items:
-                self.selections.pop(item.id, None)
+        if self.review_state is None:
             return
-        if self.document is None:
-            return
-        parent = next(
-            (
-                turn
-                for turn in self.document.snapshot.turns
-                if any(item.id == target.id for item in turn.items)
-            ),
-            None,
-        )
-        if parent is None:
-            return
-        parent_selection = self.selections.get(parent.id)
-        if parent_selection is None or parent_selection.action is TrimAction.KEEP:
-            return
-        self.selections[parent.id] = TrimSelection(
-            target_id=parent.id,
-            target_level="turn",
-            action=TrimAction.KEEP,
-            reason=self._t("manual_reason"),
-            suggested=False,
+        self.review_state.normalize_selection_scope(
+            target,
+            keep_reason=self._t("manual_reason"),
         )
 
     @staticmethod
     def _target_protected_reasons(
         target: TurnSnapshot | ThreadItemSnapshot,
     ) -> tuple[str, ...]:
-        if isinstance(target, TurnSnapshot):
-            return tuple(
-                dict.fromkeys(reason for item in target.items for reason in item.protected_reasons)
-            )
-        return target.protected_reasons
+        return protected_reasons(target)
 
     @staticmethod
     def _target_text(target: TurnSnapshot | ThreadItemSnapshot) -> str:
-        if isinstance(target, TurnSnapshot):
-            return "\n".join(item.text for item in target.items if item.text)
-        return target.text
+        return target_text(target)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._write_in_progress or self._task_write_in_progress:

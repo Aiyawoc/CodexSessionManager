@@ -10,16 +10,22 @@ from typing import Annotated, Any
 import typer
 from pydantic import BaseModel
 
-from codex_session_manager.app_server import connect_and_probe
+from codex_session_manager.acceptance import (
+    AcceptanceScope,
+    AcceptanceStage,
+    AcceptanceStageName,
+    AcceptanceStageResult,
+    create_acceptance_report,
+    save_acceptance_report,
+)
 from codex_session_manager.audit import AuditStore
 from codex_session_manager.backup import (
     AgeBackend,
     BackupReader,
-    BackupService,
     DecryptionSpec,
     EncryptionSpec,
 )
-from codex_session_manager.cleanup import CleanupExecutor, CleanupPlanner, CleanupPolicy
+from codex_session_manager.cleanup import CleanupPolicy
 from codex_session_manager.config import get_paths
 from codex_session_manager.doctor import run_doctor
 from codex_session_manager.hooks import HookInstaller
@@ -31,11 +37,7 @@ from codex_session_manager.importing import (
     record_from_backup_json,
     record_from_thread,
 )
-from codex_session_manager.inventory import (
-    InventoryFilter,
-    InventoryService,
-    merge_thread_detail,
-)
+from codex_session_manager.inventory import InventoryFilter, InventoryService
 from codex_session_manager.models import (
     ActionPlan,
     ImportPlan,
@@ -43,9 +45,15 @@ from codex_session_manager.models import (
     ThreadStatus,
     TrimPlan,
 )
-from codex_session_manager.plans import PlanStore, load_plan_as
-from codex_session_manager.trim import LocalTrimSuggester, TrimExecutor, build_projection
+from codex_session_manager.plans import load_plan_as
+from codex_session_manager.schema_audit import (
+    SchemaAuditReport,
+    audit_local_schema,
+    save_schema_audit_report,
+)
+from codex_session_manager.trim import LocalTrimSuggester, build_projection
 from codex_session_manager.version import __version__
+from codex_session_manager.workflows import ApplicationWorkflows
 
 app = typer.Typer(
     name="csm",
@@ -63,6 +71,8 @@ codex_import_app = typer.Typer(help="导入其他账号或数据根中的 Codex 
 trim_app = typer.Typer(help="审查、建议和应用派生式上下文裁剪。")
 hook_app = typer.Typer(help="管理可选 PreCompact/PostCompact Hook。")
 audit_app = typer.Typer(help="查看和验证 CSM 自有审计链。")
+schema_app = typer.Typer(help="只读审计本地 Codex App Server schema。")
+acceptance_app = typer.Typer(help="记录脱敏、分阶段的人工验收证据。")
 
 app.add_typer(threads_app, name="threads")
 app.add_typer(cleanup_app, name="cleanup")
@@ -75,6 +85,8 @@ import_app.add_typer(codex_import_app, name="codex")
 app.add_typer(trim_app, name="trim")
 app.add_typer(hook_app, name="hook")
 app.add_typer(audit_app, name="audit")
+app.add_typer(schema_app, name="schema")
+app.add_typer(acceptance_app, name="acceptance")
 
 
 def _jsonable(value: Any) -> Any:
@@ -97,6 +109,10 @@ def _jsonable(value: Any) -> Any:
 
 def _emit(value: Any) -> None:
     typer.echo(json.dumps(_jsonable(value), ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def _workflows() -> ApplicationWorkflows:
+    return ApplicationWorkflows(paths=get_paths(), request_timeout=30)
 
 
 def _identity_spec(identity: Path | None, passphrase: bool) -> DecryptionSpec:
@@ -155,6 +171,102 @@ def version() -> None:
     typer.echo(__version__)
 
 
+@schema_app.command("audit")
+def schema_audit(
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", help="可选的不可覆盖 JSON 报告路径"),
+    ] = None,
+) -> None:
+    """生成 schema、二进制和能力差异报告；不会连接或写入任务。"""
+
+    report = audit_local_schema()
+    if output is None:
+        _emit(report)
+        return
+    try:
+        save_schema_audit_report(report, output)
+    except FileExistsError as exc:
+        raise typer.BadParameter("--output 已存在；验收证据禁止覆盖") from exc
+    _emit(
+        {
+            "output_name": output.name,
+            "report_sha256": report.report_sha256,
+            "conclusion": report.conclusion,
+            "write_enabled": report.write_enabled,
+        }
+    )
+
+
+def _parse_acceptance_stages(values: list[str] | None) -> tuple[AcceptanceStage, ...]:
+    if not values:
+        raise typer.BadParameter("至少提供一个 --stage NAME=passed|failed|not_run")
+    stages: list[AcceptanceStage] = []
+    for value in values:
+        name, separator, result = value.partition("=")
+        if not separator:
+            raise typer.BadParameter(f"无效 --stage：{value}")
+        try:
+            stages.append(
+                AcceptanceStage(
+                    name=AcceptanceStageName(name),
+                    result=AcceptanceStageResult(result),
+                )
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(f"无效 --stage：{value}") from exc
+    return tuple(stages)
+
+
+@acceptance_app.command("report")
+def acceptance_report(
+    output: Path,
+    schema_report_path: Annotated[Path, typer.Option("--schema-report")],
+    scope: Annotated[AcceptanceScope, typer.Option("--scope")] = (
+        AcceptanceScope.MACOS_REAL_ACCOUNT
+    ),
+    stage: Annotated[
+        list[str] | None,
+        typer.Option("--stage", help="可重复：固定阶段名=passed|failed|not_run"),
+    ] = None,
+    thread_id: Annotated[
+        list[str] | None,
+        typer.Option("--thread-id", help="可重复；报告中只保存域分隔哈希"),
+    ] = None,
+    plan_sha256: Annotated[list[str] | None, typer.Option("--plan-sha256")] = None,
+    backup_manifest_sha256: Annotated[
+        list[str] | None,
+        typer.Option("--backup-manifest-sha256"),
+    ] = None,
+    audit_sha256: Annotated[str | None, typer.Option("--audit-sha256")] = None,
+) -> None:
+    """汇总人工阶段结果；不运行任何真实账号写操作。"""
+
+    try:
+        schema_report = SchemaAuditReport.model_validate_json(schema_report_path.read_bytes())
+        report = create_acceptance_report(
+            scope=scope,
+            schema_report=schema_report,
+            stages=_parse_acceptance_stages(stage),
+            thread_ids=tuple(thread_id or ()),
+            plan_sha256s=tuple(plan_sha256 or ()),
+            backup_manifest_sha256s=tuple(backup_manifest_sha256 or ()),
+            audit_sha256=audit_sha256,
+        )
+        save_acceptance_report(report, output)
+    except FileExistsError as exc:
+        raise typer.BadParameter("输出报告已存在；验收证据禁止覆盖") from exc
+    except (OSError, ValueError) as exc:
+        raise typer.BadParameter(f"无法生成验收报告：{exc}") from exc
+    _emit(
+        {
+            "output_name": output.name,
+            "report_sha256": report.report_sha256,
+            "production_ready": report.production_ready,
+        }
+    )
+
+
 @app.command()
 def doctor(
     skip_app_server: Annotated[bool, typer.Option("--skip-app-server")] = False,
@@ -184,47 +296,43 @@ def threads_list(
 ) -> None:
     """通过 App Server 列出任务摘要；不修复或改写 Codex 元数据。"""
 
-    client, capabilities = connect_and_probe()
-    try:
-        snapshots = InventoryService(client).list(
-            criteria=_inventory_filter(
-                project=project,
-                git_remote=git_remote,
-                source_kinds=source_kind,
-                statuses=status,
-                archived=archived,
-                pinned=pinned,
-                updated_before=updated_before,
-                updated_after=updated_after,
-                minimum_size=minimum_size,
-                maximum_size=maximum_size,
-                parent_id=parent_id,
-                search=search,
-            )
+    result = _workflows().list_threads(
+        criteria=_inventory_filter(
+            project=project,
+            git_remote=git_remote,
+            source_kinds=source_kind,
+            statuses=status,
+            archived=archived,
+            pinned=pinned,
+            updated_before=updated_before,
+            updated_after=updated_after,
+            minimum_size=minimum_size,
+            maximum_size=maximum_size,
+            parent_id=parent_id,
+            search=search,
         )
-        _emit(
-            {
-                "capability_fingerprint": capabilities.fingerprint,
-                "count": len(snapshots),
-                "threads": [
-                    {
-                        "id": item.id,
-                        "title": item.title,
-                        "cwd": item.cwd,
-                        "git_remote": item.git_remote,
-                        "updated_at": item.updated_at,
-                        "status": item.status,
-                        "archived": item.archived,
-                        "pinned": item.pinned,
-                        "size_bytes": item.size_bytes,
-                        "descendants": item.spawned_descendant_ids,
-                    }
-                    for item in snapshots
-                ],
-            }
-        )
-    finally:
-        client.close()
+    )
+    _emit(
+        {
+            "capability_fingerprint": result.capabilities.fingerprint,
+            "count": len(result.snapshots),
+            "threads": [
+                {
+                    "id": item.id,
+                    "title": item.title,
+                    "cwd": item.cwd,
+                    "git_remote": item.git_remote,
+                    "updated_at": item.updated_at,
+                    "status": item.status,
+                    "archived": item.archived,
+                    "pinned": item.pinned,
+                    "size_bytes": item.size_bytes,
+                    "descendants": item.spawned_descendant_ids,
+                }
+                for item in result.snapshots
+            ],
+        }
+    )
 
 
 @threads_app.command("show")
@@ -234,12 +342,13 @@ def threads_show(
 ) -> None:
     """读取单个任务；默认只输出摘要。"""
 
-    client, capabilities = connect_and_probe()
-    try:
-        snapshot = InventoryService(client).read(thread_id, include_turns=include_content)
-        _emit({"capability_fingerprint": capabilities.fingerprint, "thread": snapshot})
-    finally:
-        client.close()
+    result = _workflows().read_thread(thread_id, include_turns=include_content)
+    _emit(
+        {
+            "capability_fingerprint": result.capabilities.fingerprint,
+            "thread": result.snapshot,
+        }
+    )
 
 
 @cleanup_app.command("plan")
@@ -254,28 +363,24 @@ def cleanup_plan(
 ) -> None:
     """生成不可变归档/反归档计划，不执行写操作。"""
 
-    paths = get_paths()
-    client, capabilities = connect_and_probe()
     try:
-        snapshots = InventoryService(client).list(include_turns=True)
-        planner = CleanupPlanner(CleanupPolicy(stale_after=timedelta(days=older_than_days)))
-        criteria = _inventory_filter(
+        plan_action = PlanAction(action)
+    except ValueError as exc:
+        raise typer.BadParameter("--action 必须是 archive 或 unarchive") from exc
+    if plan_action not in {PlanAction.ARCHIVE, PlanAction.UNARCHIVE}:
+        raise typer.BadParameter("--action 必须是 archive 或 unarchive")
+    prepared = _workflows().prepare_cleanup_plan(
+        action=plan_action,
+        policy=CleanupPolicy(stale_after=timedelta(days=older_than_days)),
+        criteria=_inventory_filter(
             project=project,
             git_remote=git_remote,
             source_kinds=source_kind,
             updated_before=updated_before,
             search=search,
-        )
-        if action == "archive":
-            plan = planner.plan_archive(snapshots, capabilities, criteria=criteria)
-        elif action == "unarchive":
-            plan = planner.plan_unarchive(snapshots, capabilities, criteria=criteria)
-        else:
-            raise typer.BadParameter("--action 必须是 archive 或 unarchive")
-        path = PlanStore(paths).save(plan)
-        _emit({"plan": plan, "path": path})
-    finally:
-        client.close()
+        ),
+    )
+    _emit({"plan": prepared.plan, "path": prepared.path})
 
 
 @cleanup_app.command("apply")
@@ -290,19 +395,8 @@ def cleanup_apply(
         raise typer.BadParameter("该计划不是 cleanup 计划")
     if confirm != plan.plan_id:
         raise typer.BadParameter("--confirm 必须等于精确 plan_id")
-    paths = get_paths()
-    client, capabilities = connect_and_probe()
-    try:
-        with AuditStore(paths) as audit:
-            completed = CleanupExecutor(
-                client=client,
-                inventory=InventoryService(client),
-                capabilities=capabilities,
-                audit=audit,
-            ).apply(plan, confirmation=confirm)
-        _emit({"completed_roots": completed, "plan_sha256": plan.plan_sha256})
-    finally:
-        client.close()
+    result = _workflows().apply_action(plan, confirmation=confirm)
+    _emit({"completed_roots": result.completed_ids, "plan_sha256": plan.plan_sha256})
 
 
 @cleanup_app.command("reconcile")
@@ -317,35 +411,16 @@ def cleanup_reconcile(
         raise typer.BadParameter("只有 archive 计划可进行原生归档对账")
     if confirm != plan.plan_id:
         raise typer.BadParameter("--confirm 必须等于精确 plan_id")
-    paths = get_paths()
-    client, capabilities = connect_and_probe()
-    try:
-        with AuditStore(paths) as audit:
-            completed = CleanupExecutor(
-                client=client,
-                inventory=InventoryService(client),
-                capabilities=capabilities,
-                audit=audit,
-            ).reconcile_native_archive(plan)
-        _emit({"reconciled_roots": completed, "plan_sha256": plan.plan_sha256})
-    finally:
-        client.close()
+    result = _workflows().reconcile_archive(plan)
+    _emit({"reconciled_roots": result.completed_ids, "plan_sha256": plan.plan_sha256})
 
 
 @purge_app.command("plan")
 def purge_plan() -> None:
     """只为满足 14 天可信归档和已验证备份的任务生成删除计划。"""
 
-    paths = get_paths()
-    client, capabilities = connect_and_probe()
-    try:
-        snapshots = InventoryService(client).list(include_turns=True)
-        with AuditStore(paths) as audit:
-            plan = CleanupPlanner().plan_purge(snapshots, capabilities, audit)
-        path = PlanStore(paths).save(plan)
-        _emit({"plan": plan, "path": path})
-    finally:
-        client.close()
+    prepared = _workflows().prepare_purge_plan()
+    _emit({"plan": prepared.plan, "path": prepared.path})
 
 
 @purge_app.command("apply")
@@ -359,23 +434,12 @@ def purge_apply(
     plan = load_plan_as(plan_path, ActionPlan)
     if plan.action is not PlanAction.PURGE:
         raise typer.BadParameter("该计划不是 purge 计划")
-    paths = get_paths()
-    client, capabilities = connect_and_probe(experimental_api=True)
-    try:
-        with AuditStore(paths) as audit:
-            completed = CleanupExecutor(
-                client=client,
-                inventory=InventoryService(client),
-                capabilities=capabilities,
-                audit=audit,
-            ).apply(
-                plan,
-                confirmation=confirm,
-                permanent_phrase=permanent_phrase,
-            )
-        _emit({"deleted_roots": completed, "plan_sha256": plan.plan_sha256})
-    finally:
-        client.close()
+    result = _workflows().apply_action(
+        plan,
+        confirmation=confirm,
+        permanent_phrase=permanent_phrase,
+    )
+    _emit({"deleted_roots": result.completed_ids, "plan_sha256": plan.plan_sha256})
 
 
 @backup_app.command("create")
@@ -397,44 +461,29 @@ def backup_create(
         raise typer.BadParameter("必须且只能选择 --recipient 或 --passphrase")
     if recipient and identity is None:
         raise typer.BadParameter("recipient 模式必须提供 --identity 以完成创建后全包验证")
-    paths = get_paths()
-    paths.ensure()
-    backend = AgeBackend()
-    client, _capabilities = connect_and_probe()
+    encryption = (
+        EncryptionSpec(mode="age-recipient", recipient=recipient)
+        if recipient
+        else EncryptionSpec(mode="age-passphrase")
+    )
     try:
-        service = InventoryService(client)
-        all_summaries = {item.id: item for item in service.list()}
-        missing = [thread_id for thread_id in thread if thread_id not in all_summaries]
-        if missing:
-            raise typer.BadParameter(f"找不到任务：{', '.join(missing)}")
-        snapshots = tuple(
-            merge_thread_detail(
-                all_summaries[thread_id],
-                service.read(thread_id, include_turns=True),
-            )
-            for thread_id in thread
+        result = _workflows().create_backup(
+            destination,
+            thread_ids=tuple(thread),
+            encryption=encryption,
+            verification_decryption=_identity_spec(identity, passphrase),
+            include_raw=include_raw,
+            expand_descendants=True,
         )
-        encryption = (
-            EncryptionSpec(mode="age-recipient", recipient=recipient)
-            if recipient
-            else EncryptionSpec(mode="age-passphrase")
-        )
-        with AuditStore(paths) as audit:
-            manifest = BackupService(
-                client=client,
-                paths=paths,
-                backend=backend,
-                audit=audit,
-            ).create(
-                destination,
-                snapshots=snapshots,
-                encryption=encryption,
-                verification_decryption=_identity_spec(identity, passphrase),
-                include_raw=include_raw,
-            )
-        _emit({"manifest": manifest, "path": destination})
-    finally:
-        client.close()
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    _emit(
+        {
+            "manifest": result.manifest,
+            "covered_thread_ids": result.covered_thread_ids,
+            "path": destination,
+        }
+    )
 
 
 @backup_app.command("verify")
@@ -494,9 +543,9 @@ def restore_plan(
         if entry.kind == "logical"
     )
     paths = get_paths()
-    client, capabilities = connect_and_probe()
-    try:
-        service = InventoryService(client)
+    workflows = ApplicationWorkflows(paths=paths, request_timeout=30)
+    with workflows.session() as session:
+        _client, capabilities, service = session.services()
         plan = ImportPlanner(paths).plan(
             source=source,
             records=records,
@@ -504,10 +553,8 @@ def restore_plan(
             capabilities=capabilities,
             confirmed_cwd=map_cwd,
         )
-        path = PlanStore(paths).save(plan)
+        path = session.plans.save(plan)
         _emit({"plan": plan, "path": path, "backup_manifest": manifest.manifest_sha256})
-    finally:
-        client.close()
 
 
 @restore_app.command("apply")
@@ -535,18 +582,16 @@ def restore_apply(
         if entry.kind == "logical"
     )
     paths = get_paths()
-    client, capabilities = connect_and_probe()
-    try:
-        with AuditStore(paths) as audit:
-            created = LogicalImportExecutor(
-                client=client,
-                capabilities=capabilities,
-                paths=paths,
-                audit=audit,
-            ).apply(plan, source=source, records=records)
+    workflows = ApplicationWorkflows(paths=paths, request_timeout=30)
+    with workflows.session() as session:
+        client, capabilities, _inventory = session.services()
+        created = LogicalImportExecutor(
+            client=client,
+            capabilities=capabilities,
+            paths=paths,
+            audit=session.audit,
+        ).apply(plan, source=source, records=records)
         _emit({"created": created})
-    finally:
-        client.close()
 
 
 @chatgpt_app.command("plan")
@@ -560,20 +605,19 @@ def chatgpt_plan(
 
     records = tuple(chatgpt_records(source, source_account=source_account))
     paths = get_paths()
-    client, capabilities = connect_and_probe()
-    try:
+    workflows = ApplicationWorkflows(paths=paths, request_timeout=30)
+    with workflows.session() as session:
+        _client, capabilities, inventory = session.services()
         plan = ImportPlanner(paths).plan(
             source=source,
             records=records,
-            existing=_existing_records(InventoryService(client)),
+            existing=_existing_records(inventory),
             capabilities=capabilities,
             confirmed_cwd=map_cwd,
             confirmed_git_remote=map_git_remote,
         )
-        path = PlanStore(paths).save(plan)
+        path = session.plans.save(plan)
         _emit({"plan": plan, "path": path})
-    finally:
-        client.close()
 
 
 @chatgpt_app.command("apply")
@@ -590,18 +634,16 @@ def chatgpt_apply(
         raise typer.BadParameter("--confirm 必须等于精确 plan_id")
     records = tuple(chatgpt_records(source, source_account=source_account))
     paths = get_paths()
-    client, capabilities = connect_and_probe()
-    try:
-        with AuditStore(paths) as audit:
-            created = LogicalImportExecutor(
-                client=client,
-                capabilities=capabilities,
-                paths=paths,
-                audit=audit,
-            ).apply(plan, source=source, records=records)
+    workflows = ApplicationWorkflows(paths=paths, request_timeout=30)
+    with workflows.session() as session:
+        client, capabilities, _inventory = session.services()
+        created = LogicalImportExecutor(
+            client=client,
+            capabilities=capabilities,
+            paths=paths,
+            audit=session.audit,
+        ).apply(plan, source=source, records=records)
         _emit({"created": created})
-    finally:
-        client.close()
 
 
 @codex_import_app.command("plan")
@@ -615,20 +657,19 @@ def codex_import_plan(
 
     records = tuple(codex_records(source, source_account=source_account))
     paths = get_paths()
-    client, capabilities = connect_and_probe()
-    try:
+    workflows = ApplicationWorkflows(paths=paths, request_timeout=30)
+    with workflows.session() as session:
+        _client, capabilities, inventory = session.services()
         plan = ImportPlanner(paths).plan(
             source=source,
             records=records,
-            existing=_existing_records(InventoryService(client)),
+            existing=_existing_records(inventory),
             capabilities=capabilities,
             confirmed_cwd=map_cwd,
             confirmed_git_remote=map_git_remote,
         )
-        path = PlanStore(paths).save(plan)
+        path = session.plans.save(plan)
         _emit({"plan": plan, "path": path})
-    finally:
-        client.close()
 
 
 @codex_import_app.command("apply")
@@ -645,18 +686,16 @@ def codex_import_apply(
         raise typer.BadParameter("--confirm 必须等于精确 plan_id")
     records = tuple(codex_records(source, source_account=source_account))
     paths = get_paths()
-    client, capabilities = connect_and_probe()
-    try:
-        with AuditStore(paths) as audit:
-            created = LogicalImportExecutor(
-                client=client,
-                capabilities=capabilities,
-                paths=paths,
-                audit=audit,
-            ).apply(plan, source=source, records=records)
+    workflows = ApplicationWorkflows(paths=paths, request_timeout=30)
+    with workflows.session() as session:
+        client, capabilities, _inventory = session.services()
+        created = LogicalImportExecutor(
+            client=client,
+            capabilities=capabilities,
+            paths=paths,
+            audit=session.audit,
+        ).apply(plan, source=source, records=records)
         _emit({"created": created})
-    finally:
-        client.close()
 
 
 @trim_app.command("review")
@@ -672,16 +711,15 @@ def trim_review(thread_id: str | None = None) -> None:
 def trim_suggest(thread_id: str) -> None:
     """仅用本地规则生成并保存 TrimPlan；内容 AI 默认关闭。"""
 
-    paths = get_paths()
-    client, capabilities = connect_and_probe()
-    try:
-        snapshot = InventoryService(client).read(thread_id, include_turns=True)
-        plan = LocalTrimSuggester().suggest(snapshot, capabilities=capabilities)
-        path = PlanStore(paths).save(plan)
-        projection = build_projection(snapshot, plan)
-        _emit({"plan": plan, "path": path, "projection": projection})
-    finally:
-        client.close()
+    workflows = _workflows()
+    result = workflows.read_thread(thread_id, include_turns=True)
+    plan = LocalTrimSuggester().suggest(
+        result.snapshot,
+        capabilities=result.capabilities,
+    )
+    path = workflows.save_plan(plan)
+    projection = build_projection(result.snapshot, plan)
+    _emit({"plan": plan, "path": path, "projection": projection})
 
 
 @trim_app.command("apply")
@@ -694,19 +732,8 @@ def trim_apply(
     plan = load_plan_as(plan_path, TrimPlan)
     if confirm != plan.plan_id:
         raise typer.BadParameter("--confirm 必须等于精确 plan_id")
-    paths = get_paths()
-    client, capabilities = connect_and_probe()
-    try:
-        with AuditStore(paths) as audit:
-            target_id = TrimExecutor(
-                client=client,
-                inventory=InventoryService(client),
-                capabilities=capabilities,
-                audit=audit,
-            ).apply(plan)
-        _emit({"source_thread_id": plan.source_thread_id, "derived_thread_id": target_id})
-    finally:
-        client.close()
+    target_id = _workflows().apply_trim(plan)
+    _emit({"source_thread_id": plan.source_thread_id, "derived_thread_id": target_id})
 
 
 @hook_app.command("status")

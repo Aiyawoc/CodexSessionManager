@@ -29,14 +29,19 @@
 
 ## 文档与模块入口
 
+- 领域语言与关系：`CONTEXT.md`；长期架构决策：`docs/adr/`。
 - 用户工作流、安装和安全说明：`README-cn.md`；英文说明：`README.md`。
+- App Server 新画像人工批准：`docs/acceptance/app-server-schema-approval.md`。
+- v1.0.1 真实账号人工验收：`docs/acceptance/macos-real-account-v1.0.1.md`。
 - Python 版本、依赖组和锁文件：`.python-version`、`pyproject.toml`、`uv.lock`。
 - Skill 使用入口：`skills/manage-codex-sessions/SKILL.md`。
 - Skill 安全不变量：`skills/manage-codex-sessions/references/safety.md`。
 - Skill 命令工作流：`skills/manage-codex-sessions/references/commands.md`。
 - App Server 客户端和能力门禁：`src/codex_session_manager/app_server.py`。
+- 人工批准协议画像与只读差异报告：`protocol_profiles.py`、`protocol_profiles.json`、`schema_audit.py`。
 - 不可变模型、指纹和计划：`models.py`、`hashing.py`、`plans.py`。
 - 盘点、清理、备份、导入和裁剪：`inventory.py`、`cleanup.py`、`backup.py`、`importing.py`、`trim.py`。
+- CLI/GUI/Hook 共用编排边界：`workflows.py`；脱敏人工验收证据：`acceptance.py`。
 - Hook 和 standalone 分发入口：`hooks.py`、`dispatcher.py`、`config.py`。
 - PySide6 GUI：`src/codex_session_manager/gui/`；测试：`tests/`；构建、安装和验收：`scripts/`。
 
@@ -66,6 +71,7 @@
 - GUI 默认目标尺寸为 `1600x900`，最小尺寸为 `1280x720`；最左侧保留固定功能栏，项目与任务面板可收起，收起后时间线第一列自动填满剩余宽度，时间线与原文之间的 QSplitter 可拖动；左侧使用同一输入框搜索项目/对话或输入完整对话 ID，列表支持多选与安全批量操作；保持键盘焦点、可读对比度、风险提示和禁用状态清晰。
 - 统一主题放在 `gui/theme.py` 或 Qt 样式资源中，不要在控制器中散落颜色和尺寸常量。
 - 新增交互必须补 GUI 回归测试；大文件时间线使用分页、流式解析和有界缓存。
+- GUI 备份仅使用 age recipient 与本地 identity 完整复验；成功后只建立审计证据，不得隐式归档。归档仍需独立计划和确认。
 - 离屏预览可以验证布局，但不能替代真实 macOS Cocoa 窗口、缩放和用户输入验收：
 
   ```bash
@@ -127,6 +133,8 @@ scripts/accept_macos_bundle.sh dist/CodexSessionManager.app
 .\scripts\check_windows.ps1
 .\scripts\build_windows_app.ps1 -Version VERSION
 ```
+
+Windows bundle 构建还必须执行 `scripts/test_windows_install_workflow.ps1`，覆盖临时 `%LOCALAPPDATA%`、重复安装、中文空格路径、无 Python/uv/age PATH 和 Hook 安装/卸载。Apple Silicon CI 使用 `macos-15` 并显式断言 `arm64`；bundle 验收只接受当前源码的 fresh build。
 
 验收至少覆盖内置 Python、PySide6、Qt 插件、age 校验、无 Python/uv 的运行、中文或空格路径和可写用户目录。隔离测试使用 `scripts/install_test_app.sh`；其复制的 Codex home 可能包含认证信息，结束后只删除脚本打印的精确 `TEST_ROOT`。永久删除、恢复和 Hook 写入只能针对临时隔离数据根。
 

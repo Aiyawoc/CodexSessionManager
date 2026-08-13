@@ -16,7 +16,9 @@
 
 - 按项目、活跃时间、来源和父子关系分组、搜索 Codex 对话。
 - 以流式方式创建 age 加密 `.csmbackup`，并执行完整性复验。
+- 从 GUI 对选中任务及其完整派生后代创建 recipient 加密备份，复验成功后再单独进入归档计划。
 - 所有归档、恢复、导入、裁剪和清除写操作均先生成不可变计划。
+- 生成脱敏 App Server schema 审计报告；未知画像保持只读，不能自动加入写入信任列表。
 - 通过派生任务精简上下文，原对话内容始终保持不变。
 - 审查模型可见内容、Markdown、隐藏标签、依赖关系和预计 Token 节省量。
 - 在本地筛查疑似凭据和个人信息，并对命中内容进行醒目标记。
@@ -37,6 +39,9 @@
 
 > [!WARNING]
 > `v1.0.0` 是**测试版 prerelease**。macOS 包仅作 ad-hoc 签名且未经公证；Windows 包未签名。启动前必须核对同名 SHA-256 文件，不要将这两个包视为生产版本。
+
+> [!NOTE]
+> 当前 `main` 源码版本为 `1.0.1` 加固候选，尚未发布对应二进制。下列下载链接仍指向已发布的 `v1.0.0` 测试版。
 
 **运行条件**
 
@@ -88,10 +93,11 @@ uv run CodexSessionManager
 1. 搜索项目或对话，也可以输入完整对话 ID。
 2. 选择 turn 或 item，然后设置为**保留、排除、摘要或保护**。
 3. 使用**保存方案**只保存已审查计划；使用**派生精简任务**创建新的精简对话。
+4. 需要归档时，先多选任务并使用**备份并复验**；成功后再单独生成并确认归档计划。
 
 ### 构建与发布状态
 
-[![Windows CI](https://github.com/Aiyawoc/CodexSessionManager/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Aiyawoc/CodexSessionManager/actions/workflows/ci.yml)
+[![Source CI](https://github.com/Aiyawoc/CodexSessionManager/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Aiyawoc/CodexSessionManager/actions/workflows/ci.yml)
 [![Test release](https://img.shields.io/github/v/release/Aiyawoc/CodexSessionManager?include_prereleases&label=test%20release)](https://github.com/Aiyawoc/CodexSessionManager/releases)
 ![Python 3.13.14](https://img.shields.io/badge/Python-3.13.14-3776AB?logo=python&logoColor=white)
 ![PySide6 6.11.1](https://img.shields.io/badge/PySide6-6.11.1-41CD52?logo=qt&logoColor=white)
@@ -136,8 +142,9 @@ uv run CodexSessionManager
 
 - Codex 在线读取和写入只通过官方 App Server；CSM 不改写 Codex JSONL 或 SQLite。
 - 协议能力未知、不完整或未经审计时停止写入，但仍开放盘点、备份、验证和计划。
+- 协议审计比较稳定/实验方法、方法新增/移除/稳定性变化和关键字段；只有版本与 schema 哈希精确命中人工批准画像才开放写入。
 - 每个写操作都消费绑定 SHA-256 的计划，并重新校验状态、内容指纹、协议能力、有效期和 spawned descendants。
-- 自动操作最多归档。永久清除必须使用独立计划、已验证备份证据、可信归档历史和明确人工确认。
+- 自动操作最多归档。永久清除必须使用单根独立计划、已验证备份证据、可信归档历史和明确人工确认。
 - 上下文裁剪只创建新任务；原任务保持不变，系统/开发者指令从当前项目重新加载。
 - 工具调用与结果、文件变更与验证按组保留或摘要，不拆成不安全的片段。
 - Hook 采用 fail-open：超时、关闭、崩溃或启动失败时继续 Codex 原生压缩。
@@ -167,6 +174,7 @@ scripts/install_user.sh /absolute/path/to/CodexSessionManager.app
 2. **时间线**显示模型可见的 turn/item，并默认过滤空内部事件；Token 数量使用紧凑单位。
 3. **上下文**内容可编辑，支持显示隐藏标签、分段渲染、Markdown 预览和本地敏感命中高亮。
 4. **裁剪动作**支持 `keep`、`exclude`、`summary` 和 `protect`。当前请求、进行中 turn、有效目标、未解决错误和未知 item 等硬保护内容不能被静默删除。
+5. **备份并复验**只深读所选根任务及其派生后代，使用 age recipient 加密并立即完整解密校验；它不会隐式归档任务。
 
 “保存方案”只将已审查的 `TrimPlan` 写入 CSM 数据目录，不修改 Codex。“派生精简任务”会先重新校验计划、等待原任务 idle，再创建新的派生任务。
 
@@ -174,6 +182,7 @@ scripts/install_user.sh /absolute/path/to/CodexSessionManager.app
 
 ```bash
 csm doctor
+csm schema audit --output schema-audit-v1.json
 csm threads list
 csm threads show CONVERSATION_ID --include-content
 csm trim review --thread-id CONVERSATION_ID
@@ -196,6 +205,8 @@ csm cleanup apply PLAN.json --confirm PLAN_ID
 | 命令 | 用途 |
 | --- | --- |
 | `csm threads list\|show` | 只读盘点与内容查看 |
+| `csm schema audit` | 生成不含私有路径或对话内容的版本化协议差异报告 |
+| `csm acceptance report` | 汇总固定阶段、散列任务 ID 与证据哈希；始终标记非生产验收 |
 | `csm backup create\|verify` | 流式 age 加密备份与完整复验 |
 | `csm cleanup plan\|apply` | 可恢复的归档/反归档工作流 |
 | `csm purge plan\|apply` | 独立门禁的永久删除工作流 |
@@ -232,6 +243,11 @@ csm hook uninstall --yes
 - [双语 GUI 操作指南（PPTX）](docs/CodexSessionManager-GUI-Guide-bilingual.pptx)
 - [Skill 命令工作流](skills/manage-codex-sessions/references/commands.md)
 - [Skill 安全不变量](skills/manage-codex-sessions/references/safety.md)
+- [领域语言与关系](CONTEXT.md)
+- [架构决策记录](docs/adr/)
+- [App Server schema 人工批准流程](docs/acceptance/app-server-schema-approval.md)
+- [`v1.0.1` macOS 真实账号验收 Runbook](docs/acceptance/macos-real-account-v1.0.1.md)
+- [`v1.0.1` 加固候选说明](docs/releases/v1.0.1-test.md)
 - [`v1.0.0` 测试版说明](docs/releases/v1.0.0-test.md)
 - [项目开发约束](AGENTS.md)
 
@@ -280,6 +296,8 @@ scripts/test_full_workflow.sh
 
 这些检查只使用隔离临时数据，不能替代真实账号 App Server 联调、实体设备 UI 验收、签名与公证、SmartScreen 信誉或生产验收。
 
+`CI` 工作流在 `macos-15` 上显式断言 `arm64` 并运行完整源码工作流，同时保留 Windows 检查。手动 `build-macos` 工作流始终从当前源码运行 `scripts/test_full_workflow.sh`，不使用 `--reuse-app`；托管 runner 不假定安装了 Codex，因此只跳过 bundle 内的 App Server 联通检查，不能据此声称真实账号验收。
+
 在 macOS 上对当前 Codex home 的副本进行测试：
 
 ```bash
@@ -302,7 +320,7 @@ scripts/accept_macos_bundle.sh dist/CodexSessionManager.app
 
 ```powershell
 .\scripts\check_windows.ps1
-.\scripts\build_windows_app.ps1 -Version 1.0.0
+.\scripts\build_windows_app.ps1 -Version 1.0.1
 ```
 
 两个平台均使用 `pyside6-deploy` / Nuitka standalone，并携带固定版本的 Python、Qt、插件、应用依赖和已验证 age 二进制。正式公开分发仍要求 macOS Developer ID 签名、公证与 staple，以及适当的 Windows Authenticode 签名。

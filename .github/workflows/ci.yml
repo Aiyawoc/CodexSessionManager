@@ -9,6 +9,28 @@ permissions:
   contents: read
 
 jobs:
+  macos-arm64-source:
+    name: macOS arm64 source workflow
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Assert Apple Silicon runner
+        shell: bash
+        run: test "$(uname -s)" = Darwin && test "$(uname -m)" = arm64
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.21"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Run complete source workflow
+        run: ./scripts/test_source_workflow.sh
+
   windows-tests:
     name: Windows tests
     runs-on: windows-latest

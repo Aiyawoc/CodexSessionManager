@@ -16,7 +16,9 @@ Long-running Codex work spreads conversations across projects and lets context g
 
 - Group and search Codex conversations by project, activity, source, and relationship.
 - Create streaming, age-encrypted `.csmbackup` archives with full integrity verification.
+- Back up selected tasks and complete derived closures from the GUI, then enter archive planning as a separate step.
 - Plan archive, restore, import, trim, and purge operations before any write occurs.
+- Generate redacted App Server schema audits; unknown profiles stay read-only and are never trusted automatically.
 - Reduce context through a derived task while keeping the original conversation unchanged.
 - Review model-visible content, Markdown, hidden tags, dependencies, and estimated token savings.
 - Scan locally for likely credentials and personal data; matched text can be highlighted for review.
@@ -37,6 +39,9 @@ Long-running Codex work spreads conversations across projects and lets context g
 
 > [!WARNING]
 > `v1.0.0` is a **test prerelease**. The macOS build is ad-hoc signed and not notarized; the Windows build is unsigned. Verify the matching SHA-256 file before launch and do not treat either build as production-ready.
+
+> [!NOTE]
+> The current `main` source reports `1.0.1` as a hardening candidate, but no matching binary has been published. The links below still point to the released `v1.0.0` test build.
 
 **Requirements**
 
@@ -88,10 +93,11 @@ Backup verification and a complete `doctor` check also require an `age` executab
 1. Search for a project/conversation, or enter a complete conversation ID.
 2. Select a turn or item, then choose **Keep**, **Exclude**, **Summary**, or **Protect**.
 3. Use **Save plan** to store the reviewed plan without changing Codex, or **Create trimmed task** to create a new derived conversation.
+4. Before archiving, multi-select tasks and use **Backup & verify**; archive remains a separate planned and confirmed operation.
 
 ### Build and release status
 
-[![Windows CI](https://github.com/Aiyawoc/CodexSessionManager/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Aiyawoc/CodexSessionManager/actions/workflows/ci.yml)
+[![Source CI](https://github.com/Aiyawoc/CodexSessionManager/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Aiyawoc/CodexSessionManager/actions/workflows/ci.yml)
 [![Test release](https://img.shields.io/github/v/release/Aiyawoc/CodexSessionManager?include_prereleases&label=test%20release)](https://github.com/Aiyawoc/CodexSessionManager/releases)
 ![Python 3.13.14](https://img.shields.io/badge/Python-3.13.14-3776AB?logo=python&logoColor=white)
 ![PySide6 6.11.1](https://img.shields.io/badge/PySide6-6.11.1-41CD52?logo=qt&logoColor=white)
@@ -136,8 +142,9 @@ The primary audience is developers and maintainers who use Codex across multiple
 
 - Online Codex reads and writes use the official App Server. CSM does not rewrite Codex JSONL or SQLite.
 - Unknown, incomplete, or unaudited protocol capabilities disable writes and leave inventory, backup, verification, and planning available.
+- Schema audits classify stable/experimental additions, removals, stability changes, and critical fields. Writes require an exact version and schema-hash match to a human-approved profile.
 - Every write consumes a SHA-256-bound plan and re-checks state, content fingerprints, capabilities, expiry, and spawned descendants.
-- Automatic operations stop at archive. Permanent purge requires a separate plan, verified backup evidence, trusted archive history, and explicit confirmation.
+- Automatic operations stop at archive. Permanent purge requires a separate single-root plan, verified backup evidence, trusted archive history, and explicit confirmation.
 - Context trimming creates a new task. The source task remains unchanged and system/developer instructions are reloaded from the current project.
 - Tool calls/results and file changes/verifications are retained or summarized as groups, not split into unsafe fragments.
 - Hook failures are fail-open: timeout, close, crash, or launch failure continues native compaction.
@@ -167,6 +174,7 @@ The installer atomically replaces `~/Applications/CodexSessionManager.app`, reta
 2. **Timeline** shows model-visible turns/items and hides empty internal events by default. Token totals use compact units.
 3. **Context** is editable and supports hidden-tag display, segmented source rendering, Markdown preview, and local sensitive-range highlighting.
 4. **Trim actions** apply `keep`, `exclude`, `summary`, or `protect`. Hard-protected requests, active turns, goals, unresolved errors, and unknown items cannot be silently removed.
+5. **Backup & verify** deep-reads only selected roots and their derived descendants, encrypts with an age recipient, and immediately verifies the complete archive without implicitly archiving anything.
 
 Saving a plan only persists the reviewed `TrimPlan`; it does not write to Codex. Creating a trimmed task first revalidates the plan, waits for the source to become idle, and then creates a new derived task.
 
@@ -174,6 +182,7 @@ Saving a plan only persists the reviewed `TrimPlan`; it does not write to Codex.
 
 ```bash
 csm doctor
+csm schema audit --output schema-audit-v1.json
 csm threads list
 csm threads show CONVERSATION_ID --include-content
 csm trim review --thread-id CONVERSATION_ID
@@ -196,6 +205,8 @@ Important command groups:
 | Command | Purpose |
 | --- | --- |
 | `csm threads list\|show` | Read-only inventory and content inspection |
+| `csm schema audit` | Write a versioned protocol-difference report without private paths or conversation content |
+| `csm acceptance report` | Record fixed stages, hashed task IDs, and evidence hashes; always non-production |
 | `csm backup create\|verify` | Streaming age-encrypted backup and full verification |
 | `csm cleanup plan\|apply` | Reversible archive/unarchive workflow |
 | `csm purge plan\|apply` | Separately gated permanent deletion workflow |
@@ -232,6 +243,11 @@ Installation does not silently enable Hooks. After installation, review and trus
 - [Bilingual GUI guide (PPTX)](docs/CodexSessionManager-GUI-Guide-bilingual.pptx)
 - [Skill command workflows](skills/manage-codex-sessions/references/commands.md)
 - [Skill safety invariants](skills/manage-codex-sessions/references/safety.md)
+- [Domain language and relationships](CONTEXT.md)
+- [Architecture decision records](docs/adr/)
+- [Human App Server schema approval process](docs/acceptance/app-server-schema-approval.md)
+- [`v1.0.1` macOS real-account acceptance runbook](docs/acceptance/macos-real-account-v1.0.1.md)
+- [`v1.0.1` hardening-candidate notes](docs/releases/v1.0.1-test.md)
 - [`v1.0.0` test-release notes](docs/releases/v1.0.0-test.md)
 - [Project development constraints](AGENTS.md)
 
@@ -280,6 +296,8 @@ scripts/test_full_workflow.sh
 
 These checks use isolated temporary data. They do not replace real-account App Server testing, physical-device UI testing, signing/notarization, SmartScreen reputation, or production acceptance.
 
+The `CI` workflow runs the complete source workflow on `macos-15` after asserting `arm64`, while retaining Windows checks. The manual `build-macos` workflow always invokes `scripts/test_full_workflow.sh` from current source and never uses `--reuse-app`; hosted runners do not assume Codex is installed, so only the in-bundle App Server connectivity check is skipped there and this is not real-account acceptance.
+
 To test a macOS App against a copy of the current Codex home:
 
 ```bash
@@ -302,7 +320,7 @@ Windows x64, on Windows AMD64 or the manual GitHub Actions workflow:
 
 ```powershell
 .\scripts\check_windows.ps1
-.\scripts\build_windows_app.ps1 -Version 1.0.0
+.\scripts\build_windows_app.ps1 -Version 1.0.1
 ```
 
 Both builds use `pyside6-deploy` / Nuitka standalone mode and include pinned Python, Qt, plugins, application dependencies, and a verified age binary. Formal public distribution still requires Developer ID signing/notarization/stapling on macOS and an appropriate Authenticode signature on Windows.

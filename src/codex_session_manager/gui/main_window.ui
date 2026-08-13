@@ -59,7 +59,7 @@
       <property name="handleWidth"><number>8</number></property>
       <property name="childrenCollapsible"><bool>false</bool></property>
       <widget class="QWidget" name="taskPane">
-       <property name="minimumSize"><size><width>340</width><height>0</height></size></property>
+       <property name="minimumSize"><size><width>280</width><height>0</height></size></property>
        <layout class="QVBoxLayout" name="taskLayout">
         <property name="leftMargin"><number>0</number></property><property name="topMargin"><number>0</number></property><property name="rightMargin"><number>4</number></property><property name="bottomMargin"><number>0</number></property>
         <item>
@@ -86,17 +86,18 @@
         <item><widget class="QTreeWidget" name="taskListView"><property name="alternatingRowColors"><bool>true</bool></property><property name="uniformRowHeights"><bool>true</bool></property><property name="rootIsDecorated"><bool>true</bool></property><property name="selectionMode"><enum>QAbstractItemView::SelectionMode::ExtendedSelection</enum></property><property name="selectionBehavior"><enum>QAbstractItemView::SelectionBehavior::SelectRows</enum></property><property name="contextMenuPolicy"><enum>Qt::ContextMenuPolicy::CustomContextMenu</enum></property><property name="accessibleName"><string>Codex 项目和任务列表</string></property><column><property name="text"><string>任务名称</string></property></column><column><property name="text"><string>距今</string></property></column></widget></item>
         <item><widget class="QLabel" name="taskListStatusLabel"><property name="text"><string>尚未加载任务列表</string></property><property name="wordWrap"><bool>true</bool></property></widget></item>
         <item>
-         <layout class="QHBoxLayout" name="taskActionLayout">
+         <layout class="QGridLayout" name="taskActionLayout">
           <property name="spacing"><number>6</number></property>
-          <item><widget class="QPushButton" name="taskRefreshButton"><property name="text"><string>刷新</string></property><property name="accessibleName"><string>刷新 Codex 项目和任务列表</string></property></widget></item>
-          <item><widget class="QPushButton" name="taskArchiveButton"><property name="text"><string>归档</string></property><property name="enabled"><bool>false</bool></property><property name="accessibleName"><string>归档所选 Codex 对话</string></property></widget></item>
-          <item><widget class="QPushButton" name="taskDeleteButton"><property name="text"><string>删除…</string></property><property name="enabled"><bool>false</bool></property><property name="accessibleName"><string>永久删除所选 Codex 对话</string></property></widget></item>
+          <item row="0" column="0"><widget class="QPushButton" name="taskRefreshButton"><property name="text"><string>刷新</string></property><property name="accessibleName"><string>刷新 Codex 项目和任务列表</string></property></widget></item>
+          <item row="0" column="1"><widget class="QPushButton" name="taskBackupButton"><property name="text"><string>备份并复验…</string></property><property name="enabled"><bool>false</bool></property><property name="accessibleName"><string>备份并完整复验所选 Codex 对话</string></property></widget></item>
+          <item row="1" column="0"><widget class="QPushButton" name="taskArchiveButton"><property name="text"><string>归档</string></property><property name="enabled"><bool>false</bool></property><property name="accessibleName"><string>归档所选 Codex 对话</string></property></widget></item>
+          <item row="1" column="1"><widget class="QPushButton" name="taskDeleteButton"><property name="text"><string>删除…</string></property><property name="enabled"><bool>false</bool></property><property name="accessibleName"><string>永久删除所选 Codex 对话</string></property></widget></item>
          </layout>
         </item>
        </layout>
       </widget>
       <widget class="QWidget" name="timelinePane">
-       <property name="minimumSize"><size><width>300</width><height>0</height></size></property>
+       <property name="minimumSize"><size><width>250</width><height>0</height></size></property>
        <layout class="QVBoxLayout" name="timelineLayout">
        <property name="leftMargin"><number>4</number></property><property name="topMargin"><number>0</number></property><property name="rightMargin"><number>4</number></property><property name="bottomMargin"><number>0</number></property>
         <property name="spacing"><number>0</number></property>
@@ -112,7 +113,7 @@
        </layout>
       </widget>
       <widget class="QWidget" name="contentPane">
-       <property name="minimumSize"><size><width>420</width><height>0</height></size></property>
+       <property name="minimumSize"><size><width>340</width><height>0</height></size></property>
        <layout class="QVBoxLayout" name="contentLayout">
        <property name="leftMargin"><number>4</number></property><property name="topMargin"><number>0</number></property><property name="rightMargin"><number>4</number></property><property name="bottomMargin"><number>0</number></property>
         <property name="spacing"><number>0</number></property>
@@ -129,7 +130,7 @@
        </layout>
       </widget>
       <widget class="QWidget" name="actionPane">
-       <property name="minimumSize"><size><width>290</width><height>0</height></size></property>
+       <property name="minimumSize"><size><width>260</width><height>0</height></size></property>
        <layout class="QVBoxLayout" name="actionLayout">
         <property name="leftMargin"><number>4</number></property><property name="topMargin"><number>0</number></property><property name="rightMargin"><number>0</number></property><property name="bottomMargin"><number>0</number></property>
         <item>
@@ -183,7 +184,7 @@
   </widget>
  </widget>
  <tabstops>
-  <tabstop>languageCombo</tabstop><tabstop>threadIdEdit</tabstop><tabstop>loadButton</tabstop><tabstop>taskListView</tabstop><tabstop>taskRefreshButton</tabstop><tabstop>taskArchiveButton</tabstop><tabstop>taskDeleteButton</tabstop><tabstop>taskPaneCollapseButton</tabstop><tabstop>timelineView</tabstop><tabstop>contentBrowser</tabstop><tabstop>actionCombo</tabstop><tabstop>reasonBrowser</tabstop><tabstop>summaryEdit</tabstop><tabstop>aiConsentCheck</tabstop><tabstop>suggestButton</tabstop><tabstop>sensitiveScanButton</tabstop><tabstop>savePlanButton</tabstop><tabstop>applyButton</tabstop><tabstop>cancelButton</tabstop>
+  <tabstop>languageCombo</tabstop><tabstop>threadIdEdit</tabstop><tabstop>loadButton</tabstop><tabstop>taskListView</tabstop><tabstop>taskRefreshButton</tabstop><tabstop>taskBackupButton</tabstop><tabstop>taskArchiveButton</tabstop><tabstop>taskDeleteButton</tabstop><tabstop>taskPaneCollapseButton</tabstop><tabstop>timelineView</tabstop><tabstop>contentBrowser</tabstop><tabstop>actionCombo</tabstop><tabstop>reasonBrowser</tabstop><tabstop>summaryEdit</tabstop><tabstop>aiConsentCheck</tabstop><tabstop>suggestButton</tabstop><tabstop>sensitiveScanButton</tabstop><tabstop>savePlanButton</tabstop><tabstop>applyButton</tabstop><tabstop>cancelButton</tabstop>
  </tabstops>
  <resources/>
  <customwidgets>

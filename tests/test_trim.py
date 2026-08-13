@@ -108,6 +108,20 @@ def test_atomic_tool_items_cannot_receive_conflicting_actions() -> None:
         validate_selections(snapshot, selections)
 
 
+@pytest.mark.parametrize(
+    ("updates", "message"),
+    (
+        ({"content_complete": False}, "complete source content"),
+        ({"mapping_complete": False}, "complete source lineage mapping"),
+    ),
+)
+def test_trim_requires_complete_content_and_lineage(updates, message) -> None:
+    snapshot = _review_snapshot().model_copy(update=updates)
+
+    with pytest.raises(TrimError, match=message):
+        validate_selections(snapshot, ())
+
+
 def test_non_keep_turn_action_cannot_silently_mask_item_override() -> None:
     snapshot = _review_snapshot()
     selections = (
@@ -207,20 +221,26 @@ class _TrimInventory:
 
 
 class _ProjectionClient:
-    def __init__(self, *, preserve_injection: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        preserve_injection: bool = True,
+        target_id: str = "projection-derived",
+    ) -> None:
         self.preserve_injection = preserve_injection
+        self.target_id = target_id
         self.items: list[dict[str, object]] = []
 
     def start_thread(self, *, cwd: str | None = None, name: str | None = None):
         assert name == "Review · 精简"
-        return {"id": "projection-derived"}
+        return {"id": self.target_id}
 
     def inject_items(self, thread_id: str, items):
-        assert thread_id == "projection-derived"
+        assert thread_id == self.target_id
         self.items = items
 
     def read_thread(self, thread_id: str, *, include_turns: bool = False):
-        assert thread_id == "projection-derived"
+        assert thread_id == self.target_id
         return {
             "id": thread_id,
             "turns": [
@@ -328,6 +348,38 @@ def test_projection_apply_rejects_missing_injected_message(app_paths, capabiliti
             capabilities=capabilities,
             audit=audit,
         ).apply(_non_prefix_plan(source, capabilities))
+
+
+def test_projection_apply_rejects_source_id_before_injection(app_paths, capabilities) -> None:
+    source = _review_snapshot()
+    client = _ProjectionClient(target_id=source.id)
+
+    with AuditStore(app_paths) as audit, pytest.raises(TrimError, match="source thread id"):
+        TrimExecutor(
+            client=client,  # type: ignore[arg-type]
+            inventory=_ProjectionInventory(source),  # type: ignore[arg-type]
+            capabilities=capabilities,
+            audit=audit,
+        ).apply(_non_prefix_plan(source, capabilities))
+
+    assert client.items == []
+
+
+def test_projection_apply_rejects_missing_target_id_before_injection(
+    app_paths, capabilities
+) -> None:
+    source = _review_snapshot()
+    client = _ProjectionClient(target_id="")
+
+    with AuditStore(app_paths) as audit, pytest.raises(TrimError, match="no derived thread id"):
+        TrimExecutor(
+            client=client,  # type: ignore[arg-type]
+            inventory=_ProjectionInventory(source),  # type: ignore[arg-type]
+            capabilities=capabilities,
+            audit=audit,
+        ).apply(_non_prefix_plan(source, capabilities))
+
+    assert client.items == []
 
 
 def test_trim_apply_requires_explicit_idle_state(app_paths, capabilities, snapshot_factory) -> None:

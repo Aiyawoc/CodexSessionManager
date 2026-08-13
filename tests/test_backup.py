@@ -57,6 +57,14 @@ class _ChangingCipher:
             yield stream
 
 
+class _MutatingCipher(_TestCipher):
+    @contextlib.contextmanager
+    def open_decrypt(self, source: Path, _spec: DecryptionSpec) -> Iterator[IO[bytes]]:
+        with source.open("rb") as stream:
+            yield stream
+        source.write_bytes(source.read_bytes() + b"changed-after-decryption")
+
+
 def _create_backup(path: Path):
     snapshot = normalize_thread(
         {
@@ -109,10 +117,22 @@ def test_streaming_backup_manifest_is_final_and_round_trips(tmp_path: Path) -> N
     created = _create_backup(path)
     verification = BackupReader(_TestCipher()).verify(path, decryption=DecryptionSpec())
     assert verification.manifest.manifest_sha256 == created.manifest_sha256
+    assert verification.ciphertext_size == path.stat().st_size
+    assert len(verification.ciphertext_sha256) == 64
     if os.name != "nt":
         assert path.stat().st_mode & 0o777 == 0o600
     with tarfile.open(path, "r:") as archive:
         assert archive.getnames()[-1] == "manifest.json"
+
+
+def test_backup_refuses_to_replace_existing_destination(tmp_path: Path) -> None:
+    path = tmp_path / "existing.csmbackup"
+    original = b"existing encrypted evidence"
+    path.write_bytes(original)
+
+    with pytest.raises(FileExistsError):
+        _create_backup(path)
+    assert path.read_bytes() == original
 
 
 def test_backup_detects_payload_tampering(tmp_path: Path) -> None:
@@ -125,6 +145,14 @@ def test_backup_detects_payload_tampering(tmp_path: Path) -> None:
     path.write_bytes(data)
     with pytest.raises(BackupError, match="checksum mismatch"):
         BackupReader(_TestCipher()).verify(path, decryption=DecryptionSpec())
+
+
+def test_backup_detects_ciphertext_replacement_during_verification(tmp_path: Path) -> None:
+    path = tmp_path / "changing.csmbackup"
+    _create_backup(path)
+
+    with pytest.raises(BackupError, match="changed during verification"):
+        BackupReader(_MutatingCipher()).verify(path, decryption=DecryptionSpec())
 
 
 def test_backup_rejects_unsafe_member_and_manifest_shadow(tmp_path: Path) -> None:
@@ -285,3 +313,42 @@ def test_backup_service_binds_reread_logical_snapshot(tmp_path: Path, app_paths)
     )
 
     assert manifest.source_fingerprints == {"thread-1": snapshot.backup_fingerprint}
+
+
+def test_backup_service_does_not_publish_before_full_verification(
+    tmp_path: Path, app_paths, monkeypatch
+) -> None:
+    raw_thread = {
+        "id": "thread-1",
+        "status": {"type": "idle"},
+        "turns": [{"id": "turn-1", "items": []}],
+    }
+    snapshot = normalize_thread(raw_thread, content_complete=True)
+
+    class Client:
+        def read_thread(self, thread_id: str, *, include_turns: bool = False):
+            assert thread_id == snapshot.id
+            assert include_turns
+            return raw_thread
+
+    def reject_verification(*_args, **_kwargs):
+        raise BackupError("verification failed")
+
+    monkeypatch.setattr(BackupReader, "verify", reject_verification)
+    destination = tmp_path / "unverified.csmbackup"
+
+    with pytest.raises(BackupError, match="verification failed"):
+        BackupService(
+            client=Client(),  # type: ignore[arg-type]
+            paths=app_paths,
+            backend=_TestCipher(),
+        ).create(
+            destination,
+            snapshots=(snapshot,),
+            encryption=EncryptionSpec(mode="age-recipient", recipient="age1test"),
+            verification_decryption=DecryptionSpec(),
+            include_raw=False,
+        )
+
+    assert not destination.exists()
+    assert not tuple(tmp_path.glob(".*.candidate.csmbackup"))

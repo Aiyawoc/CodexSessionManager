@@ -44,6 +44,61 @@ def test_request_deadline_is_not_extended_by_notifications() -> None:
     assert time.monotonic() - started < 0.2
 
 
+def test_timeout_marks_only_write_methods_as_possibly_committed() -> None:
+    write_timeout = RequestTimeout("thread/archive", 1.0)
+    read_timeout = RequestTimeout("thread/read", 1.0)
+
+    assert write_timeout.may_have_committed
+    assert "query actual state" in str(write_timeout)
+    assert not read_timeout.may_have_committed
+
+
+def test_app_server_start_failure_is_typed_and_leaves_no_process(tmp_path) -> None:
+    client = SubprocessAppServer(executable=str(tmp_path / "missing-codex"))
+
+    with pytest.raises(AppServerError, match="unable to start Codex App Server"):
+        client.start()
+    assert client.pid is None
+
+
+def test_app_server_initialize_failure_closes_started_process(monkeypatch) -> None:
+    class StartedProcess:
+        pid = 123
+        stdin = None
+        stdout = None
+        stderr = None
+
+        def __init__(self) -> None:
+            self.terminated = False
+
+        def poll(self) -> None:
+            return None
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+    process = StartedProcess()
+    monkeypatch.setattr(
+        "codex_session_manager.app_server.subprocess.Popen",
+        lambda *_args, **_kwargs: process,
+    )
+    client = SubprocessAppServer(executable="fake-codex")
+
+    def reject_initialize(*_args, **_kwargs):
+        raise ProtocolError("initialize failed")
+
+    monkeypatch.setattr(client, "request", reject_initialize)
+
+    with pytest.raises(ProtocolError, match="initialize failed"):
+        client.start()
+
+    assert process.terminated
+    assert client.pid is None
+
+
 class _RecordingClient(SubprocessAppServer):
     def __init__(self) -> None:
         super().__init__(executable="unused")

@@ -376,6 +376,8 @@ class BackupVerification(FrozenModel):
 
     manifest: BackupManifest
     embedded_source_fingerprints: dict[str, str]
+    ciphertext_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    ciphertext_size: int = Field(ge=0)
 
     @model_validator(mode="after")
     def validate_embedded_bindings(self) -> Self:

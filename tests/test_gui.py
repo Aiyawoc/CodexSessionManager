@@ -3,17 +3,22 @@ from __future__ import annotations
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 from pathlib import Path
 
 from PySide6.QtCore import QModelIndex, QPoint, Qt
-from PySide6.QtWidgets import QAbstractItemView, QHeaderView
+from PySide6.QtGui import QCloseEvent
+from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QMessageBox
 
+from codex_session_manager.backup import DecryptionSpec, EncryptionSpec
 from codex_session_manager.gui.controller import ReviewDocument, TrimReviewWindow
 from codex_session_manager.gui.i18n import GuiLanguage, compact_number, missing_translation_keys
 from codex_session_manager.gui.prompt import PrecompactPromptDialog
 from codex_session_manager.gui.theme import APP_STYLESHEET, DANGER, SPLITTER_LINE
 from codex_session_manager.gui.widgets import CenteredHandleSplitter
+from codex_session_manager.hashing import utc_now
 from codex_session_manager.models import (
+    BackupManifest,
     ItemKind,
     ThreadItemSnapshot,
     TrimAction,
@@ -26,6 +31,7 @@ from codex_session_manager.sensitive import (
     SensitiveScanResult,
     SensitiveSeverity,
 )
+from codex_session_manager.workflows import BackupCreationResult
 
 
 def _document(snapshot, capabilities) -> ReviewDocument:
@@ -69,6 +75,8 @@ def test_review_window_layout_and_stale_worker_result(
     assert window.ui.taskContextStatusLabel.text() == "尚未加载任务"
     assert not hasattr(window.ui, "taskHelp")
     assert window.ui.taskPaneCollapseButton.text() == "收起"
+    assert window.ui.taskBackupButton.text() == "备份并复验…"
+    assert not window.ui.taskBackupButton.isEnabled()
     assert window.ui.taskPaneCollapseButton.icon().isNull()
     assert window.ui.toolRail.minimumWidth() == 44
     assert window.ui.toolRail.maximumWidth() == 44
@@ -156,6 +164,29 @@ def test_task_pane_toggle_expands_center_and_preserves_action_width(qtbot, app_p
     assert splitter.sizes() == expanded_sizes
 
 
+def test_review_window_minimum_size_keeps_splitter_panes_non_overlapping(qtbot, app_paths) -> None:
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+    window.resize(1280, 720)
+    window.show()
+    qtbot.wait(10)
+
+    splitter = window.ui.mainSplitter
+    panes = (
+        window.ui.taskPane,
+        window.ui.timelinePane,
+        window.ui.contentPane,
+        window.ui.actionPane,
+    )
+    sizes = splitter.sizes()
+
+    assert (window.width(), window.height()) == (1280, 720)
+    assert window.minimumSizeHint().width() <= 1280
+    assert len(sizes) == len(panes)
+    assert all(size >= pane.minimumWidth() for size, pane in zip(sizes, panes, strict=True))
+    assert all(left.geometry().right() < right.geometry().left() for left, right in pairwise(panes))
+
+
 def test_protected_gui_target_refuses_exclusion(
     qtbot, app_paths, capabilities, snapshot_factory
 ) -> None:
@@ -219,6 +250,7 @@ def test_shared_task_query_filters_and_supports_multi_selection(
     group.child(0).setSelected(True)
     group.child(1).setSelected(True)
     assert set(window._selected_task_ids()) == {"first", "second"}
+    assert window.ui.taskBackupButton.isEnabled()
     assert window.ui.taskArchiveButton.isEnabled()
     assert window.ui.taskDeleteButton.isEnabled()
     window._populate_task_list(window.task_snapshots)
@@ -227,6 +259,83 @@ def test_shared_task_query_filters_and_supports_multi_selection(
     window.ui.threadIdEdit.setText("Alpha")
     assert window.ui.taskListView.topLevelItem(0).childCount() == 1
     assert window.ui.taskListView.topLevelItem(0).child(0).text(0) == "Alpha conversation"
+
+
+def test_gui_backup_request_uses_recipient_identity_and_expands_descendants(
+    qtbot, app_paths
+) -> None:
+    manifest = BackupManifest(
+        backup_id="backup-id",
+        created_at=utc_now(),
+        tool_version="test",
+        encryption="age-recipient",
+        entries=(),
+        source_fingerprints={},
+    ).seal()
+    expected = BackupCreationResult(manifest, ("child", "root"))
+
+    class FakeWorkflows:
+        def __init__(self) -> None:
+            self.call = None
+
+        def create_backup(self, destination, **kwargs):
+            self.call = (destination, kwargs)
+            return expected
+
+    workflows = FakeWorkflows()
+    window = TrimReviewWindow(
+        paths=app_paths,
+        load_task_list=False,
+        workflows=workflows,  # type: ignore[arg-type]
+    )
+    qtbot.addWidget(window)
+    destination = app_paths.backups_dir / "selected.csmbackup"
+    identity = app_paths.data_dir / "identity.txt"
+
+    result = window._create_selected_backup(
+        ("root",),
+        destination,
+        "age1recipient",
+        identity,
+    )
+
+    assert result is expected
+    assert workflows.call is not None
+    called_destination, kwargs = workflows.call
+    assert called_destination == destination
+    assert kwargs["thread_ids"] == ("root",)
+    assert kwargs["encryption"] == EncryptionSpec(mode="age-recipient", recipient="age1recipient")
+    assert kwargs["verification_decryption"] == DecryptionSpec(identity_file=identity)
+    assert kwargs["include_raw"] is True
+    assert kwargs["expand_descendants"] is True
+
+
+def test_gui_verified_backup_completion_keeps_archive_as_separate_step(
+    qtbot, app_paths, monkeypatch
+) -> None:
+    manifest = BackupManifest(
+        backup_id="backup-id",
+        created_at=utc_now(),
+        tool_version="test",
+        encryption="age-recipient",
+        entries=(),
+        source_fingerprints={},
+    ).seal()
+    result = BackupCreationResult(manifest, ("root", "child"))
+    messages: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda _parent, _title, message: messages.append(message),
+    )
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+
+    window._task_backup_succeeded(result)
+
+    assert messages and manifest.manifest_sha256 in messages[0]
+    assert "归档计划" in messages[0]
+    assert "已覆盖 2 个对话" in window.ui.taskListStatusLabel.text()
 
 
 def test_task_list_groups_same_project_and_shows_relative_activity(
@@ -572,6 +681,75 @@ def test_all_panel_primary_controls_start_at_same_y(
     }
     assert len(set(control_top_edges.values())) == 1, control_top_edges
     assert window.ui.timelineView.height() == window.ui.contentBrowser.height()
+
+
+def test_window_refuses_close_during_worker_write_and_ignores_late_completion(
+    qtbot, app_paths
+) -> None:
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+    window._task_write_in_progress = True
+    event = QCloseEvent()
+
+    window.closeEvent(event)
+
+    assert not event.isAccepted()
+    assert not window._closing
+    called: list[object] = []
+    window._closing = True
+    window._finish_task_operation({"value": object()}, called.append)
+    assert called == []
+    assert not window._task_write_in_progress
+
+
+def test_plan_persistence_and_trim_apply_run_in_worker(
+    qtbot, app_paths, capabilities, snapshot_factory, monkeypatch
+) -> None:
+    events: list[str] = []
+
+    class Workflows:
+        def save_plan(self, _plan: TrimPlan) -> Path:
+            events.append("save")
+            return app_paths.plans_dir / "plan.json"
+
+        def apply_trim(self, _plan: TrimPlan) -> str:
+            events.append("apply")
+            return "derived"
+
+    class CapturingPool:
+        worker = None
+
+        def start(self, worker) -> None:
+            self.worker = worker
+
+    monkeypatch.setattr(QMessageBox, "information", lambda *_args, **_kwargs: None)
+    window = TrimReviewWindow(
+        paths=app_paths,
+        load_task_list=False,
+        workflows=Workflows(),  # type: ignore[arg-type]
+    )
+    qtbot.addWidget(window)
+    window._document_loaded(0, _document(snapshot_factory("worker"), capabilities))
+    pool = CapturingPool()
+    window.thread_pool = pool  # type: ignore[assignment]
+
+    window._save_plan()
+    assert events == []
+    assert window._write_in_progress
+    assert pool.worker is not None
+    pool.worker.run()
+    assert events == ["save"]
+    assert not window._write_in_progress
+    assert window.current_plan is not None
+
+    events.clear()
+    window._apply_plan()
+    assert events == []
+    assert window._write_in_progress
+    assert pool.worker is not None
+    pool.worker.run()
+    assert events == ["save", "apply"]
+    assert not window._write_in_progress
 
 
 def test_designer_generated_modules_are_reproducible(tmp_path: Path) -> None:

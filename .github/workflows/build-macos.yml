@@ -1,0 +1,33 @@
+name: Build macOS test bundle
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos:
+    name: macOS arm64 fresh standalone acceptance
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Assert Apple Silicon runner
+        shell: bash
+        run: test "$(uname -s)" = Darwin && test "$(uname -m)" = arm64
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.21"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Build current source and run full isolated workflow
+        env:
+          CSM_TEST_RELEASE: "1"
+          CSM_SKIP_APP_SERVER_ACCEPTANCE: "1"
+        run: ./scripts/test_full_workflow.sh

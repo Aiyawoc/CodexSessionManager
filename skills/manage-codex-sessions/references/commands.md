@@ -31,6 +31,8 @@ csm purge apply PLAN.json --confirm PLAN_ID --permanent-phrase "PERMANENTLY DELE
 
 `reconcile` 只在 Codex App 原生任务工具已完成归档后使用；它不执行 Codex 写入。
 
+选择根任务创建备份时，CSM 会自动展开其完整派生后代；输出中的 `covered_thread_ids` 必须与随后归档计划的 affected IDs 对齐。
+
 ## 备份、恢复与导入
 
 ```text
@@ -57,3 +59,14 @@ csm hook uninstall --yes
 csm audit verify
 csm audit show
 ```
+
+## 维护者协议与验收证据
+
+以下命令只生成 CSM 自有的只读/脱敏报告，不执行 Codex 写入，也不能绕过真实账号人工阶段：
+
+```text
+csm schema audit --output schema-audit-v1.json
+csm acceptance report acceptance-v1.json --schema-report schema-audit-v1.json --stage doctor=passed
+```
+
+未知 schema 报告不得自动加入信任列表。验收报告只接受固定阶段、散列任务 ID 和 SHA-256，并始终标记 `production_ready: false`。

@@ -6,7 +6,7 @@ on:
       version:
         description: Version matching src/codex_session_manager/version.py
         required: true
-        default: "1.0.0"
+        default: "1.0.1"
         type: string
 
 permissions:

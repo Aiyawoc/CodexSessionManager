@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "codex-session-manager"
-version = "1.0.0"
+version = "1.0.1"
 description = "安全管理、备份、导入和裁剪 Codex 对话"
 readme = "README.md"
 requires-python = "==3.13.14"

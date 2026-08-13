@@ -17,7 +17,20 @@ import os
 import sys
 from pathlib import Path
 
-METHODS = ["initialize", "thread/list", "thread/read"]
+METHODS = [
+    "initialize",
+    "thread/list",
+    "thread/read",
+    "thread/start",
+    "thread/fork",
+    "thread/rollback",
+    "thread/archive",
+    "thread/unarchive",
+    "thread/delete",
+    "thread/inject_items",
+    "thread/name/set",
+    "thread/loaded/list",
+]
 THREADS = {
     "root": {
         "id": "root",
@@ -71,6 +84,22 @@ THREADS = {
         "turns": [],
     },
 }
+
+STATE_PATH = os.environ.get("CSM_FAKE_STATE")
+if STATE_PATH and Path(STATE_PATH).is_file():
+    THREADS = json.loads(Path(STATE_PATH).read_text(encoding="utf-8"))
+
+
+def save_state():
+    if STATE_PATH:
+        Path(STATE_PATH).write_text(
+            json.dumps(THREADS, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+        )
+
+
+def derived_id():
+    count = sum(thread_id.startswith("derived-") for thread_id in THREADS)
+    return f"derived-{count + 1}"
 
 
 def log(value):
@@ -135,6 +164,76 @@ def run_server():
         elif method == "thread/read":
             thread_id = params.get("threadId")
             emit({"id": request_id, "result": {"thread": THREADS[thread_id]}})
+        elif method == "thread/start":
+            thread_id = derived_id()
+            THREADS[thread_id] = {
+                "id": thread_id,
+                "name": "Derived task",
+                "cwd": params.get("cwd"),
+                "updatedAt": "2026-08-13T00:00:00Z",
+                "status": {"type": "idle"},
+                "turns": [],
+            }
+            save_state()
+            emit({"id": request_id, "result": {"thread": THREADS[thread_id]}})
+        elif method == "thread/fork":
+            source_id = params.get("threadId")
+            thread_id = derived_id()
+            derived = json.loads(json.dumps(THREADS[source_id]))
+            derived["id"] = thread_id
+            derived["name"] = derived.get("name", source_id) + " · fork"
+            derived["forkedFromId"] = source_id
+            THREADS[thread_id] = derived
+            save_state()
+            emit({"id": request_id, "result": {"thread": derived}})
+        elif method == "thread/rollback":
+            thread_id = params.get("threadId")
+            num_turns = int(params.get("numTurns", 0))
+            if num_turns:
+                THREADS[thread_id]["turns"] = THREADS[thread_id]["turns"][:-num_turns]
+            save_state()
+            emit({"id": request_id, "result": {"thread": THREADS[thread_id]}})
+        elif method == "thread/inject_items":
+            thread_id = params.get("threadId")
+            for index, item in enumerate(params.get("items", []), start=1):
+                content = item.get("content", [])
+                text = "\n".join(
+                    part.get("text", "") for part in content if isinstance(part, dict)
+                )
+                THREADS[thread_id]["turns"].append(
+                    {
+                        "id": f"injected-{index}",
+                        "status": "completed",
+                        "items": [
+                            {
+                                "id": f"injected-message-{index}",
+                                "type": "agentMessage",
+                                "role": "assistant",
+                                "text": text,
+                            }
+                        ],
+                    }
+                )
+            save_state()
+            emit({"id": request_id, "result": {}})
+        elif method == "thread/name/set":
+            THREADS[params.get("threadId")]["name"] = params.get("name")
+            save_state()
+            emit({"id": request_id, "result": {}})
+        elif method == "thread/archive":
+            THREADS[params.get("threadId")]["archived"] = True
+            save_state()
+            emit({"id": request_id, "result": {}})
+        elif method == "thread/unarchive":
+            THREADS[params.get("threadId")]["archived"] = False
+            save_state()
+            emit({"id": request_id, "result": {"thread": THREADS[params.get("threadId")]}})
+        elif method == "thread/delete":
+            THREADS.pop(params.get("threadId"), None)
+            save_state()
+            emit({"id": request_id, "result": {}})
+        elif method == "thread/loaded/list":
+            emit({"id": request_id, "result": {"data": []}})
         else:
             emit(
                 {
@@ -183,6 +282,7 @@ def _isolated_environment(tmp_path: Path, executable: Path) -> dict[str, str]:
         "CSM_CACHE_DIR": str(tmp_path / "cache"),
         "CSM_LOG_DIR": str(tmp_path / "log"),
         "CSM_FAKE_APP_SERVER_LOG": str(tmp_path / "app-server.jsonl"),
+        "CSM_FAKE_STATE": str(tmp_path / "fake-state.json"),
     }
 
 
@@ -289,3 +389,102 @@ def test_cli_reads_and_builds_a_sealed_plan_without_app_server_writes(
         "thread/start",
         "thread/unarchive",
     }
+
+
+FULL_CLI_WORKFLOW_DRIVER = r"""
+import json
+
+from typer.testing import CliRunner
+
+import codex_session_manager.app_server as app_server
+
+probe = app_server.probe_capabilities()
+if not probe.schema_sha256 or not probe.codex_version:
+    raise RuntimeError("fake schema probe failed")
+# Test-process-only approval: production has no environment or CLI switch that
+# can expand the bundled human-reviewed protocol allowlist.
+app_server.TRUSTED_WRITE_SCHEMAS = frozenset(
+    {(probe.codex_version, probe.schema_sha256)}
+)
+
+from codex_session_manager.cli import app
+
+runner = CliRunner()
+
+
+def invoke(*arguments):
+    result = runner.invoke(app, list(arguments))
+    if result.exit_code != 0:
+        raise RuntimeError(f"CLI failed {arguments}: {result.output}\n{result.exception}")
+    return json.loads(result.stdout)
+
+
+source_before = invoke("threads", "show", "root", "--include-content")["thread"]
+suggested = invoke("trim", "suggest", "root")
+plan = suggested["plan"]
+applied = invoke(
+    "trim",
+    "apply",
+    suggested["path"],
+    "--confirm",
+    plan["plan_id"],
+)
+derived_id = applied["derived_thread_id"]
+derived = invoke("threads", "show", derived_id, "--include-content")["thread"]
+source_after = invoke("threads", "show", "root", "--include-content")["thread"]
+if source_after["turns"] != source_before["turns"]:
+    raise RuntimeError("source task changed during derived trim")
+if derived["turns"] != source_before["turns"]:
+    raise RuntimeError("derived prefix does not match the source")
+print(
+    json.dumps(
+        {
+            "source_id": source_after["id"],
+            "derived_id": derived_id,
+            "plan_sha256": plan["plan_sha256"],
+            "source_preserved": True,
+        },
+        sort_keys=True,
+    )
+)
+"""
+
+
+def test_full_cli_subprocess_creates_verified_derived_task_and_preserves_source(
+    tmp_path: Path,
+) -> None:
+    executable = _fake_codex(tmp_path)
+    environment = os.environ.copy() | _isolated_environment(tmp_path, executable)
+    existing_python_path = environment.get("PYTHONPATH")
+    environment["PYTHONPATH"] = os.pathsep.join(
+        value for value in (str(PROJECT_ROOT / "src"), existing_python_path) if value
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", FULL_CLI_WORKFLOW_DRIVER],
+        capture_output=True,
+        text=True,
+        env=environment,
+        check=False,
+        timeout=30,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout)
+    assert result["source_id"] == "root"
+    assert result["derived_id"].startswith("derived-")
+    assert result["source_preserved"] is True
+    assert len(result["plan_sha256"]) == 64
+    records = [
+        json.loads(line)
+        for line in Path(environment["CSM_FAKE_APP_SERVER_LOG"])
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    methods = [
+        record["message"].get("method")
+        for record in records
+        if isinstance(record.get("message"), dict)
+    ]
+    assert methods.count("thread/fork") == 1
+    assert "thread/delete" not in methods

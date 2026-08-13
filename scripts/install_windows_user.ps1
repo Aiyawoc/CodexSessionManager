@@ -1,5 +1,6 @@
 param(
-    [string]$BundlePath = $PSScriptRoot
+    [string]$BundlePath = $PSScriptRoot,
+    [switch]$SkipUserPathUpdate
 )
 
 $ErrorActionPreference = "Stop"
@@ -57,11 +58,13 @@ try {
     }
     Copy-Item -LiteralPath $SkillSource -Destination $SkillTarget -Recurse
 
-    $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    $PathEntries = @($UserPath -split ";" | Where-Object { $_ })
-    if ($PathEntries -notcontains $Target) {
-        $UpdatedPath = (@($PathEntries) + $Target) -join ";"
-        [Environment]::SetEnvironmentVariable("Path", $UpdatedPath, "User")
+    if (-not $SkipUserPathUpdate) {
+        $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+        $PathEntries = @($UserPath -split ";" | Where-Object { $_ })
+        if ($PathEntries -notcontains $Target) {
+            $UpdatedPath = (@($PathEntries) + $Target) -join ";"
+            [Environment]::SetEnvironmentVariable("Path", $UpdatedPath, "User")
+        }
     }
     & (Join-Path $Target "CodexSessionManager.exe") cli doctor --skip-app-server
     if ($LASTEXITCODE -ne 0) {

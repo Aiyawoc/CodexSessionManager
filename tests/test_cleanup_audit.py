@@ -8,8 +8,10 @@ import pytest
 from codex_session_manager.app_server import RequestTimeout
 from codex_session_manager.audit import AuditStore
 from codex_session_manager.cleanup import CleanupExecutor, CleanupPlanner
+from codex_session_manager.hashing import hash_file
 from codex_session_manager.inventory import InventoryFilter, attach_descendant_closures
 from codex_session_manager.models import (
+    ActionPlan,
     BackupEntry,
     BackupManifest,
     BackupVerification,
@@ -19,7 +21,7 @@ from codex_session_manager.models import (
 )
 
 
-def _record_backup(audit: AuditStore, snapshot: ThreadSnapshot, path: Path) -> BackupManifest:
+def _backup_verification(snapshot: ThreadSnapshot, path: Path) -> BackupVerification:
     path.write_bytes(b"encrypted backup payload")
     manifest = BackupManifest(
         backup_id="backup-id",
@@ -37,13 +39,19 @@ def _record_backup(audit: AuditStore, snapshot: ThreadSnapshot, path: Path) -> B
         ),
         source_fingerprints={snapshot.id: snapshot.backup_fingerprint},
     ).seal()
-    audit.record_verified_backup(
-        BackupVerification(
-            manifest=manifest,
-            embedded_source_fingerprints={snapshot.id: snapshot.backup_fingerprint},
-        ),
-        path,
+    ciphertext_sha256, ciphertext_size = hash_file(path)
+    return BackupVerification(
+        manifest=manifest,
+        embedded_source_fingerprints={snapshot.id: snapshot.backup_fingerprint},
+        ciphertext_sha256=ciphertext_sha256,
+        ciphertext_size=ciphertext_size,
     )
+
+
+def _record_backup(audit: AuditStore, snapshot: ThreadSnapshot, path: Path) -> BackupManifest:
+    verification = _backup_verification(snapshot, path)
+    audit.record_verified_backup(verification, path)
+    manifest = verification.manifest
     return manifest
 
 
@@ -172,6 +180,19 @@ def test_archive_apply_checks_backup_and_never_retries_ambiguous_timeout(
     assert client.archive_calls == 1
 
 
+def test_audit_verification_detects_event_chain_payload_damage(app_paths) -> None:
+    with AuditStore(app_paths) as audit:
+        audit.append(event_type="first", actor="test", result="succeeded")
+        audit.append(event_type="second", actor="test", result="succeeded")
+        with audit.connection:
+            audit.connection.execute(
+                "UPDATE audit_events SET details_json = ? WHERE sequence = 1",
+                ('{"tampered":true}',),
+            )
+        with pytest.raises(ValueError, match="audit event hash mismatch"):
+            audit.verify_chain()
+
+
 def test_rename_uses_sealed_plan_and_verifies_title_postcondition(
     app_paths, capabilities, snapshot_factory
 ) -> None:
@@ -217,6 +238,24 @@ def test_replaced_backup_invalidates_cleanup_gate(
         )
         with pytest.raises(ValueError, match="verified encrypted backup"):
             executor.apply(plan)
+
+
+def test_audit_refuses_ciphertext_replaced_after_full_verification(
+    tmp_path: Path, app_paths, snapshot_factory
+) -> None:
+    snapshot = snapshot_factory("root")
+    path = tmp_path / "replace-before-audit.csmbackup"
+    verification = _backup_verification(snapshot, path)
+    path.write_bytes(b"replacement ciphertext")
+
+    with (
+        AuditStore(app_paths) as audit,
+        pytest.raises(ValueError, match="changed before audit recording"),
+    ):
+        audit.record_verified_backup(verification, path)
+
+    with AuditStore(app_paths) as audit:
+        assert audit.verified_backup(snapshot.id, snapshot.backup_fingerprint) is None
 
 
 def test_purge_plan_rejects_ephemeral_and_untrusted_archive(
@@ -271,6 +310,31 @@ def test_explicit_purge_plans_only_selected_eligible_roots(
         plan = CleanupPlanner().plan_selected_purge(
             (first, second), capabilities, audit, ("second",), now=now
         )
+
+        with pytest.raises(ValueError, match="exactly one root"):
+            CleanupPlanner().plan_selected_purge(
+                (first, second), capabilities, audit, ("first", "second"), now=now
+            )
+
+        first_plan = CleanupPlanner().plan_selected_purge(
+            (first, second), capabilities, audit, ("first",), now=now
+        )
+        multi_root_plan = ActionPlan.create(
+            action=PlanAction.PURGE,
+            capability_fingerprint=capabilities.fingerprint,
+            targets=(*first_plan.targets, *plan.targets),
+        )
+        with pytest.raises(ValueError, match="exactly one root"):
+            CleanupExecutor(
+                client=_CleanupClient(),  # type: ignore[arg-type]
+                inventory=_CleanupInventory(first, first),  # type: ignore[arg-type]
+                capabilities=capabilities,
+                audit=audit,
+            ).apply(
+                multi_root_plan,
+                confirmation=multi_root_plan.plan_id,
+                permanent_phrase="PERMANENTLY DELETE CODEX TASKS",
+            )
 
     assert [target.root_thread_id for target in plan.targets] == ["second"]
 

@@ -82,6 +82,10 @@ def _turn_atomic_groups(turn: TurnSnapshot) -> tuple[frozenset[str], ...]:
 
 
 def validate_selections(snapshot: ThreadSnapshot, selections: tuple[TrimSelection, ...]) -> None:
+    if not snapshot.content_complete:
+        raise TrimError("trim requires complete source content")
+    if not snapshot.mapping_complete:
+        raise TrimError("trim requires complete source lineage mapping")
     turns = {turn.id: turn for turn in snapshot.turns}
     items = {item.id: item for turn in snapshot.turns for item in turn.items}
     selection_by_id = {selection.target_id: selection for selection in selections}
@@ -465,7 +469,12 @@ class TrimExecutor:
                     cwd=source.cwd,
                     name=(source.title or source.id) + " · 精简",
                 )
-                target_id = str(target["id"])
+                target_value = target.get("id")
+                if not isinstance(target_value, str) or not target_value:
+                    raise TrimError("thread/start returned no derived thread id")
+                target_id = target_value
+                if target_id == source.id:
+                    raise TrimError("thread/start returned the source thread id")
                 text = (
                     "CSM ContextProjection\n"
                     f"projection_sha256={projection.projection_sha256}\n"

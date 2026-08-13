@@ -2,25 +2,34 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, QPoint, Qt
+from PySide6.QtCore import QModelIndex, QPoint, Qt, QTimer
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QMessageBox
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QHeaderView,
+    QLabel,
+    QMessageBox,
+    QProgressDialog,
+)
 
 from codex_session_manager.backup import DecryptionSpec, EncryptionSpec
 from codex_session_manager.gui.controller import ReviewDocument, TrimReviewWindow
 from codex_session_manager.gui.i18n import GuiLanguage, compact_number, missing_translation_keys
 from codex_session_manager.gui.prompt import PrecompactPromptDialog
-from codex_session_manager.gui.theme import APP_STYLESHEET, DANGER, SPLITTER_LINE
+from codex_session_manager.gui.theme import APP_STYLESHEET, DANGER, SPLITTER_LINE, TEXT
 from codex_session_manager.gui.widgets import CenteredHandleSplitter
 from codex_session_manager.hashing import utc_now
 from codex_session_manager.models import (
     BackupManifest,
     ItemKind,
     ThreadItemSnapshot,
+    ThreadStatus,
     TrimAction,
     TrimPlan,
     TrimSelection,
@@ -30,8 +39,9 @@ from codex_session_manager.sensitive import (
     SensitiveFinding,
     SensitiveScanResult,
     SensitiveSeverity,
+    scan_sensitive_snapshot,
 )
-from codex_session_manager.workflows import BackupCreationResult
+from codex_session_manager.workflows import BackupCreationResult, SensitiveScanBatch
 
 
 def _document(snapshot, capabilities) -> ReviewDocument:
@@ -233,6 +243,47 @@ def test_task_list_selection_loads_selected_thread_id(qtbot, app_paths, snapshot
 
     assert loaded_ids == ["selected-task"]
     assert window.ui.threadIdEdit.text() == ""
+
+
+def test_archived_task_does_not_offer_archive_action(qtbot, app_paths, snapshot_factory) -> None:
+    archived = snapshot_factory("archived", archived=True)
+    active = snapshot_factory("active")
+    running = snapshot_factory("running", status=ThreadStatus.ACTIVE)
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+    window.task_snapshots = (archived, active, running)
+    window._populate_task_list(window.task_snapshots)
+
+    window._select_task_in_list("archived")
+    assert not window.ui.taskArchiveButton.isEnabled()
+
+    window._select_task_in_list("active")
+    assert window.ui.taskArchiveButton.isEnabled()
+
+    window._select_task_in_list("running")
+    assert not window.ui.taskArchiveButton.isEnabled()
+
+
+def test_message_box_message_label_uses_application_text_color(qtbot) -> None:
+    application = QApplication.instance()
+    assert application is not None
+    previous_stylesheet = application.styleSheet()
+    application.setStyleSheet(previous_stylesheet + APP_STYLESHEET)
+    message_box = QMessageBox()
+    try:
+        qtbot.addWidget(message_box)
+        message_box.setText("永久删除确认文本")
+        message_box.show()
+        qtbot.wait(10)
+
+        message_label = next(
+            label
+            for label in message_box.findChildren(QLabel)
+            if label.objectName() == "qt_msgbox_label"
+        )
+        assert message_label.palette().color(message_label.foregroundRole()).name() == TEXT
+    finally:
+        application.setStyleSheet(previous_stylesheet)
 
 
 def test_shared_task_query_filters_and_supports_multi_selection(
@@ -439,6 +490,162 @@ def test_sensitive_filter_highlights_exact_context_ranges(
         if selection.format.background().color().name() == DANGER
     ]
     assert any(secret in selection.cursor.selectedText() for selection in markdown_highlighted)
+
+
+def test_sensitive_scan_uses_window_modal_progress_dialog_and_worker(
+    qtbot, app_paths, snapshot_factory
+) -> None:
+    observed_values: list[int] = []
+
+    class Workflows:
+        def scan_sensitive_threads(self, thread_ids, *, cancelled, progress):
+            assert thread_ids == ("matched", "clean")
+            assert not cancelled()
+            progress((1, 2))
+            assert window._sensitive_progress_dialog is not None
+            observed_values.append(window._sensitive_progress_dialog.value())
+            progress((2, 2))
+            assert window._sensitive_progress_dialog is not None
+            observed_values.append(window._sensitive_progress_dialog.value())
+            match = SensitiveScanResult(
+                (SensitiveFinding("云服务/API 密钥", SensitiveSeverity.HIGH, 1),)
+            )
+            return SensitiveScanBatch({"matched": match}, scanned=2, failed=0)
+
+    class CapturingPool:
+        worker = None
+
+        def start(self, worker) -> None:
+            self.worker = worker
+
+    window = TrimReviewWindow(
+        paths=app_paths,
+        load_task_list=False,
+        workflows=Workflows(),  # type: ignore[arg-type]
+    )
+    qtbot.addWidget(window)
+    window.task_snapshots = (snapshot_factory("matched"), snapshot_factory("clean"))
+    window._populate_task_list(window.task_snapshots)
+    pool = CapturingPool()
+    window.thread_pool = pool  # type: ignore[assignment]
+    window.show()
+
+    window.ui.sensitiveScanButton.click()
+
+    dialog = window._sensitive_progress_dialog
+    assert isinstance(dialog, QProgressDialog)
+    assert dialog.windowModality() is Qt.WindowModality.WindowModal
+    assert dialog.minimum() == 0
+    assert dialog.maximum() == 2
+    assert dialog.value() == 0
+    assert dialog.isVisible()
+    assert pool.worker is not None
+
+    pool.worker.run()
+
+    assert observed_values == [1, 2]
+    assert window._sensitive_progress_dialog is None
+    assert window._sensitive_scan_complete
+    assert "1 个疑似敏感对话" in window.ui.taskListStatusLabel.text()
+
+
+def test_sensitive_scan_progress_cancel_unchecks_filter(qtbot, app_paths, snapshot_factory) -> None:
+    class Workflows:
+        def scan_sensitive_threads(self, _thread_ids, *, cancelled, progress):
+            raise AssertionError("captured worker should not run after cancellation")
+
+    class CapturingPool:
+        worker = None
+
+        def start(self, worker) -> None:
+            self.worker = worker
+
+    window = TrimReviewWindow(
+        paths=app_paths,
+        load_task_list=False,
+        workflows=Workflows(),  # type: ignore[arg-type]
+    )
+    qtbot.addWidget(window)
+    window.task_snapshots = (snapshot_factory("one"),)
+    pool = CapturingPool()
+    window.thread_pool = pool  # type: ignore[assignment]
+
+    window.ui.sensitiveScanButton.click()
+    dialog = window._sensitive_progress_dialog
+    assert dialog is not None
+
+    dialog.canceled.emit()
+
+    assert not window.ui.sensitiveScanButton.isChecked()
+    assert window._sensitive_progress_dialog is None
+    assert "已关闭" in window.ui.taskListStatusLabel.text()
+
+
+def test_sensitive_scan_keeps_qt_event_loop_responsive_during_large_regex_work(
+    qtbot, app_paths, snapshot_factory
+) -> None:
+    large_snapshot = snapshot_factory(
+        "large-sensitive-scan",
+        turns=(
+            TurnSnapshot(
+                id="turn-1",
+                status="completed",
+                items=(
+                    ThreadItemSnapshot(
+                        id="large-item",
+                        turn_id="turn-1",
+                        kind=ItemKind.USER_MESSAGE,
+                        raw_type="userMessage",
+                        role="user",
+                        text="1234 5678 9012 3456 789\n" * (8 * 1024 * 1024 // 25),
+                        token_estimate=1,
+                    ),
+                ),
+            ),
+        ),
+    ).model_copy(update={"title": "", "preview": ""})
+    started = threading.Event()
+    finished = threading.Event()
+
+    class Workflows:
+        def scan_sensitive_threads(self, _thread_ids, *, cancelled, progress):
+            started.set()
+            result = scan_sensitive_snapshot(large_snapshot, cancelled=cancelled)
+            progress((1, 1))
+            finished.set()
+            return SensitiveScanBatch(
+                {large_snapshot.id: result} if result.has_findings else {},
+                scanned=1,
+                failed=0,
+            )
+
+    window = TrimReviewWindow(
+        paths=app_paths,
+        load_task_list=False,
+        workflows=Workflows(),  # type: ignore[arg-type]
+    )
+    qtbot.addWidget(window)
+    window.task_snapshots = (snapshot_factory("large-sensitive-scan"),)
+    window.show()
+
+    heartbeat_during_scan: list[bool] = []
+
+    def heartbeat() -> None:
+        if started.is_set() and not finished.is_set():
+            heartbeat_during_scan.append(True)
+            return
+        if not finished.is_set():
+            QTimer.singleShot(5, heartbeat)
+
+    QTimer.singleShot(5, heartbeat)
+    window.ui.sensitiveScanButton.click()
+
+    qtbot.waitUntil(started.is_set, timeout=1_000)
+    qtbot.waitUntil(lambda: bool(heartbeat_during_scan), timeout=1_000)
+    qtbot.waitUntil(finished.is_set, timeout=5_000)
+    qtbot.waitUntil(lambda: window._sensitive_progress_dialog is None, timeout=1_000)
+
+    assert heartbeat_during_scan == [True]
 
 
 def test_timeline_hides_all_empty_zero_token_items_and_summarizes_usage(

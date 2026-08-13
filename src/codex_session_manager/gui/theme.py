@@ -29,6 +29,20 @@ QMainWindow, QDialog, QWidget#centralwidget {{
     color: {TEXT};
 }}
 
+QMessageBox {{
+    background: {SURFACE};
+    color: {TEXT};
+}}
+
+QMessageBox QLabel {{
+    background: transparent;
+    color: {TEXT};
+}}
+
+QMessageBox QAbstractButton {{
+    color: {TEXT};
+}}
+
 QFrame#heroFrame, QFrame#footerFrame {{
     background: {PANEL};
     border: 1px solid {OUTLINE};

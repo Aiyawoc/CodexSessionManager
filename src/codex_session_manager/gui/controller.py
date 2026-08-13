@@ -19,12 +19,14 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QProgressDialog,
     QStyle,
     QTextEdit,
     QTreeWidgetItem,
 )
 
 from codex_session_manager.backup import DecryptionSpec, EncryptionSpec
+from codex_session_manager.cleanup import SAFE_INACTIVE_STATUSES
 from codex_session_manager.config import AppPaths, get_paths
 from codex_session_manager.gui.i18n import (
     GuiLanguage,
@@ -147,6 +149,7 @@ class TrimReviewWindow(QMainWindow):
         self._sensitive_scan_generation = 0
         self._sensitive_matches: dict[str, SensitiveScanResult] = {}
         self._sensitive_scan_complete = False
+        self._sensitive_progress_dialog: QProgressDialog | None = None
         self._task_pane_expanded = True
         self._expanded_splitter_sizes: tuple[int, ...] = (360, 430, 500, 300)
         self._language = load_language(self.paths.config_dir)
@@ -334,6 +337,16 @@ class TrimReviewWindow(QMainWindow):
         self.ui.sensitiveScanButton.setText(self._t("sensitive_scan"))
         self.ui.sensitiveScanButton.setToolTip(self._t("sensitive_tooltip"))
         self.ui.sensitiveScanButton.setAccessibleName(self._t("sensitive_tooltip"))
+        if self._sensitive_progress_dialog is not None:
+            current = max(0, self._sensitive_progress_dialog.value())
+            total = self._sensitive_progress_dialog.maximum()
+            self._sensitive_progress_dialog.setWindowTitle(self._t("sensitive_progress_title"))
+            self._sensitive_progress_dialog.setCancelButtonText(
+                self._t("sensitive_progress_cancel")
+            )
+            self._sensitive_progress_dialog.setLabelText(
+                self._t("sensitive_progress", current=current, total=total)
+            )
         self.ui.savePlanButton.setText(self._t("save_plan"))
         self.ui.savePlanButton.setToolTip(self._t("save_plan_tooltip"))
         self.ui.applyButton.setText(self._t("apply_plan"))
@@ -437,6 +450,7 @@ class TrimReviewWindow(QMainWindow):
 
         self._task_generation += 1
         self._sensitive_scan_generation += 1
+        self._close_sensitive_progress_dialog()
         self._sensitive_matches.clear()
         self._sensitive_scan_complete = False
         self.ui.sensitiveScanButton.blockSignals(True)
@@ -601,10 +615,33 @@ class TrimReviewWindow(QMainWindow):
                 values.append(value)
         return tuple(dict.fromkeys(values))
 
+    def _can_archive_selected_tasks(self) -> bool:
+        selected_ids = self._selected_task_ids()
+        if not selected_ids:
+            return False
+        by_id = {snapshot.id: snapshot for snapshot in self.task_snapshots}
+        for thread_id in selected_ids:
+            root = by_id.get(thread_id)
+            if root is None:
+                return False
+            closure_ids = (root.id, *root.spawned_descendant_ids)
+            for closure_id in closure_ids:
+                snapshot = by_id.get(closure_id)
+                if (
+                    snapshot is None
+                    or snapshot.archived
+                    or snapshot.pinned
+                    or snapshot.ephemeral
+                    or snapshot.status not in SAFE_INACTIVE_STATUSES
+                    or not snapshot.mapping_complete
+                ):
+                    return False
+        return True
+
     def _update_task_action_state(self) -> None:
         enabled = bool(self._selected_task_ids()) and not self._task_write_in_progress
         self.ui.taskBackupButton.setEnabled(enabled)
-        self.ui.taskArchiveButton.setEnabled(enabled)
+        self.ui.taskArchiveButton.setEnabled(enabled and self._can_archive_selected_tasks())
         self.ui.taskDeleteButton.setEnabled(enabled)
 
     @Slot(QPoint)
@@ -629,7 +666,9 @@ class TrimReviewWindow(QMainWindow):
         delete_action = menu.addAction(self._t("delete_selected", count=selected_count))
         rename_action.setEnabled(not self._task_write_in_progress)
         backup_action.setEnabled(not self._task_write_in_progress)
-        archive_action.setEnabled(not self._task_write_in_progress)
+        archive_action.setEnabled(
+            not self._task_write_in_progress and self._can_archive_selected_tasks()
+        )
         delete_action.setEnabled(not self._task_write_in_progress)
         rename_action.triggered.connect(lambda _checked=False: self._rename_task(thread_id))
         copy_action.triggered.connect(lambda _checked=False: self._copy_conversation_id(thread_id))
@@ -990,14 +1029,17 @@ class TrimReviewWindow(QMainWindow):
     @Slot(bool)
     def _sensitive_filter_toggled(self, checked: bool) -> None:
         self._sensitive_scan_generation += 1
-        if self.current_target is not None:
-            self._apply_content_overlays()
         if not checked:
+            self._close_sensitive_progress_dialog()
+            if self.current_target is not None:
+                self._apply_content_overlays()
             self._populate_task_list(self.task_snapshots)
             self.ui.taskListStatusLabel.setText(
                 self._t("sensitive_off", count=len(self.task_snapshots))
             )
             return
+        if self.current_target is not None:
+            self._apply_content_overlays()
         if self._sensitive_scan_complete:
             self._populate_task_list(self.task_snapshots)
             self._show_sensitive_summary()
@@ -1013,6 +1055,7 @@ class TrimReviewWindow(QMainWindow):
         generation = self._sensitive_scan_generation
         total = len(self.task_snapshots)
         self.ui.taskListStatusLabel.setText(self._t("sensitive_progress", current=0, total=total))
+        self._show_sensitive_progress_dialog(total)
 
         worker: FunctionWorker
 
@@ -1035,15 +1078,55 @@ class TrimReviewWindow(QMainWindow):
         )
         self.thread_pool.start(worker)
 
+    def _show_sensitive_progress_dialog(self, total: int) -> None:
+        self._close_sensitive_progress_dialog()
+        dialog = QProgressDialog(
+            self._t("sensitive_progress", current=0, total=total),
+            self._t("sensitive_progress_cancel"),
+            0,
+            total,
+            self,
+        )
+        dialog.setWindowTitle(self._t("sensitive_progress_title"))
+        dialog.setAccessibleName(self._t("sensitive_progress_title"))
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog.setMinimumDuration(0)
+        dialog.setMinimumWidth(520)
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+        dialog.setValue(0)
+        dialog.canceled.connect(self._cancel_sensitive_scan)
+        self._sensitive_progress_dialog = dialog
+        dialog.show()
+
+    def _close_sensitive_progress_dialog(self) -> None:
+        dialog = self._sensitive_progress_dialog
+        self._sensitive_progress_dialog = None
+        if dialog is None:
+            return
+        dialog.reset()
+        dialog.close()
+        dialog.deleteLater()
+
+    @Slot()
+    def _cancel_sensitive_scan(self) -> None:
+        if self.ui.sensitiveScanButton.isChecked():
+            self.ui.sensitiveScanButton.setChecked(False)
+        else:
+            self._close_sensitive_progress_dialog()
+
     def _sensitive_scan_progress(self, generation: int, value: object) -> None:
         if generation != self._sensitive_scan_generation or not isinstance(value, tuple):
             return
         if len(value) != 2 or not all(isinstance(item, int) for item in value):
             return
         current, total = value
-        self.ui.taskListStatusLabel.setText(
-            self._t("sensitive_progress", current=current, total=total)
-        )
+        message = self._t("sensitive_progress", current=current, total=total)
+        self.ui.taskListStatusLabel.setText(message)
+        if self._sensitive_progress_dialog is not None:
+            self._sensitive_progress_dialog.setMaximum(total)
+            self._sensitive_progress_dialog.setLabelText(message)
+            self._sensitive_progress_dialog.setValue(current)
 
     def _sensitive_scan_loaded(self, generation: int, value: object) -> None:
         if (
@@ -1052,7 +1135,12 @@ class TrimReviewWindow(QMainWindow):
             or not self.ui.sensitiveScanButton.isChecked()
         ):
             return
-        if not isinstance(value, SensitiveScanBatch) or value.cancelled:
+        if not isinstance(value, SensitiveScanBatch):
+            self._sensitive_scan_failed(generation, self._t("sensitive_invalid_result"))
+            return
+        self._close_sensitive_progress_dialog()
+        if value.cancelled:
+            self.ui.sensitiveScanButton.setChecked(False)
             return
         self._sensitive_matches = value.matches
         self._sensitive_scan_complete = True
@@ -1062,6 +1150,8 @@ class TrimReviewWindow(QMainWindow):
     def _sensitive_scan_failed(self, generation: int, error: str) -> None:
         if generation != self._sensitive_scan_generation or self._closing:
             return
+        self._close_sensitive_progress_dialog()
+        self.ui.sensitiveScanButton.setChecked(False)
         self._show_error(self._t("sensitive_failed", error=error))
 
     def _show_sensitive_summary(self, failed: int = 0) -> None:
@@ -1803,5 +1893,6 @@ class TrimReviewWindow(QMainWindow):
         self._task_generation += 1
         self._sensitive_scan_generation += 1
         self._content_overlay_generation += 1
+        self._close_sensitive_progress_dialog()
         self.window_closed.emit()
         super().closeEvent(event)

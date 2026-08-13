@@ -8,6 +8,7 @@ inventory hydration, plan persistence, audit ownership, and result packaging.
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, Self
@@ -37,7 +38,11 @@ from codex_session_manager.models import (
     TrimPlan,
 )
 from codex_session_manager.plans import PlanModel, PlanStore
-from codex_session_manager.sensitive import SensitiveScanResult, scan_sensitive_snapshot
+from codex_session_manager.sensitive import (
+    SensitiveScanCancelled,
+    SensitiveScanResult,
+    scan_sensitive_snapshot,
+)
 from codex_session_manager.trim import TrimExecutor
 
 
@@ -87,6 +92,9 @@ class SensitiveScanBatch:
     scanned: int
     failed: int
     cancelled: bool = False
+
+
+_SENSITIVE_SCAN_MAX_WORKERS = 4
 
 
 class WorkflowSession:
@@ -376,13 +384,28 @@ class ApplicationWorkflows:
         scanned = 0
         processed = 0
         failed = 0
-        with self.session() as session:
-            _client, _capabilities, inventory = session.services()
-            for thread_id in thread_ids:
-                if cancelled():
-                    return SensitiveScanBatch(matches, scanned, failed, cancelled=True)
+        total = len(thread_ids)
+        if not thread_ids:
+            return SensitiveScanBatch(matches, scanned, failed)
+
+        worker_count = min(_SENSITIVE_SCAN_MAX_WORKERS, total)
+        max_pending = worker_count
+        pending: dict[Future[SensitiveScanResult], str] = {}
+
+        def report_processed() -> None:
+            if progress is not None:
+                progress((processed, total))
+
+        def consume(done: set[Future[SensitiveScanResult]]) -> bool:
+            """Merge completed local scans on the producer worker thread."""
+
+            nonlocal scanned, processed, failed
+            for future in done:
+                thread_id = pending.pop(future)
                 try:
-                    result = scan_sensitive_snapshot(inventory.read(thread_id, include_turns=True))
+                    result = future.result()
+                except SensitiveScanCancelled:
+                    return False
                 except (RuntimeError, ValueError):
                     failed += 1
                 else:
@@ -390,6 +413,70 @@ class ApplicationWorkflows:
                     if result.has_findings:
                         matches[thread_id] = result
                 processed += 1
-                if progress is not None:
-                    progress((processed, len(thread_ids)))
-        return SensitiveScanBatch(matches, scanned, failed)
+                report_processed()
+            return True
+
+        def cancelled_result() -> SensitiveScanBatch:
+            for future in pending:
+                future.cancel()
+            return SensitiveScanBatch(matches, scanned, failed, cancelled=True)
+
+        executor = ThreadPoolExecutor(
+            max_workers=worker_count,
+            thread_name_prefix="csm-sensitive-scan",
+        )
+        try:
+            with self.session() as session:
+                _client, _capabilities, inventory = session.services()
+                for thread_id in thread_ids:
+                    if cancelled():
+                        return cancelled_result()
+                    while len(pending) >= max_pending:
+                        done, _not_done = wait(
+                            tuple(pending),
+                            timeout=0.05,
+                            return_when=FIRST_COMPLETED,
+                        )
+                        if not done:
+                            if cancelled():
+                                return cancelled_result()
+                            continue
+                        if not consume(done):
+                            return cancelled_result()
+                    try:
+                        snapshot = inventory.read(thread_id, include_turns=True)
+                    except (RuntimeError, ValueError):
+                        failed += 1
+                        processed += 1
+                        report_processed()
+                    else:
+                        pending[
+                            executor.submit(
+                                scan_sensitive_snapshot,
+                                snapshot,
+                                cancelled=cancelled,
+                            )
+                        ] = thread_id
+
+                    if pending:
+                        done, _not_done = wait(
+                            tuple(pending),
+                            timeout=0,
+                            return_when=FIRST_COMPLETED,
+                        )
+                        if done and not consume(done):
+                            return cancelled_result()
+
+            while pending:
+                if cancelled():
+                    return cancelled_result()
+                done, _not_done = wait(
+                    tuple(pending),
+                    timeout=0.05,
+                    return_when=FIRST_COMPLETED,
+                )
+                if done and not consume(done):
+                    return cancelled_result()
+            return SensitiveScanBatch(matches, scanned, failed)
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)

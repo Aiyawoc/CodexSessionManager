@@ -21,7 +21,7 @@ Long-running Codex work spreads conversations across projects and lets context g
 - Generate redacted App Server schema audits; unknown profiles stay read-only and are never trusted automatically.
 - Reduce context through a derived task while keeping the original conversation unchanged.
 - Review model-visible content, Markdown, hidden tags, dependencies, and estimated token savings.
-- Scan locally for likely credentials and personal data; matched text can be highlighted for review.
+- Scan locally for likely credentials and personal data with bounded background workers, cancellable modal progress, and highlighted matches.
 - Use the GUI, CLI, explicit Codex Skill, or optional fail-open PreCompact/PostCompact Hooks.
 - Run self-contained macOS arm64 and Windows x64 builds without installing Python, Qt, uv, or age.
 
@@ -130,7 +130,7 @@ Backup verification and a complete `doctor` check also require an `age` executab
 | Context approaching compaction | Manual review or an optional PreCompact prompt before native compaction proceeds |
 | Old or inactive conversations | Rule-based candidates, dry-run archive plans, batch limits, and human confirmation |
 | Backup or account migration | Encrypted CSM backups, logical restore, Codex rollout import, and ChatGPT export branch expansion |
-| Sensitive-data review | Local deterministic scanning and red highlighting without uploading conversation content |
+| Sensitive-data review | Bounded background scanning, cancellable progress, and red highlighting without uploading conversation content |
 | Auditable maintenance | Immutable plan hashes, source fingerprints, capability checks, and a CSM-owned audit chain |
 
 The primary audience is developers and maintainers who use Codex across multiple repositories, keep long-lived conversations, or need a reviewable alternative to manipulating Codex's internal storage.

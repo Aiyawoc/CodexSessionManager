@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import threading
 from collections.abc import Iterator
 from datetime import timedelta
 from pathlib import Path
@@ -12,6 +13,7 @@ from codex_session_manager.audit import AuditStore
 from codex_session_manager.backup import DecryptionSpec, EncryptionSpec
 from codex_session_manager.cleanup import CleanupPolicy
 from codex_session_manager.models import PlanAction
+from codex_session_manager.sensitive import SensitiveScanResult
 from codex_session_manager.workflows import ApplicationWorkflows
 
 
@@ -171,3 +173,44 @@ def test_backup_workflow_expands_closure_verifies_and_records_audit(
         audit.verify_chain()
         for thread_id, source_fingerprint in result.manifest.source_fingerprints.items():
             assert audit.verified_backup(thread_id, source_fingerprint) is not None
+
+
+def test_sensitive_scan_pipelines_local_scanning_across_worker_threads(
+    app_paths, capabilities, monkeypatch
+) -> None:
+    client = _WorkflowClient()
+
+    def connect(**_kwargs):
+        return client, capabilities
+
+    rendezvous = threading.Barrier(2)
+    worker_names: set[str] = set()
+
+    def concurrent_scan(_snapshot, *, cancelled=None):
+        assert cancelled is not None
+        assert not cancelled()
+        worker_names.add(threading.current_thread().name)
+        rendezvous.wait(timeout=0.25)
+        return SensitiveScanResult()
+
+    monkeypatch.setattr(
+        "codex_session_manager.workflows.scan_sensitive_snapshot",
+        concurrent_scan,
+    )
+    progress: list[tuple[int, int]] = []
+
+    result = ApplicationWorkflows(
+        paths=app_paths,
+        connection_factory=connect,  # type: ignore[arg-type]
+    ).scan_sensitive_threads(
+        ("one", "two", "three", "four"),
+        cancelled=lambda: False,
+        progress=progress.append,
+    )
+
+    assert result.scanned == 4
+    assert result.failed == 0
+    assert not result.cancelled
+    assert progress == [(1, 4), (2, 4), (3, 4), (4, 4)]
+    assert len(worker_names) >= 2
+    assert client.closed

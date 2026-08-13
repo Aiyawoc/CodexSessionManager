@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from enum import StrEnum
+from itertools import chain
 
 from codex_session_manager.models import ThreadSnapshot
 
@@ -12,6 +14,10 @@ from codex_session_manager.models import ThreadSnapshot
 class SensitiveSeverity(StrEnum):
     MEDIUM = "medium"
     HIGH = "high"
+
+
+class SensitiveScanCancelled(Exception):
+    """Stop a batch scan without returning incomplete findings."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,70 +113,260 @@ _RULES = (
 )
 _CHINA_ID = re.compile(r"(?<!\d)(\d{17}[0-9Xx])(?!\d)")
 _CARD_NUMBER = re.compile(r"(?<!\d)(?:\d[ -]?){15,18}\d(?!\d)")
+_ANY_DIGIT = re.compile(r"\d")
+_API_KEY_PREFIXES = (
+    "AKIA",
+    "ghp_",
+    "gho_",
+    "ghu_",
+    "ghs_",
+    "ghr_",
+    "sk-",
+    "sk_live_",
+    "xoxb-",
+    "xoxa-",
+    "xoxp-",
+    "xoxr-",
+    "xoxs-",
+    "AIza",
+)
+_ASSIGNMENT_MARKERS = (
+    "password",
+    "passwd",
+    "passphrase",
+    "secret",
+    "apikey",
+    "api_key",
+    "api-key",
+    "accesstoken",
+    "access_token",
+    "access-token",
+)
+_BATCH_CHUNK_CHARS = 256 * 1024
+_BATCH_CHUNK_OVERLAP = 4096
 
 
 def scan_sensitive_text(text: str) -> SensitiveScanResult:
     """Return redacted categories and source offsets, never matched values."""
 
+    counts, spans = _scan_sensitive_text(text, include_spans=True)
+    return SensitiveScanResult(_findings(counts), tuple(spans))
+
+
+def _scan_sensitive_text(
+    text: str,
+    *,
+    include_spans: bool,
+    match_start_range: tuple[int, int] | None = None,
+) -> tuple[dict[tuple[str, SensitiveSeverity], int], list[SensitiveSpan]]:
+    """Scan one bounded string, optionally retaining exact source offsets."""
+
     counts: dict[tuple[str, SensitiveSeverity], int] = {}
     spans: list[SensitiveSpan] = []
+
+    def belongs(match: re.Match[str]) -> bool:
+        if match_start_range is None:
+            return True
+        start, end = match_start_range
+        return start <= match.start() < end
+
     for rule in _RULES:
-        matches = tuple(rule.pattern.finditer(text))
-        if not matches:
+        if not _rule_may_match(rule, text):
             continue
-        counts[(rule.category, rule.severity)] = len(matches)
-        spans.extend(
-            SensitiveSpan(match.start(), match.end(), rule.category, rule.severity)
-            for match in matches
-        )
+        count = 0
+        for match in rule.pattern.finditer(text):
+            if not belongs(match):
+                continue
+            count += 1
+            if include_spans:
+                spans.append(
+                    SensitiveSpan(match.start(), match.end(), rule.category, rule.severity)
+                )
+        if count:
+            counts[(rule.category, rule.severity)] = count
 
-    identity_matches = tuple(
-        match for match in _CHINA_ID.finditer(text) if _valid_china_id(match.group(1))
-    )
-    if identity_matches:
-        category = "中国居民身份证号"
-        severity = SensitiveSeverity.HIGH
-        counts[(category, severity)] = len(identity_matches)
-        spans.extend(
-            SensitiveSpan(match.start(), match.end(), category, severity)
-            for match in identity_matches
-        )
+    has_digit = len(text) >= 11 and _ANY_DIGIT.search(text) is not None
+    identity_category = "中国居民身份证号"
+    identity_severity = SensitiveSeverity.HIGH
+    identity_count = 0
+    for match in _CHINA_ID.finditer(text) if has_digit else ():
+        if not belongs(match) or not _valid_china_id(match.group(1)):
+            continue
+        identity_count += 1
+        if include_spans:
+            spans.append(
+                SensitiveSpan(
+                    match.start(),
+                    match.end(),
+                    identity_category,
+                    identity_severity,
+                )
+            )
+    if identity_count:
+        counts[(identity_category, identity_severity)] = identity_count
 
-    card_matches: list[re.Match[str]] = []
-    for match in _CARD_NUMBER.finditer(text):
+    card_category = "支付卡号"
+    card_severity = SensitiveSeverity.HIGH
+    card_count = 0
+    for match in _CARD_NUMBER.finditer(text) if has_digit else ():
+        if not belongs(match):
+            continue
         digits = re.sub(r"\D", "", match.group(0))
         if 16 <= len(digits) <= 19 and len(set(digits)) > 1 and _passes_luhn(digits):
-            card_matches.append(match)
-    if card_matches:
-        category = "支付卡号"
-        severity = SensitiveSeverity.HIGH
-        counts[(category, severity)] = len(card_matches)
-        spans.extend(
-            SensitiveSpan(match.start(), match.end(), category, severity) for match in card_matches
-        )
+            card_count += 1
+            if include_spans:
+                spans.append(
+                    SensitiveSpan(match.start(), match.end(), card_category, card_severity)
+                )
+    if card_count:
+        counts[(card_category, card_severity)] = card_count
 
-    findings = tuple(
+    spans.sort(key=lambda span: (span.start, span.end, span.category, span.severity))
+    return counts, spans
+
+
+def _rule_may_match(rule: _PatternRule, text: str) -> bool:
+    """Cheap literal gates avoid running every regex over ordinary prose."""
+
+    if rule.category == "私钥":
+        return "PRIVATE KEY" in text
+    if rule.category == "云服务/API 密钥":
+        return any(prefix in text for prefix in _API_KEY_PREFIXES)
+    if rule.category == "JWT":
+        first_dot = text.find(".")
+        return first_dot >= 0 and text.find(".", first_dot + 1) >= 0
+    if rule.category == "口令/令牌赋值":
+        lowered = text.lower()
+        return any(marker in lowered for marker in _ASSIGNMENT_MARKERS)
+    if rule.category == "电子邮箱":
+        return "@" in text
+    if rule.category == "中国大陆手机号":
+        return "1" in text
+    return True
+
+
+def _findings(
+    counts: dict[tuple[str, SensitiveSeverity], int],
+) -> tuple[SensitiveFinding, ...]:
+    return tuple(
         SensitiveFinding(category, severity, count)
         for (category, severity), count in sorted(
             counts.items(), key=lambda value: (value[0][1] != SensitiveSeverity.HIGH, value[0][0])
         )
     )
-    ordered_spans = tuple(
-        sorted(spans, key=lambda span: (span.start, span.end, span.category, span.severity))
-    )
-    return SensitiveScanResult(findings, ordered_spans)
 
 
-def scan_sensitive_snapshot(snapshot: ThreadSnapshot) -> SensitiveScanResult:
+def _merge_counts(
+    destination: dict[tuple[str, SensitiveSeverity], int],
+    source: dict[tuple[str, SensitiveSeverity], int],
+) -> None:
+    for key, count in source.items():
+        destination[key] = destination.get(key, 0) + count
+
+
+def _scan_fragment_counts(
+    text: str,
+    *,
+    lookahead: str,
+    cancelled: Callable[[], bool] | None,
+) -> dict[tuple[str, SensitiveSeverity], int]:
+    """Scan large fields in bounded calls so no regex monopolizes the GIL."""
+
+    counts: dict[tuple[str, SensitiveSeverity], int] = {}
+    text_length = len(text)
+    for core_start in range(0, max(1, text_length), _BATCH_CHUNK_CHARS):
+        if cancelled is not None and cancelled():
+            raise SensitiveScanCancelled
+        core_end = min(text_length, core_start + _BATCH_CHUNK_CHARS)
+        extended_start = max(0, core_start - _BATCH_CHUNK_OVERLAP)
+        extended_end = min(text_length, core_end + _BATCH_CHUNK_OVERLAP)
+        chunk = text[extended_start:extended_end]
+        if extended_end == text_length and lookahead:
+            chunk += lookahead[:_BATCH_CHUNK_OVERLAP]
+        chunk_counts, _spans = _scan_sensitive_text(
+            chunk,
+            include_spans=False,
+            match_start_range=(
+                core_start - extended_start,
+                core_end - extended_start,
+            ),
+        )
+        _merge_counts(counts, chunk_counts)
+    return counts
+
+
+def _batched_fragments(
+    fragments: Iterable[str],
+    *,
+    cancelled: Callable[[], bool] | None,
+) -> Iterator[str]:
+    """Join only small adjacent fields, keeping the working set bounded."""
+
+    parts: list[str] = []
+    character_count = 0
+    for fragment in fragments:
+        if cancelled is not None and cancelled():
+            raise SensitiveScanCancelled
+        if not fragment:
+            continue
+        if len(fragment) > _BATCH_CHUNK_CHARS:
+            if parts:
+                yield "\n".join(parts)
+                parts = []
+                character_count = 0
+            yield fragment
+            continue
+        separator_size = 1 if parts else 0
+        if parts and character_count + separator_size + len(fragment) > _BATCH_CHUNK_CHARS:
+            yield "\n".join(parts)
+            parts = [fragment]
+            character_count = len(fragment)
+            continue
+        parts.append(fragment)
+        character_count += separator_size + len(fragment)
+    if parts:
+        yield "\n".join(parts)
+
+
+def scan_sensitive_snapshot(
+    snapshot: ThreadSnapshot,
+    *,
+    cancelled: Callable[[], bool] | None = None,
+) -> SensitiveScanResult:
     """Scan model-visible fields from one normalized snapshot locally."""
 
-    fragments = [snapshot.title, snapshot.preview]
-    fragments.extend(item.text for turn in snapshot.turns for item in turn.items if item.text)
-    result = scan_sensitive_text("\n".join(fragment for fragment in fragments if fragment))
+    fragments = (
+        fragment
+        for fragment in chain(
+            (snapshot.title, snapshot.preview),
+            (item.text for turn in snapshot.turns for item in turn.items),
+        )
+        if fragment
+    )
+    batches = iter(_batched_fragments(fragments, cancelled=cancelled))
+    counts: dict[tuple[str, SensitiveSeverity], int] = {}
+    try:
+        current = next(batches)
+    except StopIteration:
+        return SensitiveScanResult()
+    for following in batches:
+        _merge_counts(
+            counts,
+            _scan_fragment_counts(
+                current,
+                lookahead=f"\n{following[: _BATCH_CHUNK_OVERLAP - 1]}",
+                cancelled=cancelled,
+            ),
+        )
+        current = following
+    _merge_counts(
+        counts,
+        _scan_fragment_counts(current, lookahead="", cancelled=cancelled),
+    )
     # Batch filtering needs only redacted categories/counts. Source offsets are
     # useful solely while rendering one visible context and are not retained in
     # the long-lived task-list cache.
-    return SensitiveScanResult(findings=result.findings)
+    return SensitiveScanResult(findings=_findings(counts))
 
 
 def _passes_luhn(digits: str) -> bool:

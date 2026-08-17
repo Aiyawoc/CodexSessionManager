@@ -90,7 +90,9 @@ from codex_session_manager.trim import (
 from codex_session_manager.workflows import (
     ActionExecutionResult,
     ApplicationWorkflows,
+    BackupArchiveResult,
     BackupCreationResult,
+    CleanupCandidateInventory,
     SensitiveScanBatch,
 )
 
@@ -155,6 +157,7 @@ class TrimReviewWindow(QMainWindow):
         self.timeline_model: TurnTimelineModel | None = None
         self.task_snapshots: tuple[ThreadSnapshot, ...] = ()
         self._all_task_snapshots: tuple[ThreadSnapshot, ...] = ()
+        self._verified_backup_ids: frozenset[str] = frozenset()
         self.selections: dict[str, TrimSelection] = {}
         self.review_state: ReviewState | None = None
         self.current_target: TurnSnapshot | ThreadItemSnapshot | None = None
@@ -276,7 +279,7 @@ class TrimReviewWindow(QMainWindow):
         self.ui.taskListView.itemClicked.connect(self._task_clicked)
         self.ui.taskListView.customContextMenuRequested.connect(self._show_task_context_menu)
         self.ui.taskRefreshButton.clicked.connect(self.load_task_list)
-        self.ui.taskBackupButton.clicked.connect(self._backup_selected_tasks)
+        self.ui.taskBackupButton.clicked.connect(self._task_backup_clicked)
         self.ui.taskArchiveButton.clicked.connect(self._archive_selected_tasks)
         self.ui.taskDeleteButton.clicked.connect(self._delete_selected_tasks)
         self.ui.projectTaskRailButton.clicked.connect(self._project_rail_clicked)
@@ -509,7 +512,7 @@ class TrimReviewWindow(QMainWindow):
         self.ui.taskDeleteButton.setVisible(context_mode)
         self.ui.taskRefreshButton.setVisible(not memory_mode)
         self.ui.taskBackupButton.setVisible(not memory_mode)
-        self.ui.taskArchiveButton.setVisible(not memory_mode)
+        self.ui.taskArchiveButton.setVisible(context_mode)
         self.ui.sensitiveScanButton.setVisible(not memory_mode)
         self.ui.loadButton.setVisible(not memory_mode)
         self.ui.contentTagsButton.setVisible(not memory_mode)
@@ -538,6 +541,9 @@ class TrimReviewWindow(QMainWindow):
             self.ui.timelineTitle.setText(self._t("timeline"))
             self.ui.contentTitle.setText(self._t("content"))
             self.ui.actionTitle.setText(self._t("trim_action"))
+            self.ui.taskBackupButton.setText(self._t("backup"))
+            self.ui.taskBackupButton.setToolTip(self._t("backup_selected", count=1))
+            self.ui.taskArchiveButton.setText(self._t("archive"))
             self.ui.threadIdEdit.setPlaceholderText(self._t("task_search_placeholder"))
             task_header = self.ui.taskListView.headerItem()
             task_header.setText(0, self._t("task_name"))
@@ -556,6 +562,8 @@ class TrimReviewWindow(QMainWindow):
             self.ui.timelineTitle.setText(self._t("cleanup_timeline"))
             self.ui.contentTitle.setText(self._t("cleanup_content"))
             self.ui.actionTitle.setText(self._t("cleanup_suggestion"))
+            self.ui.taskBackupButton.setText(self._t("cleanup_backup_archive"))
+            self.ui.taskBackupButton.setToolTip(self._t("cleanup_backup_archive_selected", count=1))
             self.ui.threadIdEdit.setPlaceholderText(self._t("cleanup_search_placeholder"))
             task_header = self.ui.taskListView.headerItem()
             task_header.setText(0, self._t("cleanup_candidate"))
@@ -675,7 +683,9 @@ class TrimReviewWindow(QMainWindow):
         self.ui.taskRefreshButton.setEnabled(False)
         self.ui.taskListStatusLabel.setText(self._t("task_list_loading"))
 
-        def load() -> tuple[ThreadSnapshot, ...]:
+        def load() -> tuple[ThreadSnapshot, ...] | CleanupCandidateInventory:
+            if self.review_mode is ReviewMode.CONVERSATION_CLEANUP and self._cleanup_candidate_ids:
+                return self.workflows.inspect_cleanup_candidates(self._cleanup_candidate_ids)
             return self.workflows.list_threads(
                 include_active=True,
                 include_archived=True,
@@ -696,16 +706,21 @@ class TrimReviewWindow(QMainWindow):
     def _task_list_loaded(self, generation: int, value: object) -> None:
         if generation != self._task_generation or self._closing:
             return
-        if not isinstance(value, tuple) or not all(
+        if isinstance(value, CleanupCandidateInventory):
+            snapshots = value.snapshots
+            self._verified_backup_ids = value.verified_backup_ids
+        elif isinstance(value, tuple) and all(
             isinstance(snapshot, ThreadSnapshot) for snapshot in value
         ):
+            snapshots = value
+            self._verified_backup_ids = frozenset()
+        else:
             self._task_list_failed(generation, self._t("task_list_invalid"))
             return
-        self._all_task_snapshots = value
+        self._all_task_snapshots = snapshots
         if self.review_mode is ReviewMode.MEMORY_EDIT:
             self._populate_memory_sources()
             return
-        snapshots = value
         missing = 0
         if self.review_mode is ReviewMode.CONVERSATION_CLEANUP and self._cleanup_candidate_ids:
             by_id = {snapshot.id: snapshot for snapshot in snapshots}
@@ -843,6 +858,38 @@ class TrimReviewWindow(QMainWindow):
                             + self._t("sensitive_finding", summary=finding_summary),
                         )
                     group.addChild(item)
+                    if self.review_mode is ReviewMode.CONVERSATION_CLEANUP:
+                        closure_ids = (snapshot.id, *snapshot.spawned_descendant_ids)
+                        cleanup_by_id = {
+                            candidate.id: candidate for candidate in self._all_task_snapshots
+                        }
+                        verified_count = sum(
+                            thread_id in self._verified_backup_ids for thread_id in closure_ids
+                        )
+                        item.setToolTip(
+                            0,
+                            item.toolTip(0)
+                            + "\n"
+                            + self._t(
+                                "cleanup_scope_tooltip",
+                                size=self._format_size(
+                                    sum(
+                                        candidate.size_bytes
+                                        for candidate in self._all_task_snapshots
+                                        if candidate.id in closure_ids
+                                    )
+                                ),
+                                descendants=len(snapshot.spawned_descendant_ids),
+                                verified=verified_count,
+                                total=len(closure_ids),
+                                risk=(
+                                    self._t("cleanup_risk_ready")
+                                    if self._can_archive_root(snapshot.id, cleanup_by_id)
+                                    else self._t("cleanup_risk_blocked")
+                                ),
+                            ),
+                        )
+                        self._append_cleanup_descendants(item, snapshot)
                 self.ui.taskListView.addTopLevelItem(group)
                 group.setExpanded(True)
             for selected_id in selected_ids:
@@ -850,6 +897,57 @@ class TrimReviewWindow(QMainWindow):
         finally:
             self._task_selection_guard = False
         self._update_task_action_state()
+
+    def _append_cleanup_descendants(
+        self,
+        root_item: QTreeWidgetItem,
+        root: ThreadSnapshot,
+    ) -> None:
+        by_id = {snapshot.id: snapshot for snapshot in self._all_task_snapshots}
+        for thread_id in root.spawned_descendant_ids:
+            snapshot = by_id.get(thread_id)
+            if snapshot is None:
+                child = QTreeWidgetItem(
+                    [self._t("cleanup_missing_descendant", thread_id=thread_id), "—"]
+                )
+                child.setIcon(
+                    0,
+                    self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxCritical),
+                )
+                child.setToolTip(0, self._t("cleanup_missing_descendant_tooltip"))
+            else:
+                title = snapshot.title.strip() or self._t("unnamed_task")
+                child = QTreeWidgetItem(
+                    [self._t("cleanup_descendant", title=title), self._relative_age(snapshot)]
+                )
+                child.setToolTip(
+                    0,
+                    self._task_tooltip(snapshot)
+                    + "\n"
+                    + self._t(
+                        "cleanup_descendant_tooltip",
+                        size=self._format_size(snapshot.size_bytes),
+                        backup=(
+                            self._t("cleanup_backup_verified")
+                            if snapshot.id in self._verified_backup_ids
+                            else self._t("cleanup_backup_missing")
+                        ),
+                    ),
+                )
+                child.setToolTip(1, self._activity_tooltip(snapshot))
+            child.setFlags(child.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            root_item.addChild(child)
+        root_item.setExpanded(True)
+
+    @staticmethod
+    def _format_size(size_bytes: int) -> str:
+        value = float(size_bytes)
+        for unit in ("B", "KiB", "MiB", "GiB"):
+            if value < 1024 or unit == "GiB":
+                rendered = f"{value:.1f}".rstrip("0").rstrip(".")
+                return f"{rendered} {unit}"
+            value /= 1024
+        return f"{size_bytes} B"
 
     def _select_task_in_list(self, thread_id: str, *, clear: bool = True) -> None:
         previous_guard = self._task_selection_guard
@@ -952,22 +1050,29 @@ class TrimReviewWindow(QMainWindow):
         by_id = {
             snapshot.id: snapshot for snapshot in (self._all_task_snapshots or self.task_snapshots)
         }
-        for thread_id in selected_ids:
-            root = by_id.get(thread_id)
-            if root is None:
+        return all(self._can_archive_root(thread_id, by_id) for thread_id in selected_ids)
+
+    @staticmethod
+    def _can_archive_root(
+        thread_id: str,
+        by_id: dict[str, ThreadSnapshot],
+    ) -> bool:
+        root = by_id.get(thread_id)
+        if root is None:
+            return False
+        closure_ids = (root.id, *root.spawned_descendant_ids)
+        for closure_id in closure_ids:
+            snapshot = by_id.get(closure_id)
+            if (
+                snapshot is None
+                or snapshot.archived
+                or snapshot.pinned
+                or snapshot.ephemeral
+                or snapshot.status not in SAFE_INACTIVE_STATUSES
+                or not snapshot.mapping_complete
+                or not snapshot.content_complete
+            ):
                 return False
-            closure_ids = (root.id, *root.spawned_descendant_ids)
-            for closure_id in closure_ids:
-                snapshot = by_id.get(closure_id)
-                if (
-                    snapshot is None
-                    or snapshot.archived
-                    or snapshot.pinned
-                    or snapshot.ephemeral
-                    or snapshot.status not in SAFE_INACTIVE_STATUSES
-                    or not snapshot.mapping_complete
-                ):
-                    return False
         return True
 
     def _update_task_action_state(self) -> None:
@@ -977,6 +1082,11 @@ class TrimReviewWindow(QMainWindow):
             self.ui.taskDeleteButton.setEnabled(False)
             return
         enabled = bool(self._selected_task_ids()) and not self._task_write_in_progress
+        if self.review_mode is ReviewMode.CONVERSATION_CLEANUP:
+            self.ui.taskBackupButton.setEnabled(enabled and self._can_archive_selected_tasks())
+            self.ui.taskArchiveButton.setEnabled(False)
+            self.ui.taskDeleteButton.setEnabled(False)
+            return
         self.ui.taskBackupButton.setEnabled(enabled)
         self.ui.taskArchiveButton.setEnabled(enabled and self._can_archive_selected_tasks())
         self.ui.taskDeleteButton.setEnabled(enabled)
@@ -1000,20 +1110,34 @@ class TrimReviewWindow(QMainWindow):
         rename_action = menu.addAction(self._t("rename"))
         copy_action = menu.addAction(self._t("copy_id"))
         menu.addSeparator()
-        backup_action = menu.addAction(self._t("backup_selected", count=selected_count))
+        backup_action = menu.addAction(
+            self._t(
+                "cleanup_backup_archive_selected"
+                if self.review_mode is ReviewMode.CONVERSATION_CLEANUP
+                else "backup_selected",
+                count=selected_count,
+            )
+        )
         archive_action = menu.addAction(self._t("archive_selected", count=selected_count))
         delete_action = menu.addAction(self._t("delete_selected", count=selected_count))
         rename_action.setVisible(self.review_mode is ReviewMode.CONTEXT_TRIM)
+        archive_action.setVisible(self.review_mode is ReviewMode.CONTEXT_TRIM)
         delete_action.setVisible(self.review_mode is ReviewMode.CONTEXT_TRIM)
         rename_action.setEnabled(not self._task_write_in_progress)
-        backup_action.setEnabled(not self._task_write_in_progress)
+        backup_action.setEnabled(
+            not self._task_write_in_progress
+            and (
+                self.review_mode is not ReviewMode.CONVERSATION_CLEANUP
+                or self._can_archive_selected_tasks()
+            )
+        )
         archive_action.setEnabled(
             not self._task_write_in_progress and self._can_archive_selected_tasks()
         )
         delete_action.setEnabled(not self._task_write_in_progress)
         rename_action.triggered.connect(lambda _checked=False: self._rename_task(thread_id))
         copy_action.triggered.connect(lambda _checked=False: self._copy_conversation_id(thread_id))
-        backup_action.triggered.connect(self._backup_selected_tasks)
+        backup_action.triggered.connect(self._task_backup_clicked)
         archive_action.triggered.connect(self._archive_selected_tasks)
         delete_action.triggered.connect(self._delete_selected_tasks)
         menu.exec(self.ui.taskListView.viewport().mapToGlobal(point))
@@ -1075,12 +1199,65 @@ class TrimReviewWindow(QMainWindow):
         self.load_task_list()
 
     @Slot()
+    def _task_backup_clicked(self) -> None:
+        if self.review_mode is ReviewMode.CONVERSATION_CLEANUP:
+            self._backup_and_archive_selected_tasks()
+        else:
+            self._backup_selected_tasks()
+
+    @Slot()
     def _backup_selected_tasks(self) -> None:
         selected_ids = self._selected_task_ids()
         if not selected_ids:
             self._show_error(self._t("select_task"))
             return
-        default_name = f"codex-tasks-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.csmbackup"
+        settings = self._request_backup_settings(selected_ids, combined_archive=False)
+        if settings is None:
+            return
+        destination, recipient, identity_path = settings
+        self._start_task_operation(
+            self._t("backup_busy"),
+            lambda: self._create_selected_backup(
+                selected_ids,
+                destination,
+                recipient,
+                identity_path,
+            ),
+            self._task_backup_succeeded,
+        )
+
+    @Slot()
+    def _backup_and_archive_selected_tasks(self) -> None:
+        selected_ids = self._selected_task_ids()
+        if not selected_ids:
+            self._show_error(self._t("select_task"))
+            return
+        if not self._can_archive_selected_tasks():
+            self._show_error(self._t("cleanup_selection_unsafe"))
+            return
+        settings = self._request_backup_settings(selected_ids, combined_archive=True)
+        if settings is None:
+            return
+        destination, recipient, identity_path = settings
+        self._start_task_operation(
+            self._t("cleanup_backup_archive_busy"),
+            lambda: self._create_backup_and_archive(
+                selected_ids,
+                destination,
+                recipient,
+                identity_path,
+            ),
+            self._task_backup_archive_succeeded,
+        )
+
+    def _request_backup_settings(
+        self,
+        selected_ids: tuple[str, ...],
+        *,
+        combined_archive: bool,
+    ) -> tuple[Path, str, Path] | None:
+        prefix = "cleanup-archive" if combined_archive else "codex-tasks"
+        default_name = f"{prefix}-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.csmbackup"
         selected_path, _filter = QFileDialog.getSaveFileName(
             self,
             self._t("backup_destination_title"),
@@ -1088,13 +1265,13 @@ class TrimReviewWindow(QMainWindow):
             "CodexSessionManager backup (*.csmbackup)",
         )
         if not selected_path:
-            return
+            return None
         destination = Path(selected_path)
         if destination.suffix != ".csmbackup":
             destination = destination.with_name(destination.name + ".csmbackup")
         if destination.exists():
             self._show_error(self._t("task_operation_failed", error=FileExistsError(destination)))
-            return
+            return None
         recipient, accepted = QInputDialog.getText(
             self,
             self._t("backup_recipient_title"),
@@ -1103,10 +1280,10 @@ class TrimReviewWindow(QMainWindow):
         )
         recipient = recipient.strip()
         if not accepted:
-            return
+            return None
         if not recipient:
             self._show_error(self._t("backup_recipient_empty"))
-            return
+            return None
         identity_path, _filter = QFileDialog.getOpenFileName(
             self,
             self._t("backup_identity_title"),
@@ -1114,12 +1291,16 @@ class TrimReviewWindow(QMainWindow):
             "age identity (*.txt);;All files (*)",
         )
         if not identity_path:
-            return
+            return None
         answer = QMessageBox.question(
             self,
-            self._t("backup_confirm_title"),
             self._t(
-                "backup_confirm",
+                "cleanup_backup_archive_confirm_title"
+                if combined_archive
+                else "backup_confirm_title"
+            ),
+            self._t(
+                "cleanup_backup_archive_confirm" if combined_archive else "backup_confirm",
                 selected=len(selected_ids),
                 filename=destination.name,
             ),
@@ -1127,17 +1308,8 @@ class TrimReviewWindow(QMainWindow):
             QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
-            return
-        self._start_task_operation(
-            self._t("backup_busy"),
-            lambda: self._create_selected_backup(
-                selected_ids,
-                destination,
-                recipient,
-                Path(identity_path),
-            ),
-            self._task_backup_succeeded,
-        )
+            return None
+        return destination, recipient, Path(identity_path)
 
     def _create_selected_backup(
         self,
@@ -1153,6 +1325,22 @@ class TrimReviewWindow(QMainWindow):
             verification_decryption=DecryptionSpec(identity_file=identity_path),
             include_raw=True,
             expand_descendants=True,
+        )
+
+    def _create_backup_and_archive(
+        self,
+        selected_ids: tuple[str, ...],
+        destination: Path,
+        recipient: str,
+        identity_path: Path,
+    ) -> BackupArchiveResult:
+        return self.workflows.backup_and_archive(
+            destination,
+            selected_ids=selected_ids,
+            encryption=EncryptionSpec(mode="age-recipient", recipient=recipient),
+            verification_decryption=DecryptionSpec(identity_file=identity_path),
+            review_request=self.review_request,
+            include_raw=True,
         )
 
     def _task_backup_succeeded(self, value: object) -> None:
@@ -1175,6 +1363,23 @@ class TrimReviewWindow(QMainWindow):
                 manifest_sha256=value.manifest.manifest_sha256,
             ).split("\n", maxsplit=1)[0]
         )
+
+    def _task_backup_archive_succeeded(self, value: object) -> None:
+        if not isinstance(value, BackupArchiveResult):
+            self._show_error(self._t("cleanup_backup_archive_invalid"))
+            return
+        QMessageBox.information(
+            self,
+            self._t("cleanup_backup_archive_done_title"),
+            self._t(
+                "cleanup_backup_archive_done",
+                covered=len(value.backup.covered_thread_ids),
+                roots=len(value.action.completed_ids),
+                manifest_sha256=value.backup.manifest.manifest_sha256,
+                plan_id=value.action.plan.plan_id,
+            ),
+        )
+        self.load_task_list()
 
     @Slot()
     def _archive_selected_tasks(self) -> None:

@@ -25,12 +25,11 @@ description: 安全管理 Codex App 中的任务，包括按项目与时间盘�
 
 1. 用项目 cwd、Git remote、时间、状态、来源、归档、固定和父子关系筛选。
 2. 需要桌面审查时先运行 `csm cleanup review --older-than-days 90`。该命令只生成密封的 `SuggestionBundle`/`ReviewRequest`，并把 LLM/本地初筛候选按项目灌入原有项目/任务 GUI；它不创建 ActionPlan，也不执行归档。
-3. GUI 会预选建议归档的根对话。用户必须在原任务列表中取消或调整选择；随后使用“备份并复验”和“归档”入口时，本地程序会重新读取 App Server 状态、复核建议指纹、目标状态和后代闭包，并只为最终选择生成不可变 ActionPlan。
-4. 当前版本尚未提供单按钮“备份并归档”向导；备份和归档仍是两个独立、各自确认的步骤，CLI 计划式流程继续可用。
-5. 需要独立生成计划时运行 `csm cleanup plan`，展示根任务、全部 spawned descendants、理由、风险、fingerprint、计划路径和 SHA-256。
-6. 在归档前创建并验证覆盖全部 affected IDs 的加密备份。
-7. Codex App 原生任务工具可用时，优先逐个归档计划中的根任务，然后运行 `csm cleanup reconcile PLAN --confirm PLAN_ID`；否则运行 `csm cleanup apply PLAN --confirm PLAN_ID`。
-8. 不自动永久删除。只有用户明确要求时才生成 `csm purge plan`；展示 14 天 CSM 可信归档门、备份证据和进程门。让用户本人提供精确 plan ID 和固定永久删除确认短语。
+3. GUI 会预选建议归档的根对话，并在每个根下展示全部已知派生后代、总大小、风险、建议理由和当前备份覆盖。用户必须在原任务列表中取消或调整最终选择。
+4. 用户点击“备份并归档”后，在本地选择 age recipient、复验 identity 和输出路径。程序先冻结影响范围、创建加密备份并完整解密验证；成功后重新读取 App Server 状态、复核建议指纹与后代闭包、生成新的最终 ActionPlan，再由 CleanupExecutor 执行归档。任一步失败都停止后续归档。
+5. 备份 manifest、最终计划和归档结果通过关联审计事件绑定。已经完成备份但随后发生内容或状态漂移时，备份保留，归档拒绝执行。
+6. 需要独立生成或手工分步执行时仍可运行 `csm cleanup plan`、`csm backup create/verify` 和 `csm cleanup apply`；这些 CLI 路径使用相同门禁。
+7. 不自动永久删除。只有用户明确要求时才生成 `csm purge plan`；展示 14 天 CSM 可信归档门、备份证据和进程门。让用户本人提供精确 plan ID 和固定永久删除确认短语。
 
 默认 90 天未活动进入候选；单批最多 100 个根任务。自动操作的上限永远是归档。
 

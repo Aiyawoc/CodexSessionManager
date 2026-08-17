@@ -17,7 +17,7 @@ from codex_session_manager.review_requests import (
     SuggestionTarget,
     codex_account_fingerprint,
 )
-from codex_session_manager.workflows import ThreadReadResult
+from codex_session_manager.workflows import CleanupCandidateInventory, ThreadReadResult
 
 
 def test_memory_management_uses_second_button_in_original_gui(qtbot, app_paths) -> None:
@@ -47,12 +47,14 @@ def test_memory_management_uses_second_button_in_original_gui(qtbot, app_paths) 
 
 
 def test_cleanup_request_is_injected_into_original_project_list(
-    qtbot, app_paths, snapshot_factory
+    qtbot, app_paths, capabilities, snapshot_factory
 ) -> None:
     root = snapshot_factory("cleanup-root").model_copy(
-        update={"spawned_descendant_ids": ("cleanup-child",)}
+        update={"spawned_descendant_ids": ("cleanup-child",), "size_bytes": 2048}
     )
-    child = snapshot_factory("cleanup-child", parent_id="cleanup-root")
+    child = snapshot_factory("cleanup-child", parent_id="cleanup-root").model_copy(
+        update={"size_bytes": 1024}
+    )
     bundle = SuggestionBundle.create(
         operation=ReviewOperation.CONVERSATION_CLEANUP,
         source=ReviewSource.MCP,
@@ -79,19 +81,33 @@ def test_cleanup_request_is_injected_into_original_project_list(
     window.load_task_list = lambda: None  # type: ignore[method-assign]
 
     window.load_review_request(request)
-    window._task_list_loaded(window._task_generation, (root, child))
+    window._task_list_loaded(
+        window._task_generation,
+        CleanupCandidateInventory(
+            capabilities,
+            (root, child),
+            frozenset({root.id}),
+        ),
+    )
 
     assert window.review_mode is ReviewMode.CONVERSATION_CLEANUP
     assert window.property("csmReviewRequestId") == request.request_id
     assert window._selected_task_ids() == (root.id,)
-    assert not window.ui.taskArchiveButton.isHidden()
-    assert window.ui.taskArchiveButton.isEnabled()
+    assert window.ui.taskArchiveButton.isHidden()
+    assert window.ui.taskBackupButton.text() == "备份并归档…"
+    assert window.ui.taskBackupButton.isEnabled()
     assert window.ui.taskDeleteButton.isHidden()
     group = window.ui.taskListView.topLevelItem(0)
     assert group is not None
     item = group.child(0)
     assert item.data(0, Qt.ItemDataRole.UserRole) == root.id
     assert "LLM 初筛" in item.toolTip(0)
+    assert "当前有效备份：1/2" in item.toolTip(0)
+    assert item.childCount() == 1
+    descendant = item.child(0)
+    assert descendant.text(0) == "↳ cleanup-child"
+    assert not bool(descendant.flags() & Qt.ItemFlag.ItemIsSelectable)
+    assert "缺少当前指纹的有效备份" in descendant.toolTip(0)
 
 
 def test_cleanup_mode_rebuilds_final_plan_through_sealed_review_request(

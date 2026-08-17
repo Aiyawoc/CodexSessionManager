@@ -12,7 +12,18 @@ import pytest
 from codex_session_manager.audit import AuditStore
 from codex_session_manager.backup import DecryptionSpec, EncryptionSpec
 from codex_session_manager.cleanup import CleanupPolicy
+from codex_session_manager.inventory import InventoryService
 from codex_session_manager.models import PlanAction
+from codex_session_manager.review_requests import (
+    ReviewOperation,
+    ReviewRequest,
+    ReviewSource,
+    SuggestedAction,
+    SuggestionBundle,
+    SuggestionBundleStore,
+    SuggestionTarget,
+    codex_account_fingerprint,
+)
 from codex_session_manager.sensitive import SensitiveScanResult
 from codex_session_manager.workflows import ApplicationWorkflows
 
@@ -86,6 +97,57 @@ class _WorkflowClient:
 
     def close(self) -> None:
         self.closed = True
+
+
+class _ArchivingWorkflowClient(_WorkflowClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.archived_ids: set[str] = set()
+        self.archive_calls: list[str] = []
+
+    def list_threads(self, *, archived: bool = False):
+        values = (
+            {
+                "id": "root",
+                "name": "Root",
+                "updatedAt": "2025-01-01T00:00:00Z",
+                "status": {"type": "idle"},
+            },
+            {
+                "id": "child",
+                "name": "Child",
+                "parentThreadId": "root",
+                "updatedAt": "2025-01-02T00:00:00Z",
+                "status": {"type": "idle"},
+            },
+        )
+        return iter(
+            value for value in values if (str(value["id"]) in self.archived_ids) is archived
+        )
+
+    def archive_thread(self, thread_id: str) -> None:
+        self.archive_calls.append(thread_id)
+        if thread_id == "root":
+            self.archived_ids.update(("root", "child"))
+        else:
+            self.archived_ids.add(thread_id)
+
+    def loaded_thread_ids(self) -> tuple[str, ...]:
+        return ()
+
+
+class _DriftingWorkflowClient(_ArchivingWorkflowClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.root_reads = 0
+
+    def read_thread(self, thread_id: str, *, include_turns: bool = False):
+        value = super().read_thread(thread_id, include_turns=include_turns)
+        if thread_id == "root":
+            self.root_reads += 1
+            if self.root_reads >= 4:
+                value["name"] = "Root changed after backup"
+        return value
 
 
 def test_selected_archive_workflow_hydrates_only_target_closure(app_paths, capabilities) -> None:
@@ -173,6 +235,135 @@ def test_backup_workflow_expands_closure_verifies_and_records_audit(
         audit.verify_chain()
         for thread_id, source_fingerprint in result.manifest.source_fingerprints.items():
             assert audit.verified_backup(thread_id, source_fingerprint) is not None
+
+
+def test_backup_and_archive_rebuilds_review_plan_and_links_audit(
+    tmp_path, app_paths, capabilities
+) -> None:
+    client = _ArchivingWorkflowClient()
+
+    def connect(**_kwargs):
+        return client, capabilities
+
+    current = InventoryService(client).list_for_targets(("root",))
+    root = next(snapshot for snapshot in current if snapshot.id == "root")
+    bundle = SuggestionBundle.create(
+        operation=ReviewOperation.CONVERSATION_CLEANUP,
+        source=ReviewSource.MCP,
+        targets=(
+            SuggestionTarget(
+                target_id=root.id,
+                source_fingerprint=root.management_fingerprint,
+                suggested_action=SuggestedAction.ARCHIVE,
+                reason="LLM 初筛后由用户最终保留",
+                confidence=0.91,
+            ),
+        ),
+    )
+    bundle_path = SuggestionBundleStore(app_paths).save(bundle)
+    request = ReviewRequest.create(
+        operation=ReviewOperation.CONVERSATION_CLEANUP,
+        source=ReviewSource.MCP,
+        account_root_fingerprint=codex_account_fingerprint(app_paths),
+        target_ids=(root.id,),
+        suggestion_bundle_path=bundle_path,
+    )
+    client.reads.clear()
+    destination = tmp_path / "cleanup-archive.csmbackup"
+    workflows = ApplicationWorkflows(
+        paths=app_paths,
+        connection_factory=connect,  # type: ignore[arg-type]
+        backup_backend_factory=_PlainCipher,
+    )
+
+    result = workflows.backup_and_archive(
+        destination,
+        selected_ids=(root.id,),
+        encryption=EncryptionSpec(mode="age-recipient", recipient="age1test"),
+        verification_decryption=DecryptionSpec(),
+        review_request=request,
+        include_raw=False,
+    )
+
+    assert destination.is_file()
+    assert result.backup.covered_thread_ids == ("child", "root")
+    assert result.action.completed_ids == ("root",)
+    assert client.archive_calls == ["root"]
+    assert client.archived_ids == {"root", "child"}
+    inspected = workflows.inspect_cleanup_candidates(("root",))
+    assert inspected.verified_backup_ids == frozenset({"root", "child"})
+    with AuditStore(app_paths) as audit:
+        audit.verify_chain()
+        linked = [
+            event
+            for event in audit.iter_events(limit=100)
+            if event.event_type == "cleanup.backup-and-archive"
+        ]
+    assert len(linked) == 1
+    assert linked[0].result == "succeeded"
+    assert linked[0].plan_sha256 == result.action.plan.plan_sha256
+    assert linked[0].details["manifest_sha256"] == result.backup.manifest.manifest_sha256
+
+
+def test_backup_and_archive_stops_when_review_fingerprint_drifts_after_backup(
+    tmp_path, app_paths, capabilities
+) -> None:
+    client = _DriftingWorkflowClient()
+
+    def connect(**_kwargs):
+        return client, capabilities
+
+    current = InventoryService(client).list_for_targets(("root",))
+    root = next(snapshot for snapshot in current if snapshot.id == "root")
+    bundle = SuggestionBundle.create(
+        operation=ReviewOperation.CONVERSATION_CLEANUP,
+        source=ReviewSource.MCP,
+        targets=(
+            SuggestionTarget(
+                target_id=root.id,
+                source_fingerprint=root.management_fingerprint,
+                suggested_action=SuggestedAction.ARCHIVE,
+                reason="LLM 初筛",
+                confidence=0.9,
+            ),
+        ),
+    )
+    bundle_path = SuggestionBundleStore(app_paths).save(bundle)
+    request = ReviewRequest.create(
+        operation=ReviewOperation.CONVERSATION_CLEANUP,
+        source=ReviewSource.MCP,
+        account_root_fingerprint=codex_account_fingerprint(app_paths),
+        target_ids=(root.id,),
+        suggestion_bundle_path=bundle_path,
+    )
+    destination = tmp_path / "drifted-cleanup.csmbackup"
+    workflows = ApplicationWorkflows(
+        paths=app_paths,
+        connection_factory=connect,  # type: ignore[arg-type]
+        backup_backend_factory=_PlainCipher,
+    )
+
+    with pytest.raises(ValueError, match="stale"):
+        workflows.backup_and_archive(
+            destination,
+            selected_ids=(root.id,),
+            encryption=EncryptionSpec(mode="age-recipient", recipient="age1test"),
+            verification_decryption=DecryptionSpec(),
+            review_request=request,
+            include_raw=False,
+        )
+
+    assert destination.is_file()
+    assert client.archive_calls == []
+    with AuditStore(app_paths) as audit:
+        audit.verify_chain()
+        linked = [
+            event
+            for event in audit.iter_events(limit=100)
+            if event.event_type == "cleanup.backup-and-archive"
+        ]
+    assert len(linked) == 1
+    assert linked[0].result == "failed"
 
 
 def test_sensitive_scan_pipelines_local_scanning_across_worker_threads(

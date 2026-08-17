@@ -23,6 +23,7 @@ from codex_session_manager.backup import (
     EncryptionSpec,
 )
 from codex_session_manager.cleanup import CleanupExecutor, CleanupPlanner, CleanupPolicy
+from codex_session_manager.cleanup_review import build_cleanup_action_plan
 from codex_session_manager.config import AppPaths, get_paths
 from codex_session_manager.inventory import (
     InventoryFilter,
@@ -38,6 +39,11 @@ from codex_session_manager.models import (
     TrimPlan,
 )
 from codex_session_manager.plans import PlanModel, PlanStore
+from codex_session_manager.review_requests import (
+    ReviewRequest,
+    SuggestionBundleStore,
+    codex_account_fingerprint,
+)
 from codex_session_manager.sensitive import (
     SensitiveScanCancelled,
     SensitiveScanResult,
@@ -84,6 +90,19 @@ class ActionExecutionResult:
 class BackupCreationResult:
     manifest: BackupManifest
     covered_thread_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupCandidateInventory:
+    capabilities: CapabilityMatrix
+    snapshots: tuple[ThreadSnapshot, ...]
+    verified_backup_ids: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
+class BackupArchiveResult:
+    backup: BackupCreationResult
+    action: ActionExecutionResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,6 +226,30 @@ class ApplicationWorkflows:
                 include_turns=False,
             )
             return InventoryResult(capabilities, snapshots)
+
+    def inspect_cleanup_candidates(
+        self,
+        root_ids: tuple[str, ...],
+    ) -> CleanupCandidateInventory:
+        """Deep-read selected cleanup roots and report current backup evidence."""
+
+        with self.session() as session:
+            _client, capabilities, inventory = session.services()
+            snapshots = inventory.list_for_targets(root_ids)
+            session.audit.verify_chain()
+            verified: set[str] = set()
+            for snapshot in snapshots:
+                evidence = session.audit.verified_backup(
+                    snapshot.id,
+                    snapshot.backup_fingerprint,
+                )
+                if evidence is not None and evidence.is_current():
+                    verified.add(snapshot.id)
+            return CleanupCandidateInventory(
+                capabilities,
+                snapshots,
+                frozenset(verified),
+            )
 
     def save_plan(self, plan: PlanModel) -> Path:
         """Persist an already-validated immutable plan through the shared Seam."""
@@ -362,6 +405,132 @@ class ApplicationWorkflows:
                 include_raw=include_raw,
             )
             return BackupCreationResult(manifest, covered_ids)
+
+    def backup_and_archive(
+        self,
+        destination: Path,
+        *,
+        selected_ids: tuple[str, ...],
+        encryption: EncryptionSpec,
+        verification_decryption: DecryptionSpec,
+        review_request: ReviewRequest | None = None,
+        include_raw: bool = True,
+    ) -> BackupArchiveResult:
+        """Create a verified backup, rebuild the final plan, and archive it.
+
+        The provisional plan is used only to freeze the backup scope.  After
+        verification, current App Server state is read again and a new final
+        plan is built.  CleanupExecutor then performs its own capability,
+        fingerprint, descendant-closure, loaded-process, and backup gates.
+        """
+
+        if not selected_ids:
+            raise ValueError("at least one cleanup root must be selected")
+        if len(selected_ids) != len(set(selected_ids)):
+            raise ValueError("selected cleanup roots must be unique")
+
+        bundle = None
+        if review_request is not None:
+            review_request.verify()
+            if review_request.account_root_fingerprint != codex_account_fingerprint(self.paths):
+                raise ValueError("cleanup review request is bound to another Codex account root")
+            if review_request.suggestion_bundle_path:
+                bundle = SuggestionBundleStore(self.paths).load(
+                    Path(review_request.suggestion_bundle_path)
+                )
+
+        def build_plan(
+            snapshots: tuple[ThreadSnapshot, ...],
+            capabilities: CapabilityMatrix,
+        ) -> ActionPlan:
+            if review_request is not None and bundle is not None:
+                return build_cleanup_action_plan(
+                    request=review_request,
+                    bundle=bundle,
+                    selected_ids=selected_ids,
+                    snapshots=snapshots,
+                    capabilities=capabilities,
+                )
+            return CleanupPlanner().plan_selected_archive(
+                snapshots,
+                capabilities,
+                selected_ids,
+            )
+
+        with self.session() as session:
+            client, capabilities, inventory = session.services()
+            indexed = inventory.list_for_targets(selected_ids)
+            provisional = build_plan(indexed, capabilities)
+            affected_ids = tuple(
+                sorted(
+                    thread_id
+                    for target in provisional.targets
+                    for thread_id in target.affected_thread_ids
+                )
+            )
+            by_id = {snapshot.id: snapshot for snapshot in indexed}
+            snapshots = tuple(by_id[thread_id] for thread_id in affected_ids)
+            manifest = BackupService(
+                client=client,
+                paths=self.paths,
+                backend=self.backup_backend_factory(),
+                audit=session.audit,
+            ).create(
+                destination,
+                snapshots=snapshots,
+                encryption=encryption,
+                verification_decryption=verification_decryption,
+                include_raw=include_raw,
+            )
+            backup = BackupCreationResult(manifest, affected_ids)
+            final_plan: ActionPlan | None = None
+            try:
+                refreshed = inventory.list_for_targets(selected_ids)
+                final_plan = build_plan(refreshed, capabilities)
+                final_affected = {
+                    thread_id
+                    for target in final_plan.targets
+                    for thread_id in target.affected_thread_ids
+                }
+                if final_affected != set(affected_ids):
+                    raise ValueError("cleanup descendant closure changed after backup verification")
+                session.plans.save(final_plan)
+                completed = CleanupExecutor(
+                    client=client,
+                    inventory=inventory,
+                    capabilities=capabilities,
+                    audit=session.audit,
+                ).apply(final_plan, confirmation=final_plan.plan_id)
+            except BaseException as exc:
+                session.audit.append(
+                    event_type="cleanup.backup-and-archive",
+                    actor="human",
+                    result="failed",
+                    plan_sha256=(
+                        final_plan.plan_sha256
+                        if final_plan is not None
+                        else provisional.plan_sha256
+                    ),
+                    target_ids=affected_ids,
+                    details={
+                        "manifest_sha256": manifest.manifest_sha256,
+                        "error": str(exc),
+                    },
+                )
+                raise
+            action = ActionExecutionResult(final_plan, completed)
+            session.audit.append(
+                event_type="cleanup.backup-and-archive",
+                actor="human",
+                result="succeeded",
+                plan_sha256=final_plan.plan_sha256,
+                target_ids=affected_ids,
+                details={
+                    "manifest_sha256": manifest.manifest_sha256,
+                    "root_count": len(final_plan.targets),
+                },
+            )
+            return BackupArchiveResult(backup, action)
 
     def apply_trim(self, plan: TrimPlan) -> str:
         with self.session() as session:

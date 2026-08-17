@@ -93,7 +93,7 @@ Backup verification and a complete `doctor` check also require an `age` executab
 1. Search for a project/conversation, or enter a complete conversation ID.
 2. Select a turn or item, then choose **Keep**, **Exclude**, **Summary**, or **Protect**.
 3. Use **Save plan** to store the reviewed plan without changing Codex, or **Create trimmed task** to create a new derived conversation.
-4. Before archiving, multi-select tasks and use **Backup & verify**; archive remains a separate planned and confirmed operation.
+4. In Cleanup mode, adjust the final candidates and use **Backup & archive**. The app fully verifies the age backup before rebuilding the final plan and archiving. Ordinary task management still supports separate backup and archive operations.
 
 ### Build and release status
 
@@ -178,7 +178,7 @@ Launching CodexSessionManager opens the existing Projects & Tasks, Timeline, Con
 4. **Trim actions** apply `keep`, `exclude`, `summary`, or `protect`. Hard-protected requests, active turns, goals, unresolved errors, and unknown items cannot be silently removed.
 5. **External suggestion injection** only accepts locally rebound conversation, turn, or item IDs with current fingerprints; hard protection and `validate_selections` retain final veto power.
 6. **Memory Management** uses the second left-rail button and the same window shell. It is currently a read-only source review and will later reuse segmented actions, diff, and final confirmation.
-7. **Backup & verify** deep-reads only selected roots and their derived descendants, encrypts with an age recipient, and immediately verifies the complete archive without implicitly archiving anything.
+7. **Backup & archive** in Cleanup mode freezes the root/descendant scope, creates and fully verifies the age backup, then re-reads state and suggestion fingerprints, rebuilds the final plan, and archives it. Drift or verification failure stops the archive step. The ordinary **Backup & verify** action still never archives implicitly.
 
 Saving a plan only persists the reviewed `TrimPlan`; it does not write to Codex. Creating a trimmed task first revalidates the plan, waits for the source to be `idle` or `notLoaded`, and then creates a new derived task.
 

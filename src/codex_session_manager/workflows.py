@@ -243,9 +243,7 @@ class ApplicationWorkflows:
                 include_turns=False,
             )
             planner = CleanupPlanner()
-            requested_hydration_ids = (
-                target_closure_ids(summaries, root_ids) if root_ids else ()
-            )
+            requested_hydration_ids = target_closure_ids(summaries, root_ids) if root_ids else ()
             supplemental_hydration_ids = planner.manual_archive_hydration_ids(summaries)
             purge_hydration_ids = planner.purge_hydration_ids(summaries)
             hydration_ids = tuple(

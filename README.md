@@ -384,3 +384,14 @@ The current project code was generated entirely by ChatGPT, but generated code i
 CodexSessionManager is released under the [MIT License](LICENSE). Bundled dependencies and tools retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ⭐ If this project is useful to you, consider giving it a Star. Continued maintenance and iteration are planned.
+
+## 🗺️ Planned: memory file management
+
+The next planned capability is guarded management of memory files used to preserve durable project or agent context. The initial roadmap is intentionally safety-first and should reuse CSM's existing review, planning, backup, and audit model.
+
+- [ ] Define supported memory-file locations, formats, ownership rules, and project/account boundaries.
+- [ ] Add read-only discovery, indexing, search, preview, metadata, and sensitive-data review for memory files.
+- [ ] Add reviewed change plans with before/after diff, validation, explicit confirmation, and protection against out-of-scope writes.
+- [ ] Add backup, version history, restore, and rollback so memory edits remain recoverable and auditable.
+- [ ] Expose memory management through consistent GUI, CLI, and Skill workflows, with clear links between memories, projects, and conversations.
+- [ ] Add focused tests and documentation for permission boundaries, concurrent changes, malformed files, recovery, and cross-platform behavior.

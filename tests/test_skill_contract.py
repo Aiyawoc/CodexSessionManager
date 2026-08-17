@@ -43,6 +43,7 @@ EXPECTED_COMMAND_PATHS = {
     ("audit", "show"),
     ("schema", "audit"),
     ("acceptance", "report"),
+    ("acceptance", "run"),
     ("gui", "open"),
 }
 

@@ -75,6 +75,7 @@ audit_app = typer.Typer(help="查看和验证 CSM 自有审计链。")
 schema_app = typer.Typer(help="只读审计本地 Codex App Server schema。")
 acceptance_app = typer.Typer(help="记录脱敏、分阶段的人工验收证据。")
 gui_app = typer.Typer(help="打开统一桌面审查工作台或指定页面。")
+mcp_app = typer.Typer(help="运行只读 MCP 编排服务。")
 
 app.add_typer(threads_app, name="threads")
 app.add_typer(cleanup_app, name="cleanup")
@@ -90,6 +91,30 @@ app.add_typer(audit_app, name="audit")
 app.add_typer(schema_app, name="schema")
 app.add_typer(acceptance_app, name="acceptance")
 app.add_typer(gui_app, name="gui")
+app.add_typer(mcp_app, name="mcp")
+
+
+@mcp_app.command("serve")
+def mcp_serve(
+    host: Annotated[str, typer.Option("--host")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port")] = 8765,
+) -> None:
+    """启动只读 MCP HTTP 服务。"""
+
+    from codex_session_manager.mcp_server import McpHttpConfig, serve_mcp_http
+
+    serve_mcp_http(config=McpHttpConfig(host=host, port=port))
+
+
+@acceptance_app.command("run")
+def acceptance_run(
+    output: Annotated[Path, typer.Option("--output")],
+) -> None:
+    """运行非破坏性的自动验收检查。"""
+
+    from codex_session_manager.acceptance_runner import run_automated_acceptance
+
+    _emit(run_automated_acceptance(output))
 
 
 def _jsonable(value: Any) -> Any:

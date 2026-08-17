@@ -22,6 +22,8 @@ Hook 中禁止使用 `uv`、`.venv`、网络下载或依赖安装。
 csm threads list --project /absolute/project/path
 csm threads show TASK_ID
 csm cleanup review --older-than-days 90
+csm acceptance run --output acceptance-report.json
+csm mcp serve --host 127.0.0.1 --port 8765
 csm cleanup review --request REVIEW_REQUEST.json
 csm cleanup plan --action archive --older-than-days 90
 csm backup create OUT.csmbackup --thread TASK_ID --recipient AGE_RECIPIENT --identity IDENTITY_FILE

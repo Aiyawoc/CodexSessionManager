@@ -239,6 +239,33 @@ $manage-codex-sessions open context trimming for this conversation
 
 The Skill does not run automatically during ordinary coding work. It resolves the stable `csm` launcher or bundled executable and follows the same plan and safety gates as the GUI and CLI.
 
+### MCP Streamable HTTP service
+
+CSM includes an MCP HTTP service that is intentionally limited to orchestration. It can inspect bounded candidate metadata, prepare structured suggestions, open the local human-review GUI, and query review status. It does not expose archive, purge, trim-application, or memory-write executors.
+
+Before placing the service behind a public tunnel, keep a long random Bearer token in the local environment. Do not put the token in command arguments, the repository, or model context:
+
+```bash
+export CSM_MCP_BEARER_TOKEN='a-long-random-value-generated-locally'
+csm mcp serve --host 127.0.0.1 --port 8765 --path /mcp
+```
+
+The health endpoint is `/healthz` and the MCP endpoint is `/mcp`. A Cloudflare Tunnel should forward the HTTPS hostname to this loopback listener and may add a separate access policy. `--allow-unauthenticated-local` is only for explicit loopback testing and must not be used behind a public tunnel.
+
+Registered tools:
+
+```text
+inspect_conversation_inventory
+prepare_cleanup_suggestions
+open_cleanup_review
+prepare_context_suggestions
+open_context_review
+get_pending_review_status
+open_review_demo
+```
+
+Every suggestion and review request still requires final confirmation in the original GUI. Real ChatGPT connector, tunnel authentication, and installed-app end-to-end testing remain separate acceptance steps.
+
 ### Optional Hooks
 
 ```bash

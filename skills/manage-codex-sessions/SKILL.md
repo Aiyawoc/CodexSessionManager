@@ -62,6 +62,15 @@ PreCompact Hook 只保存计划。在 GUI 关闭、崩溃、启动失败或超�
 - 当前模式只读，不读取或改写未登记路径，也不管理 ChatGPT 服务器端 Memory。
 - 后续启用分段和写入时，仍必须由本地复核路径、指纹、diff、备份和原子写入；LLM 只能提供 `KEEP/DELETE/REPLACE/PROTECT` 建议。
 
+## MCP 编排边界
+
+- `csm mcp serve` 只注册盘点、建议准备、打开审查、状态查询和只读演示工具。
+- 允许调用：`inspect_conversation_inventory`、`prepare_cleanup_suggestions`、`open_cleanup_review`、`prepare_context_suggestions`、`open_context_review`、`get_pending_review_status`、`open_review_demo`。
+- MCP 不提供 `delete_*`、`purge_*`、归档执行、`execute_trim`、`apply_memory_edit` 或任何绕过 GUI 最终确认的工具。
+- `prepare_*` 只把 LLM 给出的目标 ID 和理由绑定到本地当前指纹并保存不可变建议；不得把工具返回解释为已执行写入。
+- 公网 Tunnel 前使用独立认证策略；静态 Bearer token 只从本地环境变量读取，不放入命令、日志、Issue 或模型上下文。
+- `--allow-unauthenticated-local` 只允许显式回环 IP 的本机测试，不得用于 Cloudflare Tunnel 或其他公网入口。
+
 ## Hook 与安装
 
 - 只有用户明确要求启用时才运行 `csm hook install --yes`。

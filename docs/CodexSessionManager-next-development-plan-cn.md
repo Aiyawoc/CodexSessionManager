@@ -261,7 +261,8 @@ bundle_sha256
 ### 工作项
 
 - [x] 新增只读编排函数 `open_review_demo`；
-- [ ] 将 `open_review_demo` 注册为对外 MCP 工具；
+- [x] 将 `open_review_demo` 注册为对外 MCP 工具；
+- [x] 注册 `inspect_conversation_inventory`、`prepare_cleanup_suggestions`、`open_cleanup_review`、`prepare_context_suggestions`、`open_context_review` 和 `get_pending_review_status`；
 - [x] 生成临时 `ReviewRequest`；
 - [x] 增加桌面入口 `CodexSessionManager --request REQUEST.json`；
 - [x] 根据 operation 打开指定页面或只读占位模式；
@@ -271,7 +272,7 @@ bundle_sha256
 
 ### 验收标准
 
-- [ ] ChatGPT 发出命令后，本机能打开指定模式窗口；
+- [ ] 真实 ChatGPT 连接器发出命令后，本机能通过公网认证链路打开指定模式窗口；
 - [x] 演示链路不执行任何 Codex 或受管文件写入；
 - [x] 过期、伪造或账号根不匹配请求被拒绝；
 - [x] 同一请求不会创建重复窗口。
@@ -465,6 +466,16 @@ csm memory restore apply ...
 - [x] 对话归档流程复用“备份并归档”简化向导。
 
 ## 阶段 6：MCP/App 集成、测试和发布
+
+### 当前实现
+
+- [x] 新增独立、无额外运行依赖的 MCP Streamable HTTP 服务；
+- [x] 支持 `initialize`、`ping`、`tools/list`、`tools/call` 和通知语义；
+- [x] 默认要求 Bearer token；无认证模式只能显式绑定回环 IP；
+- [x] 限制请求大小并校验精确 Origin，工具参数和认证信息不进入访问日志；
+- [x] 只注册盘点、建议准备、打开审查、状态查询和演示工具；
+- [x] 不注册归档、永久删除、上下文应用或记忆写入执行器；
+- [ ] 完成真实 ChatGPT 连接器、Cloudflare Tunnel、OAuth/访问策略和安装包联调；
 
 ### MCP 工具边界
 

@@ -239,6 +239,33 @@ $manage-codex-sessions 打开当前对话的上下文裁剪
 
 Skill 不会在普通编码任务中自动运行。它会解析稳定的 `csm` 启动器或 App 内可执行文件，并与 GUI、CLI 共用同一套计划和安全门禁。
 
+### MCP Streamable HTTP 服务
+
+CSM 内置一个只读编排边界的 MCP HTTP 服务。它只提供候选盘点、结构化建议准备、打开本地审查 GUI 和查询请求状态；不会暴露归档、永久删除、上下文应用或记忆写入执行工具。
+
+公网 Tunnel 前应设置本地环境变量中的 Bearer token，不要把 token 写入命令行、配置仓库或模型上下文：
+
+```bash
+export CSM_MCP_BEARER_TOKEN='在本地安全生成的长随机值'
+csm mcp serve --host 127.0.0.1 --port 8765 --path /mcp
+```
+
+健康检查位于 `/healthz`，MCP 端点为 `/mcp`。Cloudflare Tunnel 应把 HTTPS 域名转发到该回环地址，并保留或增加独立访问策略。`--allow-unauthenticated-local` 只用于显式回环地址上的本机测试，不能用于公网 Tunnel。
+
+当前注册工具：
+
+```text
+inspect_conversation_inventory
+prepare_cleanup_suggestions
+open_cleanup_review
+prepare_context_suggestions
+open_context_review
+get_pending_review_status
+open_review_demo
+```
+
+这些工具生成的建议和请求仍需由原 GUI 中的用户最终确认。真实 ChatGPT 连接器、Tunnel 认证和已安装应用端到端联调属于独立验收项。
+
 ### 可选 Hook
 
 ```bash

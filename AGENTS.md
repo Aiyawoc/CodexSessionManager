@@ -43,6 +43,7 @@
 - 盘点、清理、备份、导入和裁剪：`inventory.py`、`cleanup.py`、`backup.py`、`importing.py`、`trim.py`。
 - CLI/GUI/Hook 共用编排边界：`workflows.py`；脱敏人工验收证据：`acceptance.py`。
 - Hook 和 standalone 分发入口：`hooks.py`、`dispatcher.py`、`config.py`。
+- 审查请求与 MCP 只读编排边界：`review_requests.py`、`mcp_bridge.py`、`mcp_server.py`；MCP 不暴露归档、永久删除、裁剪应用或记忆写入执行器。
 - PySide6 GUI：`src/codex_session_manager/gui/`；测试：`tests/`；构建、安装和验收：`scripts/`。
 
 保持模块边界：App Server 客户端只负责协议和能力探测；领域服务不依赖 Qt；GUI、CLI、Skill 和 Hook 共用模型、计划、指纹和安全校验；任何入口都不得绕过计划层直接写入 Codex 数据。

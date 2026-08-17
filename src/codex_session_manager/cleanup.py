@@ -100,6 +100,36 @@ class CleanupPlanner:
         effective_now = (now or utc_now()).astimezone(UTC)
         cutoff = effective_now - self.policy.stale_after
         all_snapshots = {snapshot.id: snapshot for snapshot in snapshots}
+        roots = self.archive_candidates(
+            snapshots,
+            now=effective_now,
+            criteria=criteria,
+        )
+        targets = tuple(self._target(root, all_snapshots, cutoff) for root in roots)
+        return ActionPlan.create(
+            action=PlanAction.ARCHIVE,
+            capability_fingerprint=capabilities.fingerprint,
+            targets=targets,
+            prerequisites=(
+                "verified encrypted backup covering every affected snapshot",
+                "all affected threads remain non-active and unpinned",
+                "descendant closure and App Server capability fingerprint remain unchanged",
+            ),
+            options={"stale_before": cutoff.isoformat(), "automatic_ceiling": "archive"},
+        )
+
+    def archive_candidates(
+        self,
+        snapshots: tuple[ThreadSnapshot, ...],
+        *,
+        now: datetime | None = None,
+        criteria: InventoryFilter | None = None,
+    ) -> tuple[ThreadSnapshot, ...]:
+        """Return safe, top-level archive suggestions without creating a write plan."""
+
+        effective_now = (now or utc_now()).astimezone(UTC)
+        cutoff = effective_now - self.policy.stale_after
+        all_snapshots = {snapshot.id: snapshot for snapshot in snapshots}
         candidates: list[ThreadSnapshot] = []
         for snapshot in snapshots:
             if (
@@ -128,18 +158,7 @@ class CleanupPlanner:
             roots = sorted(
                 roots, key=lambda item: item.updated_at or datetime.min.replace(tzinfo=UTC)
             )[: self.policy.maximum_roots]
-        targets = tuple(self._target(root, all_snapshots, cutoff) for root in roots)
-        return ActionPlan.create(
-            action=PlanAction.ARCHIVE,
-            capability_fingerprint=capabilities.fingerprint,
-            targets=targets,
-            prerequisites=(
-                "verified encrypted backup covering every affected snapshot",
-                "all affected threads remain non-active and unpinned",
-                "descendant closure and App Server capability fingerprint remain unchanged",
-            ),
-            options={"stale_before": cutoff.isoformat(), "automatic_ceiling": "archive"},
-        )
+        return tuple(roots)
 
     def plan_selected_archive(
         self,

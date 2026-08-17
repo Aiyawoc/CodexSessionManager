@@ -13,12 +13,15 @@ from pydantic import ValidationError
 from PySide6.QtNetwork import QLocalServer
 
 from codex_session_manager.gui.main import DesktopWindowManager
+from codex_session_manager.gui.main_window import UnifiedMainWindow
 from codex_session_manager.gui.single_instance import (
     DesktopCommand,
     DesktopCommandKind,
+    DesktopPage,
     DesktopResponse,
     InstanceRole,
     SingleInstanceBroker,
+    _command_payload,
 )
 from codex_session_manager.review_requests import (
     ReviewOperation,
@@ -43,6 +46,28 @@ def test_desktop_command_rejects_mixed_targets() -> None:
             command_id="command-2",
             kind=DesktopCommandKind.OPEN_REVIEW_REQUEST,
         )
+
+    with pytest.raises(ValidationError, match="requires exactly one page"):
+        DesktopCommand(
+            command_id="command-3",
+            kind=DesktopCommandKind.OPEN_PAGE,
+        )
+
+    command = DesktopCommand.open_page(DesktopPage.PENDING)
+    assert command.kind is DesktopCommandKind.OPEN_PAGE
+    assert command.page is DesktopPage.PENDING
+
+
+def test_desktop_command_omits_new_absent_fields_for_rolling_upgrades() -> None:
+    command = DesktopCommand.activate()
+
+    payload = json.loads(_command_payload(command))
+
+    assert payload == {
+        "schema_version": 1,
+        "command_id": command.command_id,
+        "kind": DesktopCommandKind.ACTIVATE.value,
+    }
 
 
 def test_single_instance_endpoint_and_access_follow_platform(app_paths) -> None:
@@ -81,10 +106,12 @@ def test_window_manager_opens_each_review_request_once(qtbot, app_paths) -> None
     assert len(manager._windows) == 1
     window = next(iter(manager._windows.values()))
     qtbot.addWidget(window)
+    assert isinstance(window, UnifiedMainWindow)
     assert window.property("csmReviewRequestId") == request.request_id
     assert window.property("csmReviewOperation") == request.operation.value
-    assert window.windowTitle() == "CodexSessionManager · 对话清理审查"
-    assert window.ui.applyButton.isHidden()
+    assert window.current_page is DesktopPage.CLEANUP
+    assert window.windowTitle() == "CodexSessionManager · 对话清理"
+    assert not window.cleanup_page.backup_archive_button.isEnabled()
 
     _request, pending_path = queue.enqueue(request_path)
     second = manager.handle_command(DesktopCommand.open_review_request(pending_path))
@@ -93,6 +120,22 @@ def test_window_manager_opens_each_review_request_once(qtbot, app_paths) -> None
     assert not pending_path.exists()
     assert len(manager._windows) == 1
     assert next(iter(manager._windows.values())) is window
+    window.close()
+
+
+def test_window_manager_reuses_unified_workspace_for_page_navigation(qtbot, app_paths) -> None:
+    manager = DesktopWindowManager(app_paths)
+
+    first = manager.handle_command(DesktopCommand.open_page(DesktopPage.CLEANUP))
+    second = manager.handle_command(DesktopCommand.open_page(DesktopPage.PENDING))
+
+    assert first.accepted
+    assert second.accepted
+    assert tuple(manager._windows) == ("workspace",)
+    window = manager._windows["workspace"]
+    qtbot.addWidget(window)
+    assert isinstance(window, UnifiedMainWindow)
+    assert window.current_page is DesktopPage.PENDING
     window.close()
 
 

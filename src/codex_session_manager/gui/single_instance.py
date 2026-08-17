@@ -28,8 +28,17 @@ _MAX_UNIX_SOCKET_PATH_BYTES = 100
 
 class DesktopCommandKind(StrEnum):
     ACTIVATE = "activate"
+    OPEN_PAGE = "open_page"
     OPEN_THREAD = "open_thread"
     OPEN_REVIEW_REQUEST = "open_review_request"
+
+
+class DesktopPage(StrEnum):
+    CLEANUP = "cleanup"
+    CONTEXT = "context"
+    MEMORY = "memory"
+    PENDING = "pending"
+    BACKUP_RESTORE = "backup_restore"
 
 
 class DesktopCommand(BaseModel):
@@ -40,6 +49,7 @@ class DesktopCommand(BaseModel):
     schema_version: Literal[1] = 1
     command_id: str = Field(pattern=_SAFE_COMMAND_ID_PATTERN)
     kind: DesktopCommandKind
+    page: DesktopPage | None = None
     thread_id: str | None = None
     pending_request_path: str | None = None
 
@@ -56,6 +66,14 @@ class DesktopCommand(BaseModel):
         )
 
     @classmethod
+    def open_page(cls, page: DesktopPage) -> Self:
+        return cls(
+            command_id=str(uuid4()),
+            kind=DesktopCommandKind.OPEN_PAGE,
+            page=page,
+        )
+
+    @classmethod
     def open_review_request(cls, pending_request_path: Path) -> Self:
         return cls(
             command_id=str(uuid4()),
@@ -66,13 +84,24 @@ class DesktopCommand(BaseModel):
     @model_validator(mode="after")
     def validate_payload(self) -> Self:
         if self.kind is DesktopCommandKind.ACTIVATE:
-            if self.thread_id is not None or self.pending_request_path is not None:
+            if (
+                self.page is not None
+                or self.thread_id is not None
+                or self.pending_request_path is not None
+            ):
                 raise ValueError("activate command does not accept a target")
+        elif self.kind is DesktopCommandKind.OPEN_PAGE:
+            if (
+                self.page is None
+                or self.thread_id is not None
+                or self.pending_request_path is not None
+            ):
+                raise ValueError("open_page requires exactly one page")
         elif self.kind is DesktopCommandKind.OPEN_THREAD:
-            if not self.thread_id or self.pending_request_path is not None:
+            if not self.thread_id or self.page is not None or self.pending_request_path is not None:
                 raise ValueError("open_thread requires exactly one thread id")
         elif self.kind is DesktopCommandKind.OPEN_REVIEW_REQUEST and (
-            not self.pending_request_path or self.thread_id is not None
+            not self.pending_request_path or self.page is not None or self.thread_id is not None
         ):
             raise ValueError("open_review_request requires exactly one queue path")
         return self
@@ -140,6 +169,12 @@ def server_endpoint(
 
 def _response_for_exception(command_id: str, exc: Exception) -> DesktopResponse:
     return DesktopResponse(command_id=command_id, accepted=False, message=str(exc))
+
+
+def _command_payload(command: DesktopCommand) -> bytes:
+    """Serialize one command without absent fields for rolling-upgrade compatibility."""
+
+    return canonical_json_bytes(command.model_dump(mode="python", exclude_none=True)) + b"\n"
 
 
 class SingleInstanceBroker(QObject):
@@ -218,7 +253,7 @@ class SingleInstanceBroker(QObject):
             socket.abort()
             return None
 
-        payload = canonical_json_bytes(command) + b"\n"
+        payload = _command_payload(command)
         if socket.write(payload) != len(payload):
             socket.abort()
             return None

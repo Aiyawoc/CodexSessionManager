@@ -35,6 +35,49 @@ QFrame#heroFrame, QFrame#footerFrame {{
     border-radius: 10px;
 }}
 
+QFrame#workspaceSidebar, QFrame#workspaceNotice {{
+    background: {PANEL};
+    border: 1px solid {OUTLINE};
+    border-radius: 10px;
+}}
+
+QLabel#workspaceBrand {{
+    color: {TEXT};
+    font-size: 17px;
+    font-weight: 700;
+}}
+
+QLabel#workspaceSubtitle, QLabel#workspaceSafety, QLabel#workspacePageStatus {{
+    color: {TEXT_MUTED};
+}}
+
+QLabel#workspacePageTitle {{
+    color: {TEXT};
+    font-size: 20px;
+    font-weight: 650;
+}}
+
+QListWidget#workspaceNavigation {{
+    background: transparent;
+    border: 0;
+    outline: 0;
+}}
+
+QListWidget#workspaceNavigation::item {{
+    min-height: 34px;
+    padding: 5px 9px;
+    border-radius: 7px;
+}}
+
+QListWidget#workspaceNavigation::item:hover {{
+    background: {PANEL_MUTED};
+}}
+
+QListWidget#workspaceNavigation::item:selected {{
+    background: {ACCENT_SOFT};
+    color: #174a9e;
+}}
+
 QFrame#toolRail {{
     background: {PANEL};
     border: 1px solid {OUTLINE};

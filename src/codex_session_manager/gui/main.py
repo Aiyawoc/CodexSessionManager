@@ -10,9 +10,11 @@ from PySide6.QtCore import Qt, QTimer
 from codex_session_manager.config import AppPaths, get_paths
 from codex_session_manager.gui.application import ensure_application
 from codex_session_manager.gui.controller import TrimReviewWindow
+from codex_session_manager.gui.main_window import UnifiedMainWindow
 from codex_session_manager.gui.single_instance import (
     DesktopCommand,
     DesktopCommandKind,
+    DesktopPage,
     DesktopResponse,
     InstanceRole,
     SingleInstanceBroker,
@@ -23,48 +25,14 @@ from codex_session_manager.review_requests import (
     ReviewRequestQueue,
 )
 
-_READ_ONLY_REQUEST_LABELS: dict[ReviewOperation, tuple[str, str]] = {
-    ReviewOperation.CONVERSATION_CLEANUP: (
-        "CodexSessionManager · 对话清理审查",
-        "已加载对话清理审查请求；当前里程碑仅展示候选，不执行写入。",
-    ),
-    ReviewOperation.MEMORY_EDIT: (
-        "CodexSessionManager · 记忆管理审查",
-        "已加载记忆管理审查请求；记忆写入将在后续里程碑启用。",
-    ),
-    ReviewOperation.BACKUP: (
-        "CodexSessionManager · 备份审查",
-        "已加载备份审查请求；通用备份向导将在后续里程碑启用。",
-    ),
-    ReviewOperation.RESTORE: (
-        "CodexSessionManager · 恢复审查",
-        "已加载恢复审查请求；通用恢复向导将在后续里程碑启用。",
-    ),
-}
 
-
-def _configure_request_window(window: TrimReviewWindow, request: ReviewRequest) -> None:
+def _configure_context_request_window(window: TrimReviewWindow, request: ReviewRequest) -> None:
     window.setProperty("csmReviewRequestId", request.request_id)
     window.setProperty("csmReviewOperation", request.operation.value)
-    if request.operation is ReviewOperation.CONTEXT_TRIM:
-        window.setWindowTitle("CodexSessionManager · 上下文优化审查")
-        window.ui.taskContextStatusLabel.setText(
-            f"审查请求 {request.request_id} 已加载；请复核建议后再保存或应用计划。"
-        )
-        return
-
-    title, status = _READ_ONLY_REQUEST_LABELS[request.operation]
-    window.setWindowTitle(title)
-    window.ui.taskContextStatusLabel.setText(status)
-    window.ui.taskArchiveButton.hide()
-    window.ui.taskDeleteButton.hide()
-    window.ui.taskListView.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
-    window.ui.savePlanButton.hide()
-    window.ui.applyButton.hide()
-    window.ui.suggestButton.hide()
-    window.ui.actionCombo.setEnabled(False)
-    window.ui.summaryEdit.setReadOnly(True)
-    window.ui.contentBrowser.setReadOnly(True)
+    window.setWindowTitle("CodexSessionManager · 上下文优化审查")
+    window.ui.taskContextStatusLabel.setText(
+        f"审查请求 {request.request_id} 已加载；请复核建议后再保存或应用计划。"
+    )
 
 
 class DesktopWindowManager:
@@ -73,13 +41,16 @@ class DesktopWindowManager:
     def __init__(self, paths: AppPaths) -> None:
         self.paths = paths
         self.queue = ReviewRequestQueue(paths)
-        self._windows: dict[str, TrimReviewWindow] = {}
-        self._last_window: TrimReviewWindow | None = None
+        self._windows: dict[str, TrimReviewWindow | UnifiedMainWindow] = {}
+        self._last_window: TrimReviewWindow | UnifiedMainWindow | None = None
 
     def handle_command(self, command: DesktopCommand) -> DesktopResponse:
         try:
             if command.kind is DesktopCommandKind.ACTIVATE:
                 self._activate_or_open_main()
+            elif command.kind is DesktopCommandKind.OPEN_PAGE:
+                assert command.page is not None
+                self._open_page(command.page)
             elif command.kind is DesktopCommandKind.OPEN_THREAD:
                 assert command.thread_id is not None
                 self._open_thread(command.thread_id)
@@ -106,10 +77,21 @@ class DesktopWindowManager:
                 continue
 
     def _activate_or_open_main(self) -> None:
-        if self._last_window is not None:
-            self._focus(self._last_window)
+        existing = self._windows.get("workspace")
+        if existing is not None:
+            self._focus(existing)
             return
-        self._open_window("main")
+        self._open_workspace("workspace", DesktopPage.CONTEXT)
+
+    def _open_page(self, page: DesktopPage) -> None:
+        existing = self._windows.get("workspace")
+        if existing is None:
+            self._open_workspace("workspace", page)
+            return
+        if not isinstance(existing, UnifiedMainWindow):
+            raise ValueError("workspace key is not bound to the unified main window")
+        existing.open_page(page)
+        self._focus(existing)
 
     def _open_thread(self, thread_id: str) -> None:
         key = f"thread:{thread_id}"
@@ -117,7 +99,7 @@ class DesktopWindowManager:
         if existing is not None:
             self._focus(existing)
             return
-        self._open_window(key, thread_id=thread_id)
+        self._open_review_window(key, thread_id=thread_id, load_task_list=True)
 
     def _open_review_request(self, pending_path: Path) -> None:
         request = self.queue.load_request(pending_path)
@@ -128,20 +110,53 @@ class DesktopWindowManager:
             self.queue.acknowledge(request)
             return
 
-        thread_id = (
-            request.target_ids[0] if request.operation is ReviewOperation.CONTEXT_TRIM else None
-        )
-        window = self._open_window(
-            key,
-            thread_id=thread_id,
-            load_task_list=False,
-            show=False,
-        )
-        _configure_request_window(window, request)
+        if request.operation is ReviewOperation.CONTEXT_TRIM:
+            context_window = self._open_review_window(
+                key,
+                thread_id=request.target_ids[0],
+                load_task_list=False,
+                show=False,
+            )
+            _configure_context_request_window(context_window, request)
+            window: TrimReviewWindow | UnifiedMainWindow = context_window
+        else:
+            window = self._open_workspace(
+                key,
+                self._page_for_request(request),
+                show=False,
+            )
+            window.load_request(request)
         self._focus(window)
         self.queue.acknowledge(request)
 
-    def _open_window(
+    @staticmethod
+    def _page_for_request(request: ReviewRequest) -> DesktopPage:
+        mapping = {
+            ReviewOperation.CONVERSATION_CLEANUP: DesktopPage.CLEANUP,
+            ReviewOperation.CONTEXT_TRIM: DesktopPage.CONTEXT,
+            ReviewOperation.MEMORY_EDIT: DesktopPage.MEMORY,
+            ReviewOperation.BACKUP: DesktopPage.BACKUP_RESTORE,
+            ReviewOperation.RESTORE: DesktopPage.BACKUP_RESTORE,
+        }
+        return mapping[request.operation]
+
+    def _open_workspace(
+        self,
+        key: str,
+        page: DesktopPage,
+        *,
+        show: bool = True,
+    ) -> UnifiedMainWindow:
+        window = UnifiedMainWindow(self.paths)
+        window.open_thread_requested.connect(self._open_thread)
+        window.open_review_requested.connect(lambda path: self._open_review_request(Path(path)))
+        self._register_window(key, window)
+        window.open_page(page)
+        if show:
+            self._focus(window)
+        return window
+
+    def _open_review_window(
         self,
         key: str,
         *,
@@ -154,24 +169,35 @@ class DesktopWindowManager:
             thread_id=thread_id,
             load_task_list=load_task_list,
         )
+        self._register_window(key, window)
+        if show:
+            self._focus(window)
+        return window
+
+    def _register_window(
+        self,
+        key: str,
+        window: TrimReviewWindow | UnifiedMainWindow,
+    ) -> None:
         window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         window.window_closed.connect(
             lambda key=key, window=window: self._forget_window(key, window)
         )
         self._windows[key] = window
         self._last_window = window
-        if show:
-            self._focus(window)
-        return window
 
-    def _forget_window(self, key: str, window: TrimReviewWindow) -> None:
+    def _forget_window(
+        self,
+        key: str,
+        window: TrimReviewWindow | UnifiedMainWindow,
+    ) -> None:
         if self._windows.get(key) is window:
             self._windows.pop(key, None)
         if self._last_window is window:
             self._last_window = next(reversed(tuple(self._windows.values())), None)
 
     @staticmethod
-    def _focus(window: TrimReviewWindow) -> None:
+    def _focus(window: TrimReviewWindow | UnifiedMainWindow) -> None:
         if window.isMinimized():
             window.showNormal()
         else:
@@ -184,9 +210,11 @@ def run_gui(
     *,
     thread_id: str | None = None,
     request_path: Path | None = None,
+    page: DesktopPage | None = None,
 ) -> int:
-    if thread_id is not None and request_path is not None:
-        raise ValueError("--thread and --request cannot be used together")
+    targets = sum(value is not None for value in (thread_id, request_path, page))
+    if targets > 1:
+        raise ValueError("--thread, --request and --page cannot be used together")
 
     paths = get_paths()
     paths.ensure()
@@ -196,6 +224,8 @@ def run_gui(
         command = DesktopCommand.open_review_request(pending_path)
     elif thread_id is not None:
         command = DesktopCommand.open_thread(thread_id)
+    elif page is not None:
+        command = DesktopCommand.open_page(page)
     else:
         command = DesktopCommand.activate()
 

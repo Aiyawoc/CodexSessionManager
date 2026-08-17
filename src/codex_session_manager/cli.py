@@ -63,6 +63,7 @@ codex_import_app = typer.Typer(help="导入其他账号或数据根中的 Codex 
 trim_app = typer.Typer(help="审查、建议和应用派生式上下文裁剪。")
 hook_app = typer.Typer(help="管理可选 PreCompact/PostCompact Hook。")
 audit_app = typer.Typer(help="查看和验证 CSM 自有审计链。")
+gui_app = typer.Typer(help="打开统一桌面审查工作台或指定页面。")
 
 app.add_typer(threads_app, name="threads")
 app.add_typer(cleanup_app, name="cleanup")
@@ -75,6 +76,7 @@ import_app.add_typer(codex_import_app, name="codex")
 app.add_typer(trim_app, name="trim")
 app.add_typer(hook_app, name="hook")
 app.add_typer(audit_app, name="audit")
+app.add_typer(gui_app, name="gui")
 
 
 def _jsonable(value: Any) -> Any:
@@ -276,6 +278,73 @@ def cleanup_plan(
         _emit({"plan": plan, "path": path})
     finally:
         client.close()
+
+
+@cleanup_app.command("review")
+def cleanup_review(
+    request_path: Annotated[Path | None, typer.Option("--request")] = None,
+    older_than_days: Annotated[int, typer.Option("--older-than-days", min=1)] = 90,
+    project: Annotated[str | None, typer.Option("--project", help="只选择该根任务 cwd")] = None,
+    git_remote: Annotated[str | None, typer.Option("--git-remote")] = None,
+    source_kind: Annotated[list[str] | None, typer.Option("--source-kind")] = None,
+    updated_before: Annotated[str | None, typer.Option("--updated-before")] = None,
+    search: Annotated[str | None, typer.Option("--search")] = None,
+) -> None:
+    """生成只读清理建议并打开统一审查页，不创建 ActionPlan。"""
+
+    from codex_session_manager.gui.main import run_gui
+
+    if request_path is not None:
+        if (
+            any(
+                value is not None
+                for value in (project, git_remote, source_kind, updated_before, search)
+            )
+            or older_than_days != 90
+        ):
+            raise typer.BadParameter("--request 不能与候选筛选参数同时使用")
+        raise typer.Exit(run_gui(request_path=request_path))
+
+    from codex_session_manager.mcp_bridge import prepare_cleanup_review
+    from codex_session_manager.review_requests import ReviewSource
+
+    paths = get_paths()
+    client, _capabilities = connect_and_probe()
+    try:
+        snapshots = InventoryService(client).list(include_turns=True)
+    finally:
+        client.close()
+    criteria = _inventory_filter(
+        project=project,
+        git_remote=git_remote,
+        source_kinds=source_kind,
+        updated_before=updated_before,
+        search=search,
+    )
+    prepared = prepare_cleanup_review(
+        snapshots,
+        paths=paths,
+        older_than_days=older_than_days,
+        criteria=criteria,
+        source=ReviewSource.CLI,
+    )
+    if prepared is None:
+        _emit(
+            {
+                "candidate_count": 0,
+                "message": "当前筛选条件下没有满足本地安全规则的清理候选。",
+            }
+        )
+        return
+    _emit(
+        {
+            "candidate_count": len(prepared.target_ids),
+            "request_id": prepared.request_id,
+            "request_path": prepared.request_path,
+            "suggestion_bundle_path": prepared.suggestion_bundle_path,
+        }
+    )
+    raise typer.Exit(run_gui(request_path=Path(prepared.request_path)))
 
 
 @cleanup_app.command("apply")
@@ -666,6 +735,43 @@ def trim_review(thread_id: str | None = None) -> None:
     from codex_session_manager.gui.main import run_gui
 
     raise typer.Exit(run_gui(thread_id=thread_id))
+
+
+@gui_app.command("open")
+def gui_open(
+    request_path: Annotated[Path | None, typer.Option("--request")] = None,
+    page: Annotated[
+        str | None,
+        typer.Option(
+            "--page",
+            help="cleanup、context、memory、pending 或 backup_restore",
+        ),
+    ] = None,
+    thread_id: Annotated[str | None, typer.Option("--thread")] = None,
+) -> None:
+    """打开统一主窗口、密封审查请求或兼容的上下文审查窗口。"""
+
+    targets = sum(value is not None for value in (request_path, page, thread_id))
+    if targets > 1:
+        raise typer.BadParameter("--request、--page 与 --thread 只能指定一个")
+
+    from codex_session_manager.gui.main import run_gui
+    from codex_session_manager.gui.single_instance import DesktopPage
+
+    parsed_page: DesktopPage | None = None
+    if page is not None:
+        try:
+            parsed_page = DesktopPage(page)
+        except ValueError as exc:
+            allowed = "、".join(item.value for item in DesktopPage)
+            raise typer.BadParameter(f"--page 必须是：{allowed}") from exc
+    raise typer.Exit(
+        run_gui(
+            thread_id=thread_id,
+            request_path=request_path,
+            page=parsed_page,
+        )
+    )
 
 
 @trim_app.command("suggest")

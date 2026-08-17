@@ -18,6 +18,7 @@ EXPECTED_COMMAND_PATHS = {
     ("doctor",),
     ("threads", "list"),
     ("threads", "show"),
+    ("cleanup", "review"),
     ("cleanup", "plan"),
     ("cleanup", "apply"),
     ("cleanup", "reconcile"),
@@ -39,6 +40,7 @@ EXPECTED_COMMAND_PATHS = {
     ("hook", "uninstall"),
     ("audit", "verify"),
     ("audit", "show"),
+    ("gui", "open"),
 }
 
 
@@ -60,6 +62,7 @@ def _documented_command_paths() -> set[tuple[str, ...]]:
             "trim",
             "hook",
             "audit",
+            "gui",
         }:
             paths.add(tuple(tokens[:2]))
         else:

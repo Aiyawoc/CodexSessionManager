@@ -158,6 +158,8 @@ The installer atomically replaces `~/Applications/CodexSessionManager.app`, reta
 
 ### GUI workflow
 
+Launching CodexSessionManager now opens a unified review workspace with five entries: Conversation Cleanup, Context Optimization, Memory Management, Pending Plans, and Backup & Restore. The cleanup page can load sealed suggestions, let users deselect them, and persist a final ActionPlan after re-reading current state; this does not create a backup or execute an archive. The pending page provides a read-only index of queued review requests and saved TrimPlans. Incomplete backup/archive, memory-write, and unified-restore actions remain disabled.
+
 <p align="center">
   <img src="docs/images/context-trimming-demo-en.gif" alt="Twelve-second context-trimming demo using fictional conversation data" width="100%">
 </p>
@@ -176,13 +178,15 @@ Saving a plan only persists the reviewed `TrimPlan`; it does not write to Codex.
 csm doctor
 csm threads list
 csm threads show CONVERSATION_ID --include-content
-csm trim review --thread-id CONVERSATION_ID
+csm gui open --page pending
+csm trim review CONVERSATION_ID
 csm audit show
 ```
 
-Create and verify an encrypted backup before planning an archive:
+You can generate non-executing cleanup suggestions before entering the plan-and-backup workflow:
 
 ```bash
+csm cleanup review --older-than-days 90
 csm backup create backup.csmbackup \
   --thread CONVERSATION_ID \
   --recipient age1... \
@@ -197,11 +201,13 @@ Important command groups:
 | --- | --- |
 | `csm threads list\|show` | Read-only inventory and content inspection |
 | `csm backup create\|verify` | Streaming age-encrypted backup and full verification |
-| `csm cleanup plan\|apply` | Reversible archive/unarchive workflow |
+| `csm cleanup review` | Create sealed cleanup suggestions and open read-only review without an execution plan |
+| `csm cleanup plan\|apply` | Plan-based archive/unarchive workflow |
 | `csm purge plan\|apply` | Separately gated permanent deletion workflow |
 | `csm restore plan\|apply` | Logical restore with new conversation IDs |
 | `csm import {chatgpt\|codex} ...` | Plan and apply imports from official ChatGPT exports or Codex rollout data |
 | `csm trim review\|suggest\|apply` | GUI/manual review, local suggestions, and derived trimming |
+| `csm gui open` | Open the unified workspace, a specific page, or a sealed review request |
 | `csm hook install\|status\|uninstall` | Optional PreCompact/PostCompact integration |
 | `csm audit show\|verify` | Inspect and verify the CSM audit chain |
 

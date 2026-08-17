@@ -24,10 +24,13 @@ description: 安全管理 Codex App 中的任务，包括按项目与时间盘�
 ## 盘点与清理
 
 1. 用项目 cwd、Git remote、时间、状态、来源、归档、固定和父子关系筛选。
-2. 运行 `csm cleanup plan`，展示根任务、全部 spawned descendants、理由、风险、fingerprint、计划路径和 SHA-256。
-3. 在归档前创建并验证覆盖全部 affected IDs 的加密备份。
-4. Codex App 原生任务工具可用时，优先逐个归档计划中的根任务，然后运行 `csm cleanup reconcile PLAN --confirm PLAN_ID`；否则运行 `csm cleanup apply PLAN --confirm PLAN_ID`。
-5. 不自动永久删除。只有用户明确要求时才生成 `csm purge plan`；展示 14 天 CSM 可信归档门、备份证据和进程门。让用户本人提供精确 plan ID 和固定永久删除确认短语。
+2. 需要桌面审查时先运行 `csm cleanup review --older-than-days 90`。该命令只生成密封的 `SuggestionBundle`/`ReviewRequest` 并打开清理页，不创建 ActionPlan，也不执行归档。
+3. 用户在清理页取消建议后，可点击“生成最终计划”；程序会重新读取当前 App Server 状态，复核建议指纹、目标状态和后代闭包，只把最终保留的目标写入不可变 ActionPlan。该按钮不创建备份，也不执行归档。
+4. 当前版本尚未提供 GUI 内“备份并归档”执行向导，后续备份和应用继续使用下面的计划式 CLI 流程。
+5. 需要独立生成计划时运行 `csm cleanup plan`，展示根任务、全部 spawned descendants、理由、风险、fingerprint、计划路径和 SHA-256。
+6. 在归档前创建并验证覆盖全部 affected IDs 的加密备份。
+7. Codex App 原生任务工具可用时，优先逐个归档计划中的根任务，然后运行 `csm cleanup reconcile PLAN --confirm PLAN_ID`；否则运行 `csm cleanup apply PLAN --confirm PLAN_ID`。
+8. 不自动永久删除。只有用户明确要求时才生成 `csm purge plan`；展示 14 天 CSM 可信归档门、备份证据和进程门。让用户本人提供精确 plan ID 和固定永久删除确认短语。
 
 默认 90 天未活动进入候选；单批最多 100 个根任务。自动操作的上限永远是归档。
 
@@ -43,7 +46,7 @@ description: 安全管理 Codex App 中的任务，包括按项目与时间盘�
 
 ## 上下文裁剪
 
-1. 用 `csm trim review TASK_ID` 打开 GUI，或用 `csm trim suggest TASK_ID` 生成本地规则建议。
+1. 用 `csm trim review TASK_ID` 打开专用 GUI，或用 `csm gui open --page context` 打开统一工作台入口；也可用 `csm trim suggest TASK_ID` 生成本地规则建议。
 2. 默认在 turn 级处理；只有用户需要时进入 item 级。将 `keep`、`exclude`、`summary`、`protect` 的含义和预计节省量展示给用户。
 3. 硬保护当前请求、进行中 turn、有效目标、审批决定、未解决错误和未知 item。工具调用/结果以及文件变更/验证必须整体保留或整体摘要。
 4. 内容 AI 默认关闭。只有用户显式同意并已配置清晰的数据边界时才启用；始终把结果标为建议。
@@ -51,6 +54,8 @@ description: 安全管理 Codex App 中的任务，包括按项目与时间盘�
 6. 裁剪只创建派生任务，不改写原任务，不自动启动模型 turn。非连续裁剪注入带来源 manifest 的 ContextProjection；连续前缀可用官方 fork。
 
 PreCompact Hook 只保存计划。在 GUI 关闭、崩溃、启动失败或超时后继续原生压缩；只有当前 App Server 写能力、协议 fingerprint、源内容 fingerprint 和选择语义均通过复核，且 TrimPlan 已原子持久化时，才允许 `continue:false`。
+
+已保存的 TrimPlan 和未被桌面接收的 ReviewRequest 可在 `csm gui open --page pending` 中只读查看。当前待处理页只负责索引和打开复核，不表示计划仍然可执行；真正应用前必须重新探测源任务状态、能力与内容指纹。
 
 ## Hook 与安装
 

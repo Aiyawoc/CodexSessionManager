@@ -149,6 +149,8 @@ class TrimReviewWindow(QMainWindow):
         self.review_request: ReviewRequest | None = None
         self.review_bundle: SuggestionBundle | None = None
         self._cleanup_candidate_ids: tuple[str, ...] = ()
+        self._supplemental_candidate_ids: tuple[str, ...] = ()
+        self._purge_candidate_ids: tuple[str, ...] = ()
         self._cleanup_suggestions: dict[str, SuggestionTarget] = {}
         self._cleanup_initial_selection_pending = False
         self._memory_paths: tuple[str, ...] = ()
@@ -463,6 +465,8 @@ class TrimReviewWindow(QMainWindow):
 
         if request.operation is ReviewOperation.CONVERSATION_CLEANUP:
             self._cleanup_candidate_ids = request.target_ids
+            self._supplemental_candidate_ids = ()
+            self._purge_candidate_ids = ()
             self._cleanup_suggestions = {
                 target.target_id: target
                 for target in (bundle.targets if bundle is not None else ())
@@ -474,6 +478,8 @@ class TrimReviewWindow(QMainWindow):
             return
         if request.operation is ReviewOperation.CONTEXT_TRIM:
             self._cleanup_candidate_ids = ()
+            self._supplemental_candidate_ids = ()
+            self._purge_candidate_ids = ()
             self._cleanup_suggestions.clear()
             self.set_review_mode(ReviewMode.CONTEXT_TRIM, refresh=False)
             thread_id = request.target_ids[0]
@@ -709,11 +715,15 @@ class TrimReviewWindow(QMainWindow):
         if isinstance(value, CleanupCandidateInventory):
             snapshots = value.snapshots
             self._verified_backup_ids = value.verified_backup_ids
+            self._supplemental_candidate_ids = value.supplemental_root_ids
+            self._purge_candidate_ids = value.purge_root_ids
         elif isinstance(value, tuple) and all(
             isinstance(snapshot, ThreadSnapshot) for snapshot in value
         ):
             snapshots = value
             self._verified_backup_ids = frozenset()
+            self._supplemental_candidate_ids = ()
+            self._purge_candidate_ids = ()
         else:
             self._task_list_failed(generation, self._t("task_list_invalid"))
             return
@@ -724,18 +734,30 @@ class TrimReviewWindow(QMainWindow):
         missing = 0
         if self.review_mode is ReviewMode.CONVERSATION_CLEANUP and self._cleanup_candidate_ids:
             by_id = {snapshot.id: snapshot for snapshot in snapshots}
-            snapshots = tuple(
-                by_id[thread_id] for thread_id in self._cleanup_candidate_ids if thread_id in by_id
+            display_ids = tuple(
+                dict.fromkeys((*self._cleanup_candidate_ids, *self._supplemental_candidate_ids))
             )
-            missing = len(self._cleanup_candidate_ids) - len(snapshots)
+            snapshots = tuple(by_id[thread_id] for thread_id in display_ids if thread_id in by_id)
+            missing = sum(thread_id not in by_id for thread_id in self._cleanup_candidate_ids)
         self.task_snapshots = snapshots
         self._populate_task_list(snapshots)
         if self._cleanup_initial_selection_pending:
-            self._select_task_ids(tuple(snapshot.id for snapshot in snapshots))
+            available = {snapshot.id for snapshot in snapshots}
+            self._select_task_ids(
+                tuple(
+                    thread_id for thread_id in self._cleanup_candidate_ids if thread_id in available
+                )
+            )
             self._cleanup_initial_selection_pending = False
         if self.review_mode is ReviewMode.CONVERSATION_CLEANUP:
             self.ui.taskListStatusLabel.setText(
-                self._t("cleanup_candidate_count", count=len(snapshots), missing=missing)
+                self._t(
+                    "cleanup_candidate_count",
+                    count=len(self._cleanup_candidate_ids) - missing,
+                    supplemental=len(self._supplemental_candidate_ids),
+                    purge=len(self._purge_candidate_ids),
+                    missing=missing,
+                )
             )
         else:
             self.ui.taskListStatusLabel.setText(
@@ -817,6 +839,11 @@ class TrimReviewWindow(QMainWindow):
                 group.setFlags(group.flags() & ~Qt.ItemFlag.ItemIsSelectable)
                 for snapshot in sorted(members, key=self._task_sort_key, reverse=True):
                     title = snapshot.title.strip() or self._t("unnamed_task")
+                    if (
+                        self.review_mode is ReviewMode.CONVERSATION_CLEANUP
+                        and snapshot.id in self._supplemental_candidate_ids
+                    ):
+                        title = self._t("cleanup_supplemental_title", title=title)
                     item = QTreeWidgetItem([title, self._relative_age(snapshot)])
                     item.setData(0, Qt.ItemDataRole.UserRole, snapshot.id)
                     item.setToolTip(0, self._task_tooltip(snapshot))
@@ -839,6 +866,20 @@ class TrimReviewWindow(QMainWindow):
                                 confidence=round(suggestion.confidence * 100),
                                 reason=suggestion.reason,
                             ),
+                        )
+                    elif (
+                        self.review_mode is ReviewMode.CONVERSATION_CLEANUP
+                        and snapshot.id in self._supplemental_candidate_ids
+                    ):
+                        item.setIcon(
+                            0,
+                            self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogNewFolder),
+                        )
+                        item.setToolTip(
+                            0,
+                            self._task_tooltip(snapshot)
+                            + "\n"
+                            + self._t("cleanup_supplemental_tooltip"),
                         )
                     finding = self._sensitive_matches.get(snapshot.id)
                     if finding is not None:
@@ -892,11 +933,60 @@ class TrimReviewWindow(QMainWindow):
                         self._append_cleanup_descendants(item, snapshot)
                 self.ui.taskListView.addTopLevelItem(group)
                 group.setExpanded(True)
+            if self.review_mode is ReviewMode.CONVERSATION_CLEANUP:
+                self._append_purge_candidates(query)
             for selected_id in selected_ids:
                 self._select_task_in_list(selected_id, clear=False)
         finally:
             self._task_selection_guard = False
         self._update_task_action_state()
+
+    def _append_purge_candidates(self, query: str) -> None:
+        by_id = {snapshot.id: snapshot for snapshot in self._all_task_snapshots}
+        candidates = [
+            by_id[thread_id]
+            for thread_id in self._purge_candidate_ids
+            if thread_id in by_id and (not query or self._task_matches(by_id[thread_id], query))
+        ]
+        if not candidates:
+            return
+        group = QTreeWidgetItem([self._t("cleanup_purge_group"), ""])
+        group.setFirstColumnSpanned(True)
+        group.setFlags(group.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+        group.setToolTip(0, self._t("cleanup_purge_group_tooltip"))
+        for snapshot in sorted(candidates, key=self._task_sort_key):
+            title = snapshot.title.strip() or self._t("unnamed_task")
+            item = QTreeWidgetItem(
+                [
+                    self._t("cleanup_purge_candidate", title=title),
+                    self._relative_age(snapshot),
+                ]
+            )
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            item.setIcon(
+                0,
+                self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning),
+            )
+            scope_ids = (snapshot.id, *snapshot.spawned_descendant_ids)
+            item.setToolTip(
+                0,
+                self._task_tooltip(snapshot)
+                + "\n"
+                + self._t(
+                    "cleanup_purge_candidate_tooltip",
+                    descendants=len(snapshot.spawned_descendant_ids),
+                    size=self._format_size(
+                        sum(
+                            candidate.size_bytes
+                            for candidate in self._all_task_snapshots
+                            if candidate.id in scope_ids
+                        )
+                    ),
+                ),
+            )
+            group.addChild(item)
+        self.ui.taskListView.addTopLevelItem(group)
+        group.setExpanded(True)
 
     def _append_cleanup_descendants(
         self,
@@ -1403,6 +1493,7 @@ class TrimReviewWindow(QMainWindow):
                 self.paths,
                 self.review_request,
                 selected_ids,
+                allow_user_additions=True,
             )
         return self.workflows.prepare_selected_archive(selected_ids).plan
 

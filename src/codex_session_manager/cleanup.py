@@ -179,6 +179,71 @@ class CleanupPlanner:
             return ()
         return target_closure_ids(summaries, tuple(root.id for root in roots))
 
+    def manual_archive_candidates(
+        self,
+        snapshots: tuple[ThreadSnapshot, ...],
+        *,
+        criteria: InventoryFilter | None = None,
+    ) -> tuple[ThreadSnapshot, ...]:
+        """Return current safe roots that a human may explicitly add to review."""
+
+        return tuple(
+            self._manual_archive_roots(
+                snapshots,
+                criteria=criteria,
+                require_content=True,
+            )
+        )
+
+    def manual_archive_hydration_ids(
+        self,
+        summaries: tuple[ThreadSnapshot, ...],
+        *,
+        criteria: InventoryFilter | None = None,
+    ) -> tuple[str, ...]:
+        """Select bounded summary-only roots for explicit cleanup supplementation."""
+
+        roots = self._manual_archive_roots(
+            summaries,
+            criteria=criteria,
+            require_content=False,
+        )
+        if not roots:
+            return ()
+        return target_closure_ids(summaries, tuple(root.id for root in roots))
+
+    def _manual_archive_roots(
+        self,
+        snapshots: tuple[ThreadSnapshot, ...],
+        *,
+        criteria: InventoryFilter | None,
+        require_content: bool,
+    ) -> list[ThreadSnapshot]:
+        all_snapshots = {snapshot.id: snapshot for snapshot in snapshots}
+        candidates = [
+            snapshot
+            for snapshot in snapshots
+            if not snapshot.archived
+            and not snapshot.pinned
+            and not snapshot.ephemeral
+            and snapshot.mapping_complete
+            and (snapshot.content_complete or not require_content)
+            and snapshot.status in SAFE_INACTIVE_STATUSES
+        ]
+        candidate_ids = {snapshot.id for snapshot in candidates}
+        roots = _non_overlapping_roots(
+            [
+                root
+                for root in _top_level_candidates(candidates, all_snapshots)
+                if {root.id, *root.spawned_descendant_ids} <= candidate_ids
+                and (criteria is None or matches_filter(root, criteria))
+            ]
+        )
+        return sorted(
+            roots,
+            key=lambda item: item.updated_at or datetime.min.replace(tzinfo=UTC),
+        )[: self.policy.maximum_roots]
+
     def _archive_roots(
         self,
         snapshots: tuple[ThreadSnapshot, ...],
@@ -352,6 +417,32 @@ class CleanupPlanner:
         now: datetime | None = None,
     ) -> ActionPlan:
         effective_now = (now or utc_now()).astimezone(UTC)
+        all_snapshots = {snapshot.id: snapshot for snapshot in snapshots}
+        roots = self.purge_candidates(snapshots, audit, now=effective_now)[:1]
+        targets = tuple(self._target(root, all_snapshots, effective_now) for root in roots)
+        return ActionPlan.create(
+            action=PlanAction.PURGE,
+            capability_fingerprint=capabilities.fingerprint,
+            targets=targets,
+            prerequisites=(
+                f"CSM-trusted archive age is at least {self.policy.purge_delay.days} days",
+                "verified encrypted backup covers every affected snapshot",
+                "no other Codex process is running against the data root",
+                "human supplies the exact plan id and permanent-deletion phrase",
+            ),
+            options={"manual_only": True, "minimum_archive_days": self.policy.purge_delay.days},
+        )
+
+    def purge_candidates(
+        self,
+        snapshots: tuple[ThreadSnapshot, ...],
+        audit: AuditStore,
+        *,
+        now: datetime | None = None,
+    ) -> tuple[ThreadSnapshot, ...]:
+        """Return roots satisfying every purge evidence gate without creating a plan."""
+
+        effective_now = (now or utc_now()).astimezone(UTC)
         audit.verify_chain()
         all_snapshots = {snapshot.id: snapshot for snapshot in snapshots}
         eligible: list[ThreadSnapshot] = []
@@ -383,20 +474,45 @@ class CleanupPlanner:
                 for root in _top_level_candidates(eligible, all_snapshots)
                 if {root.id, *root.spawned_descendant_ids} <= eligible_ids
             ]
-        )[:1]
-        targets = tuple(self._target(root, all_snapshots, effective_now) for root in roots)
-        return ActionPlan.create(
-            action=PlanAction.PURGE,
-            capability_fingerprint=capabilities.fingerprint,
-            targets=targets,
-            prerequisites=(
-                f"CSM-trusted archive age is at least {self.policy.purge_delay.days} days",
-                "verified encrypted backup covers every affected snapshot",
-                "no other Codex process is running against the data root",
-                "human supplies the exact plan id and permanent-deletion phrase",
-            ),
-            options={"manual_only": True, "minimum_archive_days": self.policy.purge_delay.days},
         )
+        return tuple(
+            sorted(
+                roots,
+                key=lambda item: item.updated_at or datetime.min.replace(tzinfo=UTC),
+            )[: self.policy.maximum_roots]
+        )
+
+    def purge_hydration_ids(
+        self,
+        summaries: tuple[ThreadSnapshot, ...],
+    ) -> tuple[str, ...]:
+        """Select bounded archived roots whose content needs purge evidence checks."""
+
+        all_snapshots = {snapshot.id: snapshot for snapshot in summaries}
+        candidates = [
+            snapshot
+            for snapshot in summaries
+            if snapshot.archived
+            and not snapshot.pinned
+            and not snapshot.ephemeral
+            and snapshot.mapping_complete
+            and snapshot.status in SAFE_INACTIVE_STATUSES
+        ]
+        candidate_ids = {snapshot.id for snapshot in candidates}
+        roots = _non_overlapping_roots(
+            [
+                root
+                for root in _top_level_candidates(candidates, all_snapshots)
+                if {root.id, *root.spawned_descendant_ids} <= candidate_ids
+            ]
+        )
+        roots = sorted(
+            roots,
+            key=lambda item: item.updated_at or datetime.min.replace(tzinfo=UTC),
+        )[: self.policy.maximum_roots]
+        if not roots:
+            return ()
+        return target_closure_ids(summaries, tuple(root.id for root in roots))
 
     def plan_selected_purge(
         self,

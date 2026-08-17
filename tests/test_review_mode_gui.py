@@ -55,6 +55,8 @@ def test_cleanup_request_is_injected_into_original_project_list(
     child = snapshot_factory("cleanup-child", parent_id="cleanup-root").model_copy(
         update={"size_bytes": 1024}
     )
+    supplemental = snapshot_factory("supplemental-root").model_copy(update={"size_bytes": 4096})
+    purge = snapshot_factory("purge-root", archived=True).model_copy(update={"size_bytes": 8192})
     bundle = SuggestionBundle.create(
         operation=ReviewOperation.CONVERSATION_CLEANUP,
         source=ReviewSource.MCP,
@@ -85,8 +87,10 @@ def test_cleanup_request_is_injected_into_original_project_list(
         window._task_generation,
         CleanupCandidateInventory(
             capabilities,
-            (root, child),
+            (root, child, supplemental, purge),
             frozenset({root.id}),
+            (supplemental.id,),
+            (purge.id,),
         ),
     )
 
@@ -97,9 +101,16 @@ def test_cleanup_request_is_injected_into_original_project_list(
     assert window.ui.taskBackupButton.text() == "备份并归档…"
     assert window.ui.taskBackupButton.isEnabled()
     assert window.ui.taskDeleteButton.isHidden()
-    group = window.ui.taskListView.topLevelItem(0)
-    assert group is not None
-    item = group.child(0)
+    project_group = next(
+        window.ui.taskListView.topLevelItem(index)
+        for index in range(window.ui.taskListView.topLevelItemCount())
+        if window.ui.taskListView.topLevelItem(index).text(0) == "project"
+    )
+    item = next(
+        project_group.child(index)
+        for index in range(project_group.childCount())
+        if project_group.child(index).data(0, Qt.ItemDataRole.UserRole) == root.id
+    )
     assert item.data(0, Qt.ItemDataRole.UserRole) == root.id
     assert "LLM 初筛" in item.toolTip(0)
     assert "当前有效备份：1/2" in item.toolTip(0)
@@ -108,6 +119,23 @@ def test_cleanup_request_is_injected_into_original_project_list(
     assert descendant.text(0) == "↳ cleanup-child"
     assert not bool(descendant.flags() & Qt.ItemFlag.ItemIsSelectable)
     assert "缺少当前指纹的有效备份" in descendant.toolTip(0)
+    supplemental_item = next(
+        project_group.child(index)
+        for index in range(project_group.childCount())
+        if project_group.child(index).data(0, Qt.ItemDataRole.UserRole) == supplemental.id
+    )
+    assert supplemental_item.text(0) == "＋ supplemental-root"
+    assert not supplemental_item.isSelected()
+    assert "默认不选中" in supplemental_item.toolTip(0)
+    purge_group = next(
+        window.ui.taskListView.topLevelItem(index)
+        for index in range(window.ui.taskListView.topLevelItemCount())
+        if window.ui.taskListView.topLevelItem(index).text(0).startswith("永久删除资格")
+    )
+    assert purge_group.childCount() == 1
+    purge_item = purge_group.child(0)
+    assert purge_item.text(0) == "高风险：purge-root"
+    assert not bool(purge_item.flags() & Qt.ItemFlag.ItemIsSelectable)
 
 
 def test_cleanup_mode_rebuilds_final_plan_through_sealed_review_request(
@@ -142,8 +170,9 @@ def test_cleanup_mode_rebuilds_final_plan_through_sealed_review_request(
     )
     captured: list[tuple[ReviewRequest, tuple[str, ...]]] = []
 
-    def rebuild(paths, received_request, selected_ids):
+    def rebuild(paths, received_request, selected_ids, *, allow_user_additions=False):
         assert paths == app_paths
+        assert allow_user_additions
         captured.append((received_request, selected_ids))
         return expected
 

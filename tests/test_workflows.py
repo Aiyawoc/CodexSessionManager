@@ -189,6 +189,23 @@ def test_policy_archive_workflow_prefilters_summaries_before_hydration(
     assert {target.root_thread_id for target in prepared.plan.targets} == {"root"}
 
 
+def test_cleanup_inspection_offers_current_safe_supplemental_root(app_paths, capabilities) -> None:
+    client = _WorkflowClient()
+
+    def connect(**_kwargs):
+        return client, capabilities
+
+    result = ApplicationWorkflows(
+        paths=app_paths,
+        connection_factory=connect,  # type: ignore[arg-type]
+    ).inspect_cleanup_candidates(("root",))
+
+    assert result.supplemental_root_ids == ("recent",)
+    assert result.purge_root_ids == ()
+    hydrated = {snapshot.id for snapshot in result.snapshots if snapshot.content_complete}
+    assert hydrated == {"root", "child", "recent"}
+
+
 def test_workflow_closes_connection_when_target_is_stale(app_paths, capabilities) -> None:
     client = _WorkflowClient()
 

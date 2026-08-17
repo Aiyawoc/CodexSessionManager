@@ -91,3 +91,25 @@ def test_cleanup_action_plan_rejects_target_outside_request(
             snapshots=(requested, outside),
             capabilities=capabilities,
         )
+
+
+def test_cleanup_action_plan_allows_explicit_safe_user_addition(
+    app_paths, capabilities, snapshot_factory
+) -> None:
+    requested = snapshot_factory("requested")
+    supplemental = snapshot_factory("supplemental")
+    request, bundle = _review_request(app_paths, (requested,))
+
+    plan = build_cleanup_action_plan(
+        request=request,
+        bundle=bundle,
+        selected_ids=("requested", "supplemental"),
+        snapshots=(requested, supplemental),
+        capabilities=capabilities,
+        allow_user_additions=True,
+    )
+
+    assert {target.root_thread_id for target in plan.targets} == {
+        "requested",
+        "supplemental",
+    }

@@ -97,6 +97,8 @@ class CleanupCandidateInventory:
     capabilities: CapabilityMatrix
     snapshots: tuple[ThreadSnapshot, ...]
     verified_backup_ids: frozenset[str]
+    supplemental_root_ids: tuple[str, ...] = ()
+    purge_root_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,25 +233,74 @@ class ApplicationWorkflows:
         self,
         root_ids: tuple[str, ...],
     ) -> CleanupCandidateInventory:
-        """Deep-read selected cleanup roots and report current backup evidence."""
+        """Inspect suggested, supplemental, and purge-eligible cleanup roots."""
 
         with self.session() as session:
             _client, capabilities, inventory = session.services()
-            snapshots = inventory.list_for_targets(root_ids)
+            summaries = inventory.list(
+                include_active=True,
+                include_archived=True,
+                include_turns=False,
+            )
+            planner = CleanupPlanner()
+            requested_hydration_ids = (
+                target_closure_ids(summaries, root_ids) if root_ids else ()
+            )
+            supplemental_hydration_ids = planner.manual_archive_hydration_ids(summaries)
+            purge_hydration_ids = planner.purge_hydration_ids(summaries)
+            hydration_ids = tuple(
+                dict.fromkeys(
+                    (
+                        *requested_hydration_ids,
+                        *supplemental_hydration_ids,
+                        *purge_hydration_ids,
+                    )
+                )
+            )
+            snapshots = inventory.hydrate(summaries, hydration_ids) if hydration_ids else summaries
             session.audit.verify_chain()
             verified: set[str] = set()
             for snapshot in snapshots:
+                if not snapshot.content_complete:
+                    continue
                 evidence = session.audit.verified_backup(
                     snapshot.id,
                     snapshot.backup_fingerprint,
                 )
                 if evidence is not None and evidence.is_current():
                     verified.add(snapshot.id)
+            requested = set(root_ids)
+            supplemental_roots = tuple(
+                root.id
+                for root in planner.manual_archive_candidates(snapshots)
+                if root.id not in requested
+            )
+            purge_roots = tuple(
+                root.id for root in planner.purge_candidates(snapshots, session.audit)
+            )
             return CleanupCandidateInventory(
                 capabilities,
                 snapshots,
                 frozenset(verified),
+                supplemental_roots,
+                purge_roots,
             )
+
+    def list_purge_candidates(self) -> InventoryResult:
+        """Return read-only roots satisfying all current purge evidence gates."""
+
+        with self.session() as session:
+            _client, capabilities, inventory = session.services()
+            summaries = inventory.list(
+                include_active=True,
+                include_archived=True,
+                include_turns=False,
+            )
+            planner = CleanupPlanner()
+            hydration_ids = planner.purge_hydration_ids(summaries)
+            snapshots = inventory.hydrate(summaries, hydration_ids) if hydration_ids else summaries
+            roots = planner.purge_candidates(snapshots, session.audit)
+            return InventoryResult(capabilities, roots)
 
     def save_plan(self, plan: PlanModel) -> Path:
         """Persist an already-validated immutable plan through the shared Seam."""
@@ -450,6 +501,7 @@ class ApplicationWorkflows:
                     selected_ids=selected_ids,
                     snapshots=snapshots,
                     capabilities=capabilities,
+                    allow_user_additions=True,
                 )
             return CleanupPlanner().plan_selected_archive(
                 snapshots,

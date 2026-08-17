@@ -27,6 +27,7 @@ def build_cleanup_action_plan(
     selected_ids: tuple[str, ...],
     snapshots: tuple[ThreadSnapshot, ...],
     capabilities: CapabilityMatrix,
+    allow_user_additions: bool = False,
 ) -> ActionPlan:
     """Validate reviewed suggestions and build a new plan from current snapshots."""
 
@@ -42,7 +43,7 @@ def build_cleanup_action_plan(
         raise ValueError("selected cleanup ids must be unique")
 
     requested_ids = set(request.target_ids)
-    if not set(selected_ids) <= requested_ids:
+    if not allow_user_additions and not set(selected_ids) <= requested_ids:
         raise ValueError("selected cleanup target is outside the review request")
 
     suggestions = {
@@ -50,14 +51,16 @@ def build_cleanup_action_plan(
     }
     current = {snapshot.id: snapshot for snapshot in snapshots}
     for thread_id in selected_ids:
+        snapshot = current.get(thread_id)
+        if snapshot is None:
+            raise ValueError(f"selected cleanup target no longer exists: {thread_id}")
+        if thread_id not in requested_ids:
+            continue
         suggestion = suggestions.get(thread_id)
         if suggestion is None:
             raise ValueError(f"selected cleanup target lacks a sealed suggestion: {thread_id}")
         if suggestion.suggested_action is not SuggestedAction.ARCHIVE:
             raise ValueError(f"selected cleanup target is not an archive suggestion: {thread_id}")
-        snapshot = current.get(thread_id)
-        if snapshot is None:
-            raise ValueError(f"selected cleanup target no longer exists: {thread_id}")
         if snapshot.management_fingerprint != suggestion.source_fingerprint:
             raise ValueError(f"cleanup suggestion is stale for target: {thread_id}")
 
@@ -72,6 +75,8 @@ def prepare_cleanup_action_plan(
     paths: AppPaths,
     request: ReviewRequest,
     selected_ids: tuple[str, ...],
+    *,
+    allow_user_additions: bool = False,
 ) -> ActionPlan:
     """Re-read App Server state, rebuild a sealed plan, and persist it privately."""
 
@@ -94,6 +99,7 @@ def prepare_cleanup_action_plan(
             selected_ids=selected_ids,
             snapshots=snapshots,
             capabilities=capabilities,
+            allow_user_additions=allow_user_additions,
         )
         PlanStore(paths).save(plan)
         return plan

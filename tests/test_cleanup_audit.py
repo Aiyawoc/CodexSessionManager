@@ -277,7 +277,10 @@ def test_purge_plan_rejects_ephemeral_and_untrusted_archive(
             manifest_sha256=manifest.manifest_sha256,
             archived_at=now - timedelta(days=15),
         )
-        plan = CleanupPlanner().plan_purge((ephemeral, normal), capabilities, audit, now=now)
+        planner = CleanupPlanner()
+        candidates = planner.purge_candidates((ephemeral, normal), audit, now=now)
+        plan = planner.plan_purge((ephemeral, normal), capabilities, audit, now=now)
+    assert [snapshot.id for snapshot in candidates] == ["normal"]
     assert [target.root_thread_id for target in plan.targets] == ["normal"]
     with pytest.raises(ValueError, match=r"snapshot drift|no longer archived"):
         CleanupExecutor._verify_snapshot_drift(

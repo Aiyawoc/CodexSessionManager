@@ -165,7 +165,7 @@ The installer atomically replaces `~/Applications/CodexSessionManager.app`, reta
 
 ### GUI workflow
 
-Launching CodexSessionManager opens the existing Projects & Tasks, Timeline, Context, and Actions review GUI. Context optimization keeps using this complete interface. A cleanup request injects the LLM/Skill shortlist of locally safe candidates into the existing project-grouped task list and preselects them for the user's final adjustment before local planning and backup gates. The second button in the left rail switches the same window into Memory Management mode; it currently shows only explicitly requested sources while segmentation and writes remain disabled. Pending Plans and Backup & Restore remain auxiliary entries rather than replacing the primary review GUI.
+Launching CodexSessionManager opens the existing Projects & Tasks, Timeline, Context, and Actions review GUI. Context optimization keeps using this complete interface. A cleanup request injects and preselects the LLM/Skill shortlist while also listing locally safe roots from the current inventory that the user may explicitly add. Purge-eligible roots that satisfy trusted 14-day archive history and current backup evidence are shown only in a separate read-only, unselected group and never enter the archive flow. The second button in the left rail switches the same window into Memory Management mode; it currently shows only explicitly requested sources while segmentation and writes remain disabled. Pending Plans and Backup & Restore remain auxiliary entries rather than replacing the primary review GUI.
 
 <p align="center">
   <img src="docs/images/context-trimming-demo-en.gif" alt="Twelve-second context-trimming demo using fictional conversation data" width="100%">
@@ -176,9 +176,11 @@ Launching CodexSessionManager opens the existing Projects & Tasks, Timeline, Con
 2. **Timeline** shows model-visible turns/items and hides empty internal events by default. Token totals use compact units.
 3. **Context** is editable and supports hidden-tag display, segmented source rendering, Markdown preview, and local sensitive-range highlighting.
 4. **Trim actions** apply `keep`, `exclude`, `summary`, or `protect`. Hard-protected requests, active turns, goals, unresolved errors, and unknown items cannot be silently removed.
-5. **External suggestion injection** only accepts locally rebound conversation, turn, or item IDs with current fingerprints; hard protection and `validate_selections` retain final veto power.
-6. **Memory Management** uses the second left-rail button and the same window shell. It is currently a read-only source review and will later reuse segmented actions, diff, and final confirmation.
-7. **Backup & archive** in Cleanup mode freezes the root/descendant scope, creates and fully verifies the age backup, then re-reads state and suggestion fingerprints, rebuilds the final plan, and archives it. Drift or verification failure stops the archive step. The ordinary **Backup & verify** action still never archives implicitly.
+5. **Cleanup supplementation** distinguishes LLM suggestions from current local safe roots: LLM suggestions are preselected, safe additions are not, and both are rechecked against the complete descendant closure before planning and backup.
+6. **Purge eligibility** is read-only and includes only roots archived for at least 14 days with trusted archive history and a current verified backup. No purge plan is created here; permanent deletion still requires its separate flow and exact confirmation.
+7. **External suggestion injection** only accepts locally rebound conversation, turn, or item IDs with current fingerprints; hard protection and `validate_selections` retain final veto power.
+8. **Memory Management** uses the second left-rail button and the same window shell. It is currently a read-only source review and will later reuse segmented actions, diff, and final confirmation.
+9. **Backup & archive** in Cleanup mode freezes the root/descendant scope, creates and fully verifies the age backup, then re-reads state and suggestion fingerprints, rebuilds the final plan, and archives it. Drift or verification failure stops the archive step. The ordinary **Backup & verify** action still never archives implicitly.
 
 Saving a plan only persists the reviewed `TrimPlan`; it does not write to Codex. Creating a trimmed task first revalidates the plan, waits for the source to be `idle` or `notLoaded`, and then creates a new derived task.
 
@@ -215,6 +217,7 @@ Important command groups:
 | `csm acceptance report` | Record fixed stages, hashed task IDs, and evidence hashes; always non-production |
 | `csm backup create\|verify` | Streaming age-encrypted backup and full verification |
 | `csm cleanup review` | Create sealed cleanup suggestions and inject them into the original task GUI for final user selection |
+| `csm cleanup eligible-purge` | Read-only list of purge roots satisfying trusted archive-age and current backup gates |
 | `csm cleanup plan\|apply` | Plan-based archive/unarchive workflow |
 | `csm purge plan\|apply` | Separately gated permanent deletion workflow |
 | `csm restore plan\|apply` | Logical restore with new conversation IDs |

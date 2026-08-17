@@ -20,21 +20,18 @@ from codex_session_manager.inventory import (
     target_closure_ids,
 )
 from codex_session_manager.models import (
+    SAFE_INACTIVE_STATUSES,
     ActionPlan,
     CapabilityMatrix,
     PlanAction,
     PlanTarget,
     RiskLevel,
     ThreadSnapshot,
-    ThreadStatus,
 )
 
 DEFAULT_STALE_DAYS: Final[int] = 90
 DEFAULT_PURGE_DELAY_DAYS: Final[int] = 14
 MAX_ROOTS: Final[int] = 100
-SAFE_INACTIVE_STATUSES: Final[frozenset[ThreadStatus]] = frozenset(
-    {ThreadStatus.IDLE, ThreadStatus.NOT_LOADED}
-)
 
 
 @dataclass(frozen=True, slots=True)

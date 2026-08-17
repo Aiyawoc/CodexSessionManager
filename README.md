@@ -178,7 +178,7 @@ Launching CodexSessionManager now opens a unified review workspace with five ent
 4. **Trim actions** apply `keep`, `exclude`, `summary`, or `protect`. Hard-protected requests, active turns, goals, unresolved errors, and unknown items cannot be silently removed.
 5. **Backup & verify** deep-reads only selected roots and their derived descendants, encrypts with an age recipient, and immediately verifies the complete archive without implicitly archiving anything.
 
-Saving a plan only persists the reviewed `TrimPlan`; it does not write to Codex. Creating a trimmed task first revalidates the plan, waits for the source to become idle, and then creates a new derived task.
+Saving a plan only persists the reviewed `TrimPlan`; it does not write to Codex. Creating a trimmed task first revalidates the plan, waits for the source to be `idle` or `notLoaded`, and then creates a new derived task.
 
 ### CLI workflows
 

@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
 )
 
 from codex_session_manager.backup import DecryptionSpec, EncryptionSpec
-from codex_session_manager.cleanup import SAFE_INACTIVE_STATUSES
 from codex_session_manager.config import AppPaths, get_paths
 from codex_session_manager.gui.i18n import (
     GuiLanguage,
@@ -56,6 +55,7 @@ from codex_session_manager.gui.timeline_model import TurnTimelineModel
 from codex_session_manager.gui.ui_main_window import Ui_MainWindow
 from codex_session_manager.gui.worker import FunctionWorker
 from codex_session_manager.models import (
+    SAFE_INACTIVE_STATUSES,
     ActionPlan,
     CapabilityMatrix,
     ThreadItemSnapshot,
@@ -1318,7 +1318,7 @@ class TrimReviewWindow(QMainWindow):
         self._select_task_in_list(value.snapshot.id)
         self.ui.savePlanButton.setEnabled(not self.hook_mode or value.capabilities.write_enabled)
         self.ui.applyButton.setEnabled(
-            not self.hook_mode and value.snapshot.status is not ThreadStatus.ACTIVE
+            not self.hook_mode and value.snapshot.status in SAFE_INACTIVE_STATUSES
         )
         self._update_estimate()
         if value.snapshot.turns:

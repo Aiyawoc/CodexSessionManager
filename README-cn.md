@@ -178,7 +178,7 @@ scripts/install_user.sh /absolute/path/to/CodexSessionManager.app
 4. **裁剪动作**支持 `keep`、`exclude`、`summary` 和 `protect`。当前请求、进行中 turn、有效目标、未解决错误和未知 item 等硬保护内容不能被静默删除。
 5. **备份并复验**只深读所选根任务及其派生后代，使用 age recipient 加密并立即完整解密校验；它不会隐式归档任务。
 
-“保存方案”只将已审查的 `TrimPlan` 写入 CSM 数据目录，不修改 Codex。“派生精简任务”会先重新校验计划、等待原任务 idle，再创建新的派生任务。
+“保存方案”只将已审查的 `TrimPlan` 写入 CSM 数据目录，不修改 Codex。“派生精简任务”会先重新校验计划、等待原任务处于 `idle` 或 `notLoaded`，再创建新的派生任务。
 
 ### CLI 工作流
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from enum import StrEnum
-from typing import Any, Literal, Self
+from typing import Any, Final, Literal, Self
 from uuid import uuid4
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
@@ -24,6 +24,11 @@ class ThreadStatus(StrEnum):
     ACTIVE = "active"
     SYSTEM_ERROR = "systemError"
     UNKNOWN = "unknown"
+
+
+SAFE_INACTIVE_STATUSES: Final[frozenset[ThreadStatus]] = frozenset(
+    {ThreadStatus.IDLE, ThreadStatus.NOT_LOADED}
+)
 
 
 class ItemKind(StrEnum):

@@ -834,7 +834,7 @@ def trim_apply(
     plan_path: Path,
     confirm: Annotated[str, typer.Option("--confirm")],
 ) -> None:
-    """任务 idle 且 fingerprint 一致时创建派生精简任务。"""
+    """任务 idle/notLoaded 且 fingerprint 一致时创建派生精简任务。"""
 
     plan = load_plan_as(plan_path, TrimPlan)
     if confirm != plan.plan_id:

@@ -144,6 +144,23 @@ def test_review_window_layout_and_stale_worker_result(
     assert current_item.data(0, Qt.ItemDataRole.UserRole) == "current"
 
 
+def test_trim_apply_button_requires_safe_inactive_source_status(
+    qtbot, app_paths, capabilities, snapshot_factory
+) -> None:
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+
+    not_loaded = _document(
+        snapshot_factory("not-loaded", status=ThreadStatus.NOT_LOADED), capabilities
+    )
+    window._document_loaded(0, not_loaded)
+    assert window.ui.applyButton.isEnabled()
+
+    unknown = _document(snapshot_factory("unknown", status=ThreadStatus.UNKNOWN), capabilities)
+    window._document_loaded(0, unknown)
+    assert not window.ui.applyButton.isEnabled()
+
+
 def test_task_pane_toggle_expands_center_and_preserves_action_width(qtbot, app_paths) -> None:
     window = TrimReviewWindow(paths=app_paths, load_task_list=False)
     qtbot.addWidget(window)

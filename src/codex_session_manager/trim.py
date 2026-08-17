@@ -14,13 +14,13 @@ from codex_session_manager.audit import AuditStore
 from codex_session_manager.hashing import estimate_tokens, fingerprint, utc_now
 from codex_session_manager.inventory import InventoryService, model_visible_messages
 from codex_session_manager.models import (
+    SAFE_INACTIVE_STATUSES,
     CapabilityMatrix,
     ContextProjection,
     ItemKind,
     ProjectionEntry,
     ThreadItemSnapshot,
     ThreadSnapshot,
-    ThreadStatus,
     TrimAction,
     TrimPlan,
     TrimSelection,
@@ -424,8 +424,10 @@ class TrimExecutor:
         source = self.inventory.read(plan.source_thread_id, include_turns=True)
         if source.trim_fingerprint != plan.source_thread_fingerprint:
             raise TrimError("source thread changed after TrimPlan creation")
-        if source.status is not ThreadStatus.IDLE:
-            raise TrimError("wait for the source thread to become idle before applying TrimPlan")
+        if source.status not in SAFE_INACTIVE_STATUSES:
+            raise TrimError(
+                "wait for the source thread to become idle or not loaded before applying TrimPlan"
+            )
         validate_selections(source, plan.selections)
         cutoff = prefix_fork_turn(source, plan)
         self.audit.begin_operation(plan_sha256=plan.plan_sha256, action="trim")

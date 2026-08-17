@@ -402,6 +402,20 @@ def test_trim_apply_requires_explicit_idle_state(app_paths, capabilities, snapsh
     assert client.rollbacks == []
 
 
+def test_trim_apply_accepts_not_loaded_source(app_paths, capabilities) -> None:
+    source = _review_snapshot().model_copy(update={"status": ThreadStatus.NOT_LOADED})
+    client = _ProjectionClient()
+    with AuditStore(app_paths) as audit:
+        target = TrimExecutor(
+            client=client,  # type: ignore[arg-type]
+            inventory=_ProjectionInventory(source),  # type: ignore[arg-type]
+            capabilities=capabilities,
+            audit=audit,
+        ).apply(_non_prefix_plan(source, capabilities))
+
+    assert target == "projection-derived"
+
+
 def test_trim_apply_revalidates_hard_protection_before_prefix_write(
     app_paths, capabilities, snapshot_factory
 ) -> None:

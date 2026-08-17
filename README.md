@@ -165,7 +165,7 @@ The installer atomically replaces `~/Applications/CodexSessionManager.app`, reta
 
 ### GUI workflow
 
-Launching CodexSessionManager now opens a unified review workspace with five entries: Conversation Cleanup, Context Optimization, Memory Management, Pending Plans, and Backup & Restore. The cleanup page can load sealed suggestions, let users deselect them, and persist a final ActionPlan after re-reading current state; this does not create a backup or execute an archive. The pending page provides a read-only index of queued review requests and saved TrimPlans. Incomplete backup/archive, memory-write, and unified-restore actions remain disabled.
+Launching CodexSessionManager opens the existing Projects & Tasks, Timeline, Context, and Actions review GUI. Context optimization keeps using this complete interface. A cleanup request injects the LLM/Skill shortlist of locally safe candidates into the existing project-grouped task list and preselects them for the user's final adjustment before local planning and backup gates. The second button in the left rail switches the same window into Memory Management mode; it currently shows only explicitly requested sources while segmentation and writes remain disabled. Pending Plans and Backup & Restore remain auxiliary entries rather than replacing the primary review GUI.
 
 <p align="center">
   <img src="docs/images/context-trimming-demo-en.gif" alt="Twelve-second context-trimming demo using fictional conversation data" width="100%">
@@ -176,7 +176,9 @@ Launching CodexSessionManager now opens a unified review workspace with five ent
 2. **Timeline** shows model-visible turns/items and hides empty internal events by default. Token totals use compact units.
 3. **Context** is editable and supports hidden-tag display, segmented source rendering, Markdown preview, and local sensitive-range highlighting.
 4. **Trim actions** apply `keep`, `exclude`, `summary`, or `protect`. Hard-protected requests, active turns, goals, unresolved errors, and unknown items cannot be silently removed.
-5. **Backup & verify** deep-reads only selected roots and their derived descendants, encrypts with an age recipient, and immediately verifies the complete archive without implicitly archiving anything.
+5. **External suggestion injection** only accepts locally rebound conversation, turn, or item IDs with current fingerprints; hard protection and `validate_selections` retain final veto power.
+6. **Memory Management** uses the second left-rail button and the same window shell. It is currently a read-only source review and will later reuse segmented actions, diff, and final confirmation.
+7. **Backup & verify** deep-reads only selected roots and their derived descendants, encrypts with an age recipient, and immediately verifies the complete archive without implicitly archiving anything.
 
 Saving a plan only persists the reviewed `TrimPlan`; it does not write to Codex. Creating a trimmed task first revalidates the plan, waits for the source to be `idle` or `notLoaded`, and then creates a new derived task.
 
@@ -212,13 +214,13 @@ Important command groups:
 | `csm schema audit` | Write a versioned protocol-difference report without private paths or conversation content |
 | `csm acceptance report` | Record fixed stages, hashed task IDs, and evidence hashes; always non-production |
 | `csm backup create\|verify` | Streaming age-encrypted backup and full verification |
-| `csm cleanup review` | Create sealed cleanup suggestions and open read-only review without an execution plan |
+| `csm cleanup review` | Create sealed cleanup suggestions and inject them into the original task GUI for final user selection |
 | `csm cleanup plan\|apply` | Plan-based archive/unarchive workflow |
 | `csm purge plan\|apply` | Separately gated permanent deletion workflow |
 | `csm restore plan\|apply` | Logical restore with new conversation IDs |
 | `csm import {chatgpt\|codex} ...` | Plan and apply imports from official ChatGPT exports or Codex rollout data |
 | `csm trim review\|suggest\|apply` | GUI/manual review, local suggestions, and derived trimming |
-| `csm gui open` | Open the unified workspace, a specific page, or a sealed review request |
+| `csm gui open` | Open an original-GUI review mode or sealed request; pending/backup use auxiliary entries |
 | `csm hook install\|status\|uninstall` | Optional PreCompact/PostCompact integration |
 | `csm audit show\|verify` | Inspect and verify the CSM audit chain |
 

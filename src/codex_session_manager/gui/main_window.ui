@@ -49,6 +49,7 @@
         <layout class="QVBoxLayout" name="toolRailLayout">
          <property name="leftMargin"><number>4</number></property><property name="topMargin"><number>4</number></property><property name="rightMargin"><number>4</number></property><property name="bottomMargin"><number>4</number></property><property name="spacing"><number>6</number></property>
          <item><widget class="QToolButton" name="projectTaskRailButton"><property name="checkable"><bool>true</bool></property><property name="checked"><bool>true</bool></property><property name="autoRaise"><bool>true</bool></property><property name="toolButtonStyle"><enum>Qt::ToolButtonStyle::ToolButtonIconOnly</enum></property><property name="text"><string>项目</string></property><property name="toolTip"><string>项目与任务</string></property><property name="accessibleName"><string>项目与任务</string></property></widget></item>
+         <item><widget class="QToolButton" name="memoryRailButton"><property name="checkable"><bool>true</bool></property><property name="checked"><bool>false</bool></property><property name="autoRaise"><bool>true</bool></property><property name="toolButtonStyle"><enum>Qt::ToolButtonStyle::ToolButtonIconOnly</enum></property><property name="text"><string>记忆</string></property><property name="toolTip"><string>记忆管理</string></property><property name="accessibleName"><string>记忆管理</string></property></widget></item>
          <item><spacer name="toolRailSpacer"><property name="orientation"><enum>Qt::Orientation::Vertical</enum></property><property name="sizeHint"><size><width>20</width><height>40</height></size></property></spacer></item>
         </layout>
        </widget>
@@ -184,7 +185,7 @@
   </widget>
  </widget>
  <tabstops>
-  <tabstop>languageCombo</tabstop><tabstop>threadIdEdit</tabstop><tabstop>loadButton</tabstop><tabstop>taskListView</tabstop><tabstop>taskRefreshButton</tabstop><tabstop>taskBackupButton</tabstop><tabstop>taskArchiveButton</tabstop><tabstop>taskDeleteButton</tabstop><tabstop>taskPaneCollapseButton</tabstop><tabstop>timelineView</tabstop><tabstop>contentBrowser</tabstop><tabstop>actionCombo</tabstop><tabstop>reasonBrowser</tabstop><tabstop>summaryEdit</tabstop><tabstop>aiConsentCheck</tabstop><tabstop>suggestButton</tabstop><tabstop>sensitiveScanButton</tabstop><tabstop>savePlanButton</tabstop><tabstop>applyButton</tabstop><tabstop>cancelButton</tabstop>
+  <tabstop>languageCombo</tabstop><tabstop>projectTaskRailButton</tabstop><tabstop>memoryRailButton</tabstop><tabstop>threadIdEdit</tabstop><tabstop>loadButton</tabstop><tabstop>taskListView</tabstop><tabstop>taskRefreshButton</tabstop><tabstop>taskBackupButton</tabstop><tabstop>taskArchiveButton</tabstop><tabstop>taskDeleteButton</tabstop><tabstop>taskPaneCollapseButton</tabstop><tabstop>timelineView</tabstop><tabstop>contentBrowser</tabstop><tabstop>actionCombo</tabstop><tabstop>reasonBrowser</tabstop><tabstop>summaryEdit</tabstop><tabstop>aiConsentCheck</tabstop><tabstop>suggestButton</tabstop><tabstop>sensitiveScanButton</tabstop><tabstop>savePlanButton</tabstop><tabstop>applyButton</tabstop><tabstop>cancelButton</tabstop>
  </tabstops>
  <resources/>
  <customwidgets>

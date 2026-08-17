@@ -3,10 +3,16 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from codex_session_manager.mcp_bridge import (
+    CleanupSuggestionInput,
+    ContextSuggestionInput,
     open_cleanup_review,
+    open_context_review,
     open_review_demo,
     prepare_cleanup_review,
+    prepare_context_review,
 )
 from codex_session_manager.review_requests import (
     ReviewOperation,
@@ -123,6 +129,109 @@ def test_open_cleanup_review_preserves_queue_when_desktop_launch_fails(
     )
 
     assert result is not None
+    assert not result.launched
+    assert result.launch_error == "desktop unavailable"
+    assert Path(result.pending_request_path).is_file()
+
+
+def test_prepare_cleanup_review_accepts_only_llm_subset_of_local_safe_pool(
+    app_paths, snapshot_factory
+) -> None:
+    first = snapshot_factory(
+        "old-first",
+        updated_at=datetime(2025, 1, 1, tzinfo=UTC),
+    )
+    second = snapshot_factory(
+        "old-second",
+        updated_at=datetime(2025, 1, 2, tzinfo=UTC),
+    )
+
+    result = prepare_cleanup_review(
+        (first, second),
+        paths=app_paths,
+        now=datetime(2026, 1, 1, tzinfo=UTC),
+        llm_suggestions=(
+            CleanupSuggestionInput(
+                target_id=second.id,
+                reason="LLM 初筛后只建议归档第二个对话",
+                confidence=0.92,
+            ),
+        ),
+    )
+
+    assert result is not None
+    assert result.target_ids == (second.id,)
+    bundle = SuggestionBundleStore(app_paths).load(Path(result.suggestion_bundle_path))
+    assert bundle.targets[0].source_fingerprint == second.management_fingerprint
+    assert bundle.targets[0].reason == "LLM 初筛后只建议归档第二个对话"
+
+    with pytest.raises(ValueError, match="outside the local safe candidate pool"):
+        prepare_cleanup_review(
+            (first,),
+            paths=app_paths,
+            now=datetime(2026, 1, 1, tzinfo=UTC),
+            llm_suggestions=(
+                CleanupSuggestionInput(
+                    target_id="not-safe",
+                    reason="越权候选",
+                    confidence=1.0,
+                ),
+            ),
+        )
+
+
+def test_prepare_context_review_binds_llm_targets_to_current_fingerprints(
+    app_paths, snapshot_factory
+) -> None:
+    snapshot = snapshot_factory("context-bridge")
+    turn = snapshot.turns[0]
+
+    result = prepare_context_review(
+        snapshot,
+        (
+            ContextSuggestionInput(
+                target_id=turn.id,
+                suggested_action=SuggestedAction.SUMMARY,
+                suggested_text="由用户复核的摘要",
+                reason="LLM 初筛建议摘要",
+                confidence=0.81,
+            ),
+        ),
+        paths=app_paths,
+    )
+
+    request = ReviewRequestStore(app_paths).load(Path(result.request_path))
+    bundle = SuggestionBundleStore(app_paths).load(Path(result.suggestion_bundle_path))
+    assert result.thread_id == snapshot.id
+    assert request.target_ids == (snapshot.id,)
+    assert bundle.targets[0].target_id == turn.id
+    assert bundle.targets[0].source_fingerprint == turn.content_fingerprint
+    assert ReviewRequestQueue(app_paths).load_request(Path(result.pending_request_path)) == request
+
+
+def test_open_context_review_keeps_queue_when_desktop_launch_fails(
+    app_paths, snapshot_factory
+) -> None:
+    snapshot = snapshot_factory("context-launch-fail")
+    turn = snapshot.turns[0]
+
+    def fail_launch(_request_path: Path) -> None:
+        raise OSError("desktop unavailable")
+
+    result = open_context_review(
+        snapshot,
+        (
+            ContextSuggestionInput(
+                target_id=turn.id,
+                suggested_action=SuggestedAction.KEEP,
+                reason="保留",
+                confidence=0.8,
+            ),
+        ),
+        paths=app_paths,
+        launcher=fail_launch,
+    )
+
     assert not result.launched
     assert result.launch_error == "desktop unavailable"
     assert Path(result.pending_request_path).is_file()

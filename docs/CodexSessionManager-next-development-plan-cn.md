@@ -19,7 +19,10 @@
 - [x] 补充篡改、过期、账号漂移、路径逃逸、符号链接、动作越权和 dispatcher 路由测试；
 - [x] 单实例窗口置前、进程间请求转发及失败请求私有队列；
 - [x] 新增只读 `open_review_demo` 编排桥接函数；
-- [x] 新增统一主窗口、五类功能入口及独立页面骨架；
+- [x] 将默认桌面入口恢复为原有审查 GUI，并扩展为上下文、对话清理和记忆三种模式；
+- [x] 对话清理请求可把 LLM/Skill 初筛候选按项目灌入原任务列表并预选；
+- [x] 上下文请求可把绑定 turn/item 指纹的外部建议灌入原时间线与动作面板；
+- [x] 原 GUI 左侧工具栏新增记忆管理第二按钮，并提供同布局的只读来源审查入口；
 - [x] 新增只读待处理计划中心，可索引审查请求与已保存 TrimPlan；
 - [x] 新增本地安全清理候选池、`prepare_cleanup_review` 与 `csm cleanup review`；
 - [x] 清理页可按用户最终选择重读当前状态、复核建议指纹并保存不可变 ActionPlan；
@@ -33,10 +36,10 @@
 1. **对话清理执行闭环**：清理页尚未从当前真实盘点补选目标，也未展示项目、完整后代树、大小、风险和备份状态；“备份并归档”向导、age 完整验证，以及把已生成 ActionPlan 接入归档和审计的串联仍未完成。
 2. **ChatGPT MCP/App 正式入口**：`open_review_demo`、`prepare_cleanup_review` 和 `open_cleanup_review` 已有本地只读编排实现，但尚未注册为对外 MCP 工具，也未完成从真实 ChatGPT 对话到已安装桌面应用的端到端验收。
 3. **待处理计划状态机**：当前页面能安全索引请求和 TrimPlan，但尚未记录已应用/已取消状态，不能在源任务 idle 后重新探测能力并继续执行。
-4. **上下文页面彻底拆分**：统一主窗口已建立，现有完整裁剪能力仍由独立 `TrimReviewWindow` 承载；大型控制器尚未拆成可嵌入页面与独立页面控制器。
+4. **原 GUI 内部控制器拆分**：产品交互已明确复用原有审查 GUI，不再以新工作台替代；大型控制器后续仍需按任务列表、内容审查、计划执行和记忆审查拆成内部控制器，但保持同一窗口体验。
 5. **记忆文件管理 MVP**：允许根登记、分段模型、diff、版本备份、原子写入、并发漂移校验和恢复均尚未实现。
 6. **统一备份/恢复中心**：已有对话备份与逻辑恢复服务，但资源提供器、历史清单和 GUI 向导尚未接入；记忆文件备份/恢复尚不存在。
-7. **外部结构化建议与发布验收**：尚缺 LLM 建议适配器、建议来源区分、真实账号联调、安装包运行验收以及 macOS/Windows 目标环境验证。
+7. **外部建议来源标识与发布验收**：外部建议的本地 ID/指纹绑定、硬保护否决和 TrimPlan 重建已实现；仍缺逐项来源标识、真实账号联调、安装包运行验收以及 macOS/Windows 目标环境验证。
 
 ## 1. 产品目标
 
@@ -115,15 +118,15 @@ CodexSessionManager 的目标是把“对话清理、上下文优化、记忆管
 - PySide6 GUI、CLI、Skill 和审计链；
 - macOS arm64 与 Windows x64 测试构建流程。
 
-当前基础已经补齐统一审查协议、单实例桌面转发、统一主窗口、只读待处理索引和本地清理候选生成。剩余缺口集中在：
+当前基础已经补齐统一审查协议、单实例桌面转发、原 GUI 多模式复用、只读待处理索引和本地清理候选生成。剩余缺口集中在：
 
 - 将本地只读编排函数注册为正式 ChatGPT MCP/App 工具并完成真实入口联调；
-- 将 `TrimReviewWindow` 的大型控制器彻底拆成可嵌入页面和独立控制器；
+- 在不改变原 GUI 交互的前提下拆分其大型内部控制器；
 - 完成对话清理页的真实盘点补选、后代树、风险和备份状态展示；
 - 打通“备份并归档”向导、age 验证，并把已能本地重建的最终计划接入归档与审计闭环；
 - 为待处理计划增加状态流转、能力复核、源任务空闲判断和继续应用；
 - 实现记忆文件管理及统一备份/恢复中心；
-- 接入严格结构化的外部建议，并完成真实账号、安装包和目标平台验收。
+- 完成外部建议来源标识，并进行真实账号、安装包和目标平台验收。
 
 ## 3. 核心安全原则
 
@@ -171,12 +174,13 @@ CSM 编排层
                 │
                 ▼
 CodexSessionManager.app
-        ├── 对话清理页
-        ├── 上下文优化页
-        ├── 记忆管理页
-        ├── 待处理计划页
-        ├── 备份/恢复中心
-        └── 审计页
+        ├── 原有审查 GUI（同一窗口壳）
+        │     ├── 上下文优化模式：turn/item 时间线与 Keep/Exclude/Summary/Protect
+        │     ├── 对话清理模式：LLM 候选灌入项目/任务列表并由用户最终选择
+        │     └── 记忆管理模式：左侧第二按钮切换来源/分段/动作审查
+        ├── 待处理计划辅助入口
+        ├── 备份/恢复辅助入口
+        └── 审计入口
                 │
                 ▼
 本地安全执行层
@@ -277,13 +281,14 @@ bundle_sha256
 
 ### 工作项
 
-- [ ] 将 `TrimReviewWindow` 的大型控制器完全拆为窗口壳与可嵌入页面；
-- [x] 新增 `ConversationCleanupPage` 只读建议审查页；
-- [x] 新增 `ContextReviewPage` 稳定入口，继续复用专用审查窗口；
-- [x] 新增 `MemoryManagerPage` 占位与只读模式；
+- [x] 明确以原有 `TrimReviewWindow` 作为上下文、清理和记忆审查的统一窗口壳；
+- [x] 新增 `ReviewMode`，在同一套项目列表、时间线、内容和动作区域间切换；
+- [x] 对话清理请求复用原任务列表、项目分组、内容预览及备份/归档按钮；
+- [x] 上下文优化继续复用原完整 turn/item 时间线和派生任务流程；
+- [x] 左侧工具栏增加记忆管理第二按钮及同布局只读模式；
+- [ ] 将 `TrimReviewWindow` 大型实现拆为内部页面控制器，但不改变同一窗口体验；
 - [x] 新增 `PendingPlansPage` 只读 MVP；
 - [x] 新增 `BackupRestoreDialog` 只读入口；
-- [x] 左侧功能栏提供五类入口；
 - [x] 保持 `csm trim review TASK_ID` 兼容；
 - [x] 增加 `csm gui open --request/--page/--thread ...`；
 - [x] 增加单实例和进程间请求转发。
@@ -343,10 +348,10 @@ open_cleanup_review
 
 ### 工作项
 
-- [ ] 扩展 `ContentSuggestionProvider` 为严格结构化接口；
-- [ ] 新增 `ExternalSuggestionBundleProvider`；
-- [ ] 每条建议绑定 turn/item ID 和指纹；
-- [ ] 本地 `validate_selections` 始终拥有最终否决权；
+- [x] 新增严格的 `ContextSuggestionInput`，LLM 不直接提供可信指纹；
+- [x] 新增 `ExternalSuggestionBundleProvider`；
+- [x] 本地根据当前 snapshot 为每条建议绑定 turn/item ID 和内容指纹；
+- [x] 本地 `validate_selections` 始终拥有最终否决权；
 - [ ] GUI 区分 LLM、本地规则、用户修改和硬保护；
 - [ ] 应用后创建优化副本；
 - [ ] 新增“验证后归档原对话”选项；
@@ -357,7 +362,7 @@ open_cleanup_review
 
 ### 验收标准
 
-- [ ] LLM 建议不能覆盖硬保护；
+- [x] LLM 建议不能覆盖硬保护；
 - [ ] 工具调用与结果成组处理；
 - [ ] 文件变更与验证成组处理；
 - [ ] Hook 失败、关闭或超时继续原生压缩；
@@ -525,20 +530,24 @@ src/codex_session_manager/
 ├── memory_backup.py
 ├── mcp_bridge.py
 └── gui/
-    ├── main_window.py
-    ├── conversation_cleanup_page.py
-    ├── context_review_page.py
-    ├── memory_manager_page.py
+    ├── main_window.ui
+    ├── controller.py
+    ├── review_mode.py
+    ├── context_review_controller.py
+    ├── conversation_cleanup_controller.py
+    ├── memory_review_controller.py
     ├── pending_plans_page.py
     └── backup_restore_dialog.py
 ```
+
+`main_window.py` 以及早期独立 cleanup/context/memory 页面仅保留为 pending/backup 辅助入口和兼容层，不再作为三类核心审查流程的主界面。
 
 现有模块调整：
 
 | 模块 | 调整方向 |
 |---|---|
-| `gui/controller.py` | 拆分窗口壳与页面控制器 |
-| `gui/main_window.ui` | 功能导航、页面容器、通用备份/恢复入口 |
+| `gui/controller.py` | 保持原窗口体验，按上下文、清理、记忆模式拆分内部控制器 |
+| `gui/main_window.ui` | 保留原四栏布局，在左侧工具栏增加记忆管理模式按钮 |
 | `cleanup.py` | 保持执行器，增加候选池与建议适配层 |
 | `trim.py` | 接入外部结构化建议，保留本地规则和硬保护 |
 | `plans.py` | 支持 MemoryPlan、ReviewRequest 等新类型 |
@@ -552,8 +561,8 @@ src/codex_session_manager/
 2. `feat: 增加统一审查请求与建议数据模型`
 3. `feat: 支持通过请求文件打开指定审查模式`
 4. `test: 覆盖审查请求校验与桌面入口`
-5. `refactor: 拆分主窗口与上下文审查页面`
-6. `feat: 增加对话清理建议审查页面`
+5. `refactor: 统一清理上下文和记忆审查到原始GUI流程`
+6. `feat: 将对话清理候选灌入原项目任务列表`
 7. `feat: 增加归档前加密备份向导`
 8. `feat: 打通 ChatGPT MCP 到清理面板的只读链路`
 
@@ -566,12 +575,12 @@ src/codex_session_manager/
 完成条件：
 
 - [x] ReviewRequest/SuggestionBundle 已实现并经过测试；
-- [x] 桌面应用可按请求打开对话清理页；
-- [ ] 建议对话按项目分组并可调整选择；
+- [x] 桌面应用可按请求在原 GUI 中打开对话清理模式；
+- [x] 建议对话按项目分组、默认预选并可调整选择；
 - [x] 最终计划由本地重建；
 - [ ] 归档前自动完成加密备份与验证；
-- [ ] 归档执行经过状态、能力、指纹和后代闭包复核；
-- [ ] 审计链记录完整；
+- [x] 既有归档执行器经过状态、能力、指纹和后代闭包复核；
+- [x] 既有备份和归档执行结果进入审计链；
 - [x] 永久删除未进入自动流程。
 
 ## 10. 执行顺序
@@ -582,11 +591,12 @@ src/codex_session_manager/
 2. [x] 实现 `ReviewRequest` 与 `SuggestionBundle`；
 3. [x] 扩展 `AppPaths`，增加私有 requests/suggestions/pending 目录；
 4. [x] 扩展 dispatcher，支持 `--request`、单实例和窗口置前；
-5. [x] 建立统一主窗口、五类入口和只读页面骨架；
+5. [x] 扩展原有审查 GUI 为上下文、对话清理和记忆三种模式；
 6. [x] 实现只读待处理索引和本地清理安全候选池；
-7. [x] 覆盖请求安全、桌面路由、页面导航、候选池和待处理索引测试；
-8. [ ] 完成清理页的真实盘点补选、项目/后代分组和备份状态展示；
-9. [ ] 实现“备份并归档”向导，并把已重建的最终 ActionPlan 接入执行闭环；
-10. [ ] 注册正式 MCP/App 只读工具并完成真实 ChatGPT 到桌面的联调；
-11. [ ] 为待处理 TrimPlan 增加状态机、空闲复核和继续应用；
-12. [ ] 推进记忆文件管理 MVP、统一备份恢复和外部结构化建议。
+7. [x] 实现 LLM 清理候选与上下文建议的本地 ID/指纹绑定并灌入原 GUI；
+8. [x] 覆盖请求安全、桌面路由、原 GUI 模式切换、候选注入和硬保护测试；
+9. [ ] 完成清理模式的真实盘点补选、完整后代树和备份状态展示；
+10. [ ] 实现“备份并归档”向导，并把已重建的最终 ActionPlan 接入执行闭环；
+11. [ ] 注册正式 MCP/App 只读工具并完成真实 ChatGPT 到桌面的联调；
+12. [ ] 为待处理 TrimPlan 增加状态机、空闲复核和继续应用；
+13. [ ] 推进记忆文件分段/写入 MVP、统一备份恢复和外部建议来源标识。

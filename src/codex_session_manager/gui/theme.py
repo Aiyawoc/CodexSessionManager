@@ -98,7 +98,7 @@ QFrame#toolRail {{
     border-radius: 8px;
 }}
 
-QToolButton#projectTaskRailButton {{
+QToolButton#projectTaskRailButton, QToolButton#memoryRailButton {{
     min-width: 32px;
     min-height: 32px;
     max-width: 34px;
@@ -109,8 +109,8 @@ QToolButton#projectTaskRailButton {{
     font-weight: 600;
 }}
 
-QToolButton#projectTaskRailButton:hover,
-QToolButton#projectTaskRailButton:checked {{
+QToolButton#projectTaskRailButton:hover, QToolButton#memoryRailButton:hover,
+QToolButton#projectTaskRailButton:checked, QToolButton#memoryRailButton:checked {{
     background: {ACCENT_SOFT};
     border-color: #c8d8ff;
     color: #174a9e;

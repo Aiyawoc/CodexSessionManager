@@ -90,8 +90,9 @@ def test_review_window_layout_and_stale_worker_result(
     assert window.ui.taskPaneCollapseButton.icon().isNull()
     assert window.ui.toolRail.minimumWidth() == 44
     assert window.ui.toolRail.maximumWidth() == 44
-    assert window.ui.toolRailLayout.count() == 2
+    assert window.ui.toolRailLayout.count() == 3
     assert window.ui.projectTaskRailButton.isChecked()
+    assert not window.ui.memoryRailButton.isChecked()
     assert not window.ui.sensitiveScanButton.isChecked()
     assert [
         window.ui.buttonLayout.itemAt(index).widget().objectName()
@@ -176,7 +177,7 @@ def test_task_pane_toggle_expands_center_and_preserves_action_width(qtbot, app_p
 
     assert not window.ui.taskPane.isVisible()
     assert window.ui.toolRail.isVisible()
-    assert not window.ui.projectTaskRailButton.isChecked()
+    assert window.ui.projectTaskRailButton.isChecked()
     assert not window.ui.taskPaneCollapseButton.isVisible()
     assert collapsed_sizes[0] == 0
     assert collapsed_sizes[1] > expanded_sizes[1]

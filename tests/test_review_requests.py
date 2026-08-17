@@ -202,3 +202,59 @@ def test_review_identifiers_reject_path_control_characters(tmp_path: Path) -> No
 
     with pytest.raises(ValidationError, match="request_id"):
         ReviewRequest.model_validate(payload)
+
+
+def test_context_request_accepts_turn_suggestions_but_rejects_file_targets(
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    bundle = SuggestionBundle.create(
+        operation=ReviewOperation.CONTEXT_TRIM,
+        source=ReviewSource.MCP,
+        targets=(
+            SuggestionTarget(
+                target_id="turn-1",
+                source_fingerprint="turn-fingerprint",
+                suggested_action=SuggestedAction.KEEP,
+                reason="保留该 turn",
+                confidence=0.8,
+            ),
+        ),
+    )
+    bundle_path = SuggestionBundleStore(paths).save(bundle)
+    request = ReviewRequest.create(
+        operation=ReviewOperation.CONTEXT_TRIM,
+        source=ReviewSource.MCP,
+        account_root_fingerprint=codex_account_fingerprint(paths),
+        target_ids=("thread-1",),
+        suggestion_bundle_path=bundle_path,
+    )
+    request_path = ReviewRequestStore(paths).save(request)
+
+    assert ReviewRequestStore(paths).load(request_path) == request
+
+    invalid_bundle = SuggestionBundle.create(
+        operation=ReviewOperation.CONTEXT_TRIM,
+        source=ReviewSource.MCP,
+        targets=(
+            SuggestionTarget(
+                target_path="MEMORY.md",
+                source_fingerprint="file-fingerprint",
+                suggested_action=SuggestedAction.KEEP,
+                reason="错误的目标类型",
+                confidence=0.1,
+            ),
+        ),
+    )
+    invalid_path = SuggestionBundleStore(paths).save(invalid_bundle)
+    invalid_request = ReviewRequest.create(
+        operation=ReviewOperation.CONTEXT_TRIM,
+        source=ReviewSource.MCP,
+        account_root_fingerprint=codex_account_fingerprint(paths),
+        target_ids=("thread-1",),
+        suggestion_bundle_path=invalid_path,
+    )
+    invalid_request_path = ReviewRequestStore(paths).save(invalid_request)
+
+    with pytest.raises(ValueError, match="turn or item ids"):
+        ReviewRequestStore(paths).load(invalid_request_path)

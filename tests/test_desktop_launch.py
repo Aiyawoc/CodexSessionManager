@@ -12,8 +12,10 @@ import pytest
 from pydantic import ValidationError
 from PySide6.QtNetwork import QLocalServer
 
+from codex_session_manager.gui.controller import TrimReviewWindow
 from codex_session_manager.gui.main import DesktopWindowManager
 from codex_session_manager.gui.main_window import UnifiedMainWindow
+from codex_session_manager.gui.review_mode import ReviewMode
 from codex_session_manager.gui.single_instance import (
     DesktopCommand,
     DesktopCommandKind,
@@ -87,7 +89,8 @@ def test_single_instance_endpoint_and_access_follow_platform(app_paths) -> None:
         assert stat.S_IMODE(os.stat(directory).st_mode) == 0o700
 
 
-def test_window_manager_opens_each_review_request_once(qtbot, app_paths) -> None:
+def test_window_manager_opens_each_review_request_once(qtbot, app_paths, monkeypatch) -> None:
+    monkeypatch.setattr(TrimReviewWindow, "load_task_list", lambda _self: None)
     request = ReviewRequest.create(
         operation=ReviewOperation.CONVERSATION_CLEANUP,
         source=ReviewSource.MCP,
@@ -106,12 +109,12 @@ def test_window_manager_opens_each_review_request_once(qtbot, app_paths) -> None
     assert len(manager._windows) == 1
     window = next(iter(manager._windows.values()))
     qtbot.addWidget(window)
-    assert isinstance(window, UnifiedMainWindow)
+    assert isinstance(window, TrimReviewWindow)
     assert window.property("csmReviewRequestId") == request.request_id
     assert window.property("csmReviewOperation") == request.operation.value
-    assert window.current_page is DesktopPage.CLEANUP
-    assert window.windowTitle() == "CodexSessionManager · 对话清理"
-    assert not window.cleanup_page.backup_archive_button.isEnabled()
+    assert window.review_mode is ReviewMode.CONVERSATION_CLEANUP
+    assert window.windowTitle() == "CodexSessionManager · 对话清理审查"
+    assert window.ui.taskDeleteButton.isHidden()
 
     _request, pending_path = queue.enqueue(request_path)
     second = manager.handle_command(DesktopCommand.open_review_request(pending_path))
@@ -123,20 +126,28 @@ def test_window_manager_opens_each_review_request_once(qtbot, app_paths) -> None
     window.close()
 
 
-def test_window_manager_reuses_unified_workspace_for_page_navigation(qtbot, app_paths) -> None:
+def test_window_manager_reuses_original_gui_for_review_modes(qtbot, app_paths, monkeypatch) -> None:
+    monkeypatch.setattr(TrimReviewWindow, "load_task_list", lambda _self: None)
     manager = DesktopWindowManager(app_paths)
 
     first = manager.handle_command(DesktopCommand.open_page(DesktopPage.CLEANUP))
-    second = manager.handle_command(DesktopCommand.open_page(DesktopPage.PENDING))
+    second = manager.handle_command(DesktopCommand.open_page(DesktopPage.MEMORY))
+    third = manager.handle_command(DesktopCommand.open_page(DesktopPage.PENDING))
 
     assert first.accepted
     assert second.accepted
-    assert tuple(manager._windows) == ("workspace",)
-    window = manager._windows["workspace"]
-    qtbot.addWidget(window)
-    assert isinstance(window, UnifiedMainWindow)
-    assert window.current_page is DesktopPage.PENDING
-    window.close()
+    assert third.accepted
+    assert set(manager._windows) == {"review-shell", "workspace"}
+    review_window = manager._windows["review-shell"]
+    workspace = manager._windows["workspace"]
+    qtbot.addWidget(review_window)
+    qtbot.addWidget(workspace)
+    assert isinstance(review_window, TrimReviewWindow)
+    assert review_window.review_mode is ReviewMode.MEMORY_EDIT
+    assert isinstance(workspace, UnifiedMainWindow)
+    assert workspace.current_page is DesktopPage.PENDING
+    review_window.close()
+    workspace.close()
 
 
 def test_single_instance_forwards_command_to_primary(qtbot, app_paths) -> None:

@@ -12,6 +12,7 @@ from PySide6.QtCore import QItemSelection, QPoint, QSize, Qt, QThreadPool, QTime
 from PySide6.QtGui import QCloseEvent, QColor, QTextCharFormat, QTextCursor, QTextFormat
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QFileDialog,
     QHeaderView,
     QInputDialog,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from codex_session_manager.backup import DecryptionSpec, EncryptionSpec
+from codex_session_manager.cleanup_review import prepare_cleanup_action_plan
 from codex_session_manager.config import AppPaths, get_paths
 from codex_session_manager.gui.i18n import (
     GuiLanguage,
@@ -45,6 +47,7 @@ from codex_session_manager.gui.protocol_tags import (
     protocol_tag_spans,
     strip_protocol_tags,
 )
+from codex_session_manager.gui.review_mode import ReviewMode
 from codex_session_manager.gui.review_state import (
     ReviewState,
     protected_reasons,
@@ -66,10 +69,19 @@ from codex_session_manager.models import (
     TrimSelection,
     TurnSnapshot,
 )
+from codex_session_manager.review_requests import (
+    ReviewOperation,
+    ReviewRequest,
+    SuggestionBundle,
+    SuggestionBundleStore,
+    SuggestionTarget,
+    codex_account_fingerprint,
+)
 from codex_session_manager.sensitive import (
     SensitiveScanResult,
     scan_sensitive_text,
 )
+from codex_session_manager.suggestions import ExternalSuggestionBundleProvider
 from codex_session_manager.trim import (
     LocalTrimSuggester,
     TrimError,
@@ -97,6 +109,8 @@ class ReviewDocument:
     snapshot: ThreadSnapshot
     capabilities: CapabilityMatrix
     suggested_plan: TrimPlan
+    external_applied_target_ids: tuple[str, ...] = ()
+    external_ignored_target_ids: tuple[str, ...] = ()
 
 
 class TrimReviewWindow(QMainWindow):
@@ -113,6 +127,7 @@ class TrimReviewWindow(QMainWindow):
         source_turn_id: str | None = None,
         hook_mode: bool = False,
         load_task_list: bool = True,
+        mode: ReviewMode = ReviewMode.CONTEXT_TRIM,
         workflows: ApplicationWorkflows | None = None,
         parent: Any = None,
     ) -> None:
@@ -125,10 +140,21 @@ class TrimReviewWindow(QMainWindow):
         self.trigger = trigger
         self.source_turn_id = source_turn_id
         self.hook_mode = hook_mode
+        self.review_mode = mode
+        self._project_review_mode = (
+            mode if mode is not ReviewMode.MEMORY_EDIT else ReviewMode.CONTEXT_TRIM
+        )
+        self.review_request: ReviewRequest | None = None
+        self.review_bundle: SuggestionBundle | None = None
+        self._cleanup_candidate_ids: tuple[str, ...] = ()
+        self._cleanup_suggestions: dict[str, SuggestionTarget] = {}
+        self._cleanup_initial_selection_pending = False
+        self._memory_paths: tuple[str, ...] = ()
         self.thread_pool = QThreadPool.globalInstance()
         self.document: ReviewDocument | None = None
         self.timeline_model: TurnTimelineModel | None = None
         self.task_snapshots: tuple[ThreadSnapshot, ...] = ()
+        self._all_task_snapshots: tuple[ThreadSnapshot, ...] = ()
         self.selections: dict[str, TrimSelection] = {}
         self.review_state: ReviewState | None = None
         self.current_target: TurnSnapshot | ThreadItemSnapshot | None = None
@@ -162,6 +188,7 @@ class TrimReviewWindow(QMainWindow):
         self._configure_views()
         self._configure_tool_rail()
         self._apply_language()
+        self._apply_review_mode()
         self.ui.errorLabel.hide()
         self.ui.mainSplitter.setSizes(list(self._expanded_splitter_sizes))
         if hook_mode:
@@ -173,8 +200,10 @@ class TrimReviewWindow(QMainWindow):
             self._task_pane_expanded = False
             self.ui.cancelButton.setText(self._t("cancel_native_compact"))
             self.ui.taskContextStatusLabel.setText(self._t("hook_review"))
-        elif load_task_list:
+        elif load_task_list and mode is not ReviewMode.MEMORY_EDIT:
             self.load_task_list()
+        elif mode is ReviewMode.MEMORY_EDIT:
+            self._populate_memory_sources()
         if thread_id:
             self.ui.threadIdEdit.setText(thread_id)
             self.load_thread(thread_id)
@@ -231,7 +260,15 @@ class TrimReviewWindow(QMainWindow):
         )
         self.ui.projectTaskRailButton.setIconSize(QSize(20, 20))
         self.ui.projectTaskRailButton.setFixedSize(34, 34)
-        self.ui.projectTaskRailButton.setChecked(True)
+        self.ui.memoryRailButton.setIcon(
+            style.standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView)
+        )
+        self.ui.memoryRailButton.setIconSize(QSize(20, 20))
+        self.ui.memoryRailButton.setFixedSize(34, 34)
+        self._rail_mode_group = QButtonGroup(self)
+        self._rail_mode_group.setExclusive(True)
+        self._rail_mode_group.addButton(self.ui.projectTaskRailButton)
+        self._rail_mode_group.addButton(self.ui.memoryRailButton)
 
     def _connect_signals(self) -> None:
         self.ui.threadIdEdit.textChanged.connect(self._filter_task_list)
@@ -242,7 +279,8 @@ class TrimReviewWindow(QMainWindow):
         self.ui.taskBackupButton.clicked.connect(self._backup_selected_tasks)
         self.ui.taskArchiveButton.clicked.connect(self._archive_selected_tasks)
         self.ui.taskDeleteButton.clicked.connect(self._delete_selected_tasks)
-        self.ui.projectTaskRailButton.clicked.connect(self._toggle_task_pane)
+        self.ui.projectTaskRailButton.clicked.connect(self._project_rail_clicked)
+        self.ui.memoryRailButton.clicked.connect(self._memory_rail_clicked)
         self.ui.sensitiveScanButton.toggled.connect(self._sensitive_filter_toggled)
         self.ui.taskPaneCollapseButton.clicked.connect(self._toggle_task_pane)
         self.ui.languageCombo.currentIndexChanged.connect(self._language_changed)
@@ -285,6 +323,8 @@ class TrimReviewWindow(QMainWindow):
         self.ui.taskTitle.setText(self._t("project_tasks"))
         self.ui.projectTaskRailButton.setToolTip(self._t("project_tasks"))
         self.ui.projectTaskRailButton.setAccessibleName(self._t("project_tasks"))
+        self.ui.memoryRailButton.setToolTip(self._t("memory_window_title"))
+        self.ui.memoryRailButton.setAccessibleName(self._t("memory_window_title"))
         self.ui.taskPaneCollapseButton.setToolTip(self._t("collapse_tasks"))
         self.ui.taskPaneCollapseButton.setAccessibleName(self._t("collapse_tasks"))
         self.ui.taskPaneCollapseButton.setText(self._t("collapse_button"))
@@ -379,6 +419,183 @@ class TrimReviewWindow(QMainWindow):
                 )
         if self.current_target is not None:
             self._show_target(self.current_target)
+        self._apply_review_mode()
+        if self.review_mode is ReviewMode.MEMORY_EDIT:
+            self._populate_memory_sources()
+
+    def set_review_mode(self, mode: ReviewMode, *, refresh: bool = True) -> None:
+        """Switch the existing Designer window between related review workflows."""
+
+        if self.hook_mode and mode is not ReviewMode.CONTEXT_TRIM:
+            raise ValueError("Hook review only supports context trimming")
+        if mode is not ReviewMode.MEMORY_EDIT:
+            self._project_review_mode = mode
+        self.review_mode = mode
+        self._apply_review_mode()
+        if mode is ReviewMode.MEMORY_EDIT:
+            self._populate_memory_sources()
+            return
+        if not refresh:
+            return
+        if self.task_snapshots:
+            self._populate_task_list(self.task_snapshots)
+        else:
+            self.load_task_list()
+
+    def load_review_request(self, request: ReviewRequest) -> None:
+        """Inject a sealed LLM/Skill request into the existing review window."""
+
+        request.verify()
+        if request.account_root_fingerprint != codex_account_fingerprint(self.paths):
+            raise ValueError("review request is bound to another Codex account root")
+        bundle: SuggestionBundle | None = None
+        if request.suggestion_bundle_path:
+            bundle = SuggestionBundleStore(self.paths).load(Path(request.suggestion_bundle_path))
+            if bundle.operation is not request.operation:
+                raise ValueError("suggestion bundle operation does not match review request")
+        self.review_request = request
+        self.review_bundle = bundle
+        self.setProperty("csmReviewRequestId", request.request_id)
+        self.setProperty("csmReviewOperation", request.operation.value)
+
+        if request.operation is ReviewOperation.CONVERSATION_CLEANUP:
+            self._cleanup_candidate_ids = request.target_ids
+            self._cleanup_suggestions = {
+                target.target_id: target
+                for target in (bundle.targets if bundle is not None else ())
+                if target.target_id is not None
+            }
+            self._cleanup_initial_selection_pending = True
+            self.set_review_mode(ReviewMode.CONVERSATION_CLEANUP, refresh=False)
+            self.load_task_list()
+            return
+        if request.operation is ReviewOperation.CONTEXT_TRIM:
+            self._cleanup_candidate_ids = ()
+            self._cleanup_suggestions.clear()
+            self.set_review_mode(ReviewMode.CONTEXT_TRIM, refresh=False)
+            thread_id = request.target_ids[0]
+            self.ui.threadIdEdit.setText(thread_id)
+            self.load_thread(thread_id)
+            return
+        if request.operation is ReviewOperation.MEMORY_EDIT:
+            self._memory_paths = request.target_paths
+            self.set_review_mode(ReviewMode.MEMORY_EDIT, refresh=False)
+            self._populate_memory_sources()
+            return
+        raise ValueError(
+            f"review operation is not supported by the main review GUI: {request.operation}"
+        )
+
+    def _apply_review_mode(self) -> None:
+        """Apply mode-specific labels and visibility without rebuilding widgets."""
+
+        context_mode = self.review_mode is ReviewMode.CONTEXT_TRIM
+        cleanup_mode = self.review_mode is ReviewMode.CONVERSATION_CLEANUP
+        memory_mode = self.review_mode is ReviewMode.MEMORY_EDIT
+
+        self.ui.projectTaskRailButton.blockSignals(True)
+        self.ui.memoryRailButton.blockSignals(True)
+        try:
+            self.ui.projectTaskRailButton.setChecked(not memory_mode)
+            self.ui.memoryRailButton.setChecked(memory_mode)
+        finally:
+            self.ui.projectTaskRailButton.blockSignals(False)
+            self.ui.memoryRailButton.blockSignals(False)
+
+        self.ui.taskPane.show()
+        if not self._task_pane_expanded:
+            self.ui.mainSplitter.setSizes(list(self._expanded_splitter_sizes))
+            self._task_pane_expanded = True
+        self.ui.taskDeleteButton.setVisible(context_mode)
+        self.ui.taskRefreshButton.setVisible(not memory_mode)
+        self.ui.taskBackupButton.setVisible(not memory_mode)
+        self.ui.taskArchiveButton.setVisible(not memory_mode)
+        self.ui.sensitiveScanButton.setVisible(not memory_mode)
+        self.ui.loadButton.setVisible(not memory_mode)
+        self.ui.contentTagsButton.setVisible(not memory_mode)
+        self.ui.contentMarkdownButton.setVisible(not memory_mode)
+        self.ui.actionCombo.setVisible(not cleanup_mode)
+        self.ui.actionCombo.setEnabled(context_mode)
+        self.ui.summaryLabel.setVisible(not cleanup_mode)
+        self.ui.summaryEdit.setVisible(not cleanup_mode)
+        self.ui.summaryEdit.setEnabled(context_mode and self.ui.actionCombo.currentIndex() == 2)
+        self.ui.aiConsentCheck.setVisible(context_mode)
+        self.ui.suggestButton.setVisible(context_mode)
+        self.ui.savePlanButton.setVisible(context_mode)
+        self.ui.applyButton.setVisible(context_mode and not self.hook_mode)
+        self.ui.savingProgress.setVisible(context_mode)
+        self.ui.tokenLabel.setVisible(context_mode)
+        if memory_mode:
+            self.ui.timelineView.setModel(None)
+        elif self.timeline_model is not None:
+            self.ui.timelineView.setModel(self.timeline_model)
+
+        if context_mode:
+            self.setWindowTitle(self._t("window_title"))
+            self.ui.appSubtitleLabel.setText(self._t("subtitle"))
+            self.ui.headerBadge.setText(self._t("readonly_badge"))
+            self.ui.taskTitle.setText(self._t("project_tasks"))
+            self.ui.timelineTitle.setText(self._t("timeline"))
+            self.ui.contentTitle.setText(self._t("content"))
+            self.ui.actionTitle.setText(self._t("trim_action"))
+            self.ui.threadIdEdit.setPlaceholderText(self._t("task_search_placeholder"))
+            task_header = self.ui.taskListView.headerItem()
+            task_header.setText(0, self._t("task_name"))
+            task_header.setText(1, self._t("age"))
+            for index, action in ACTION_BY_INDEX.items():
+                self.ui.actionCombo.setItemText(index, action_label(self._language, action))
+            if self.current_target is not None:
+                self._show_target(self.current_target)
+            return
+
+        if cleanup_mode:
+            self.setWindowTitle(self._t("cleanup_window_title"))
+            self.ui.appSubtitleLabel.setText(self._t("cleanup_subtitle"))
+            self.ui.headerBadge.setText(self._t("cleanup_badge"))
+            self.ui.taskTitle.setText(self._t("cleanup_candidates"))
+            self.ui.timelineTitle.setText(self._t("cleanup_timeline"))
+            self.ui.contentTitle.setText(self._t("cleanup_content"))
+            self.ui.actionTitle.setText(self._t("cleanup_suggestion"))
+            self.ui.threadIdEdit.setPlaceholderText(self._t("cleanup_search_placeholder"))
+            task_header = self.ui.taskListView.headerItem()
+            task_header.setText(0, self._t("cleanup_candidate"))
+            task_header.setText(1, self._t("age"))
+            if self.document is None:
+                self.ui.taskContextStatusLabel.setText(self._t("cleanup_waiting"))
+            if self.current_target is not None:
+                self._show_target(self.current_target)
+            return
+
+        self.setWindowTitle(self._t("memory_window_title"))
+        self.ui.appSubtitleLabel.setText(self._t("memory_subtitle"))
+        self.ui.headerBadge.setText(self._t("memory_badge"))
+        self.ui.taskTitle.setText(self._t("memory_sources"))
+        self.ui.timelineTitle.setText(self._t("memory_segments"))
+        self.ui.contentTitle.setText(self._t("memory_content"))
+        self.ui.actionTitle.setText(self._t("memory_action"))
+        self.ui.threadIdEdit.setPlaceholderText(self._t("memory_search_placeholder"))
+        task_header = self.ui.taskListView.headerItem()
+        task_header.setText(0, self._t("memory_source"))
+        task_header.setText(1, self._t("memory_status"))
+        for index, key in enumerate(
+            ("memory_keep", "memory_delete", "memory_replace", "memory_protect")
+        ):
+            self.ui.actionCombo.setItemText(index, self._t(key))
+        self.ui.summaryLabel.setText(self._t("memory_replacement"))
+        self.ui.reasonBrowser.setPlainText(self._t("memory_readonly_reason"))
+        self.ui.contentBrowser.setReadOnly(True)
+        self.ui.taskContextStatusLabel.setText(self._t("memory_waiting"))
+
+    @Slot()
+    def _project_rail_clicked(self) -> None:
+        if self.review_mode is ReviewMode.MEMORY_EDIT:
+            self.set_review_mode(self._project_review_mode)
+        elif not self._task_pane_expanded:
+            self._toggle_task_pane()
+
+    @Slot()
+    def _memory_rail_clicked(self) -> None:
+        self.set_review_mode(ReviewMode.MEMORY_EDIT)
 
     def _refresh_timeline_summary(self) -> None:
         model = self.timeline_model
@@ -436,14 +653,12 @@ class TrimReviewWindow(QMainWindow):
             )
             self._task_pane_expanded = False
             self.ui.taskPaneCollapseButton.setToolTip(self._t("collapse_tasks"))
-            self.ui.projectTaskRailButton.setChecked(False)
             return
 
         self.ui.taskPane.show()
         splitter.setSizes(list(self._expanded_splitter_sizes))
         self._task_pane_expanded = True
         self.ui.taskPaneCollapseButton.setToolTip(self._t("collapse_tasks"))
-        self.ui.projectTaskRailButton.setChecked(True)
 
     def load_task_list(self) -> None:
         """Load lightweight task summaries without blocking the Qt thread."""
@@ -486,9 +701,31 @@ class TrimReviewWindow(QMainWindow):
         ):
             self._task_list_failed(generation, self._t("task_list_invalid"))
             return
-        self.task_snapshots = value
-        self._populate_task_list(value)
-        self.ui.taskListStatusLabel.setText(self._t("task_list_count_search", count=len(value)))
+        self._all_task_snapshots = value
+        if self.review_mode is ReviewMode.MEMORY_EDIT:
+            self._populate_memory_sources()
+            return
+        snapshots = value
+        missing = 0
+        if self.review_mode is ReviewMode.CONVERSATION_CLEANUP and self._cleanup_candidate_ids:
+            by_id = {snapshot.id: snapshot for snapshot in snapshots}
+            snapshots = tuple(
+                by_id[thread_id] for thread_id in self._cleanup_candidate_ids if thread_id in by_id
+            )
+            missing = len(self._cleanup_candidate_ids) - len(snapshots)
+        self.task_snapshots = snapshots
+        self._populate_task_list(snapshots)
+        if self._cleanup_initial_selection_pending:
+            self._select_task_ids(tuple(snapshot.id for snapshot in snapshots))
+            self._cleanup_initial_selection_pending = False
+        if self.review_mode is ReviewMode.CONVERSATION_CLEANUP:
+            self.ui.taskListStatusLabel.setText(
+                self._t("cleanup_candidate_count", count=len(snapshots), missing=missing)
+            )
+        else:
+            self.ui.taskListStatusLabel.setText(
+                self._t("task_list_count_search", count=len(snapshots))
+            )
 
     def _task_list_failed(self, generation: int, message: str) -> None:
         if generation != self._task_generation or self._closing:
@@ -502,17 +739,27 @@ class TrimReviewWindow(QMainWindow):
 
     @Slot(str)
     def _filter_task_list(self, _query: str) -> None:
-        self._populate_task_list(self.task_snapshots)
+        if self.review_mode is ReviewMode.MEMORY_EDIT:
+            self._populate_memory_sources()
+        else:
+            self._populate_task_list(self.task_snapshots)
 
     @Slot()
     def _task_selection_changed(self) -> None:
         if self._task_selection_guard or self._closing:
             return
+        if self.review_mode is ReviewMode.MEMORY_EDIT:
+            current = self.ui.taskListView.currentItem()
+            if current is not None:
+                self._show_memory_source(current)
         self._update_task_action_state()
 
     @Slot(QTreeWidgetItem, int)
     def _task_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
         if self._task_selection_guard or self._closing:
+            return
+        if self.review_mode is ReviewMode.MEMORY_EDIT:
+            self._show_memory_source(item)
             return
         if QApplication.keyboardModifiers() & (
             Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
@@ -559,6 +806,25 @@ class TrimReviewWindow(QMainWindow):
                     item.setData(0, Qt.ItemDataRole.UserRole, snapshot.id)
                     item.setToolTip(0, self._task_tooltip(snapshot))
                     item.setToolTip(1, self._activity_tooltip(snapshot))
+                    suggestion = self._cleanup_suggestions.get(snapshot.id)
+                    if (
+                        self.review_mode is ReviewMode.CONVERSATION_CLEANUP
+                        and suggestion is not None
+                    ):
+                        item.setIcon(
+                            0,
+                            self.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton),
+                        )
+                        item.setToolTip(
+                            0,
+                            self._task_tooltip(snapshot)
+                            + "\n"
+                            + self._t(
+                                "cleanup_suggestion_tooltip",
+                                confidence=round(suggestion.confidence * 100),
+                                reason=suggestion.reason,
+                            ),
+                        )
                     finding = self._sensitive_matches.get(snapshot.id)
                     if finding is not None:
                         separator = "、" if self._language is GuiLanguage.ZH_CN else ", "
@@ -607,6 +873,70 @@ class TrimReviewWindow(QMainWindow):
             self._task_selection_guard = previous_guard
             self._update_task_action_state()
 
+    def _select_task_ids(self, thread_ids: tuple[str, ...]) -> None:
+        wanted = set(thread_ids)
+        self._task_selection_guard = True
+        try:
+            self.ui.taskListView.clearSelection()
+            first: QTreeWidgetItem | None = None
+            for group_index in range(self.ui.taskListView.topLevelItemCount()):
+                group = self.ui.taskListView.topLevelItem(group_index)
+                if group is None:
+                    continue
+                for item_index in range(group.childCount()):
+                    item = group.child(item_index)
+                    if item.data(0, Qt.ItemDataRole.UserRole) not in wanted:
+                        continue
+                    item.setSelected(True)
+                    if first is None:
+                        first = item
+            if first is not None:
+                self.ui.taskListView.setCurrentItem(first)
+        finally:
+            self._task_selection_guard = False
+            self._update_task_action_state()
+
+    def _populate_memory_sources(self) -> None:
+        query = self.ui.threadIdEdit.text().strip().casefold()
+        visible_paths = tuple(
+            path for path in self._memory_paths if not query or query in path.casefold()
+        )
+        self._task_selection_guard = True
+        try:
+            self.ui.taskListView.clear()
+            group = QTreeWidgetItem([self._t("memory_sources"), ""])
+            group.setFirstColumnSpanned(True)
+            group.setFlags(group.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            for target_path in visible_paths:
+                item = QTreeWidgetItem(
+                    [Path(target_path).name or target_path, self._t("memory_readonly")]
+                )
+                item.setData(0, Qt.ItemDataRole.UserRole, target_path)
+                item.setToolTip(0, target_path)
+                group.addChild(item)
+            self.ui.taskListView.addTopLevelItem(group)
+            group.setExpanded(True)
+            if group.childCount():
+                first = group.child(0)
+                self.ui.taskListView.setCurrentItem(first)
+                first.setSelected(True)
+                self._show_memory_source(first)
+        finally:
+            self._task_selection_guard = False
+        self.ui.taskListStatusLabel.setText(
+            self._t("memory_source_count", count=len(visible_paths))
+        )
+        self._update_task_action_state()
+
+    def _show_memory_source(self, item: QTreeWidgetItem) -> None:
+        target_path = item.data(0, Qt.ItemDataRole.UserRole)
+        if not isinstance(target_path, str) or not target_path:
+            return
+        self.ui.contentBrowser.setReadOnly(True)
+        self.ui.contentBrowser.setPlainText(self._t("memory_source_preview", path=target_path))
+        self.ui.reasonBrowser.setPlainText(self._t("memory_readonly_reason"))
+        self.ui.taskContextStatusLabel.setText(self._t("memory_source_selected", path=target_path))
+
     def _selected_task_ids(self) -> tuple[str, ...]:
         values: list[str] = []
         for item in self.ui.taskListView.selectedItems():
@@ -619,7 +949,9 @@ class TrimReviewWindow(QMainWindow):
         selected_ids = self._selected_task_ids()
         if not selected_ids:
             return False
-        by_id = {snapshot.id: snapshot for snapshot in self.task_snapshots}
+        by_id = {
+            snapshot.id: snapshot for snapshot in (self._all_task_snapshots or self.task_snapshots)
+        }
         for thread_id in selected_ids:
             root = by_id.get(thread_id)
             if root is None:
@@ -639,6 +971,11 @@ class TrimReviewWindow(QMainWindow):
         return True
 
     def _update_task_action_state(self) -> None:
+        if self.review_mode is ReviewMode.MEMORY_EDIT:
+            self.ui.taskBackupButton.setEnabled(False)
+            self.ui.taskArchiveButton.setEnabled(False)
+            self.ui.taskDeleteButton.setEnabled(False)
+            return
         enabled = bool(self._selected_task_ids()) and not self._task_write_in_progress
         self.ui.taskBackupButton.setEnabled(enabled)
         self.ui.taskArchiveButton.setEnabled(enabled and self._can_archive_selected_tasks())
@@ -646,6 +983,8 @@ class TrimReviewWindow(QMainWindow):
 
     @Slot(QPoint)
     def _show_task_context_menu(self, point: QPoint) -> None:
+        if self.review_mode is ReviewMode.MEMORY_EDIT:
+            return
         item = self.ui.taskListView.itemAt(point)
         if item is None:
             return
@@ -664,6 +1003,8 @@ class TrimReviewWindow(QMainWindow):
         backup_action = menu.addAction(self._t("backup_selected", count=selected_count))
         archive_action = menu.addAction(self._t("archive_selected", count=selected_count))
         delete_action = menu.addAction(self._t("delete_selected", count=selected_count))
+        rename_action.setVisible(self.review_mode is ReviewMode.CONTEXT_TRIM)
+        delete_action.setVisible(self.review_mode is ReviewMode.CONTEXT_TRIM)
         rename_action.setEnabled(not self._task_write_in_progress)
         backup_action.setEnabled(not self._task_write_in_progress)
         archive_action.setEnabled(
@@ -848,6 +1189,16 @@ class TrimReviewWindow(QMainWindow):
         )
 
     def _prepare_selected_archive(self, selected_ids: tuple[str, ...]) -> ActionPlan:
+        if (
+            self.review_mode is ReviewMode.CONVERSATION_CLEANUP
+            and self.review_request is not None
+            and self.review_request.suggestion_bundle_path
+        ):
+            return prepare_cleanup_action_plan(
+                self.paths,
+                self.review_request,
+                selected_ids,
+            )
         return self.workflows.prepare_selected_archive(selected_ids).plan
 
     def _confirm_prepared_archive(self, value: object) -> None:
@@ -1249,6 +1600,9 @@ class TrimReviewWindow(QMainWindow):
 
     @Slot()
     def _activate_task_query(self) -> None:
+        if self.review_mode is ReviewMode.MEMORY_EDIT:
+            self._populate_memory_sources()
+            return
         query = self.ui.threadIdEdit.text().strip()
         if not query:
             return
@@ -1259,6 +1613,9 @@ class TrimReviewWindow(QMainWindow):
 
     @Slot()
     def _load_from_edit(self) -> None:
+        if self.review_mode is ReviewMode.MEMORY_EDIT:
+            self._populate_memory_sources()
+            return
         thread_id = self.ui.threadIdEdit.text().strip()
         if not thread_id:
             self._show_error(self._t("enter_conversation_id"))
@@ -1278,7 +1635,32 @@ class TrimReviewWindow(QMainWindow):
                 trigger=self.trigger,
                 source_turn_id=self.source_turn_id,
             )
-            return ReviewDocument(result.snapshot, result.capabilities, suggested)
+            applied: tuple[str, ...] = ()
+            ignored: tuple[str, ...] = ()
+            request = self.review_request
+            bundle = self.review_bundle
+            if (
+                self.review_mode is ReviewMode.CONTEXT_TRIM
+                and request is not None
+                and request.operation is ReviewOperation.CONTEXT_TRIM
+                and request.target_ids == (thread_id,)
+                and bundle is not None
+            ):
+                external = ExternalSuggestionBundleProvider().apply(
+                    snapshot=result.snapshot,
+                    base_plan=suggested,
+                    bundle=bundle,
+                )
+                suggested = external.plan
+                applied = external.applied_target_ids
+                ignored = external.ignored_protected_target_ids
+            return ReviewDocument(
+                result.snapshot,
+                result.capabilities,
+                suggested,
+                applied,
+                ignored,
+            )
 
         worker = FunctionWorker(load, self._worker_owner)
         worker.signals.result.connect(
@@ -1315,7 +1697,10 @@ class TrimReviewWindow(QMainWindow):
         self.ui.timelineView.selectionModel().selectionChanged.connect(self._selection_changed)
         self._refresh_loaded_context_status()
         self._refresh_timeline_summary()
-        self._select_task_in_list(value.snapshot.id)
+        self._select_task_in_list(
+            value.snapshot.id,
+            clear=self.review_mode is not ReviewMode.CONVERSATION_CLEANUP,
+        )
         self.ui.savePlanButton.setEnabled(not self.hook_mode or value.capabilities.write_enabled)
         self.ui.applyButton.setEnabled(
             not self.hook_mode and value.snapshot.status in SAFE_INACTIVE_STATUSES
@@ -1332,6 +1717,15 @@ class TrimReviewWindow(QMainWindow):
                     reason=value.capabilities.read_only_reason or self._t("unknown_protocol"),
                 )
             )
+        if value.external_applied_target_ids or value.external_ignored_target_ids:
+            self.ui.taskContextStatusLabel.setText(
+                self._t(
+                    "external_suggestions_loaded",
+                    applied=len(value.external_applied_target_ids),
+                    ignored=len(value.external_ignored_target_ids),
+                )
+            )
+        self._apply_review_mode()
 
     def _load_failed(self, generation: int, message: str) -> None:
         if generation != self._generation or self._closing:
@@ -1388,6 +1782,16 @@ class TrimReviewWindow(QMainWindow):
                 )
             else:
                 self.ui.riskLabel.setText(self._t("risk_review"))
+            if self.review_mode is ReviewMode.CONVERSATION_CLEANUP and self.document is not None:
+                suggestion = self._cleanup_suggestions.get(self.document.snapshot.id)
+                if suggestion is not None:
+                    self.ui.reasonBrowser.setPlainText(suggestion.reason)
+                    self.ui.riskLabel.setText(
+                        self._t(
+                            "cleanup_confidence",
+                            confidence=round(suggestion.confidence * 100),
+                        )
+                    )
         finally:
             self._updating_controls = False
 

@@ -11,6 +11,7 @@ from codex_session_manager.config import AppPaths, get_paths
 from codex_session_manager.gui.application import ensure_application
 from codex_session_manager.gui.controller import TrimReviewWindow
 from codex_session_manager.gui.main_window import UnifiedMainWindow
+from codex_session_manager.gui.review_mode import ReviewMode
 from codex_session_manager.gui.single_instance import (
     DesktopCommand,
     DesktopCommandKind,
@@ -19,20 +20,7 @@ from codex_session_manager.gui.single_instance import (
     InstanceRole,
     SingleInstanceBroker,
 )
-from codex_session_manager.review_requests import (
-    ReviewOperation,
-    ReviewRequest,
-    ReviewRequestQueue,
-)
-
-
-def _configure_context_request_window(window: TrimReviewWindow, request: ReviewRequest) -> None:
-    window.setProperty("csmReviewRequestId", request.request_id)
-    window.setProperty("csmReviewOperation", request.operation.value)
-    window.setWindowTitle("CodexSessionManager · 上下文优化审查")
-    window.ui.taskContextStatusLabel.setText(
-        f"审查请求 {request.request_id} 已加载；请复核建议后再保存或应用计划。"
-    )
+from codex_session_manager.review_requests import ReviewOperation, ReviewRequestQueue
 
 
 class DesktopWindowManager:
@@ -77,13 +65,30 @@ class DesktopWindowManager:
                 continue
 
     def _activate_or_open_main(self) -> None:
-        existing = self._windows.get("workspace")
+        existing = self._windows.get("review-shell")
         if existing is not None:
             self._focus(existing)
             return
-        self._open_workspace("workspace", DesktopPage.CONTEXT)
+        self._open_review_window("review-shell", mode=ReviewMode.CONTEXT_TRIM)
 
     def _open_page(self, page: DesktopPage) -> None:
+        review_modes = {
+            DesktopPage.CLEANUP: ReviewMode.CONVERSATION_CLEANUP,
+            DesktopPage.CONTEXT: ReviewMode.CONTEXT_TRIM,
+            DesktopPage.MEMORY: ReviewMode.MEMORY_EDIT,
+        }
+        mode = review_modes.get(page)
+        if mode is not None:
+            existing = self._windows.get("review-shell")
+            if existing is None:
+                self._open_review_window("review-shell", mode=mode)
+                return
+            if not isinstance(existing, TrimReviewWindow):
+                raise ValueError("review-shell key is not bound to the original review GUI")
+            existing.set_review_mode(mode)
+            self._focus(existing)
+            return
+
         existing = self._windows.get("workspace")
         if existing is None:
             self._open_workspace("workspace", page)
@@ -94,12 +99,21 @@ class DesktopWindowManager:
         self._focus(existing)
 
     def _open_thread(self, thread_id: str) -> None:
-        key = f"thread:{thread_id}"
-        existing = self._windows.get(key)
+        existing = self._windows.get("review-shell")
         if existing is not None:
+            if not isinstance(existing, TrimReviewWindow):
+                raise ValueError("review-shell key is not bound to the original review GUI")
+            existing.set_review_mode(ReviewMode.CONTEXT_TRIM, refresh=False)
+            existing.ui.threadIdEdit.setText(thread_id)
+            existing.load_thread(thread_id)
             self._focus(existing)
             return
-        self._open_review_window(key, thread_id=thread_id, load_task_list=True)
+        self._open_review_window(
+            "review-shell",
+            thread_id=thread_id,
+            load_task_list=True,
+            mode=ReviewMode.CONTEXT_TRIM,
+        )
 
     def _open_review_request(self, pending_path: Path) -> None:
         request = self.queue.load_request(pending_path)
@@ -110,35 +124,29 @@ class DesktopWindowManager:
             self.queue.acknowledge(request)
             return
 
-        if request.operation is ReviewOperation.CONTEXT_TRIM:
-            context_window = self._open_review_window(
+        if request.operation in {
+            ReviewOperation.CONVERSATION_CLEANUP,
+            ReviewOperation.CONTEXT_TRIM,
+            ReviewOperation.MEMORY_EDIT,
+        }:
+            mode = ReviewMode(request.operation.value)
+            review_window = self._open_review_window(
                 key,
-                thread_id=request.target_ids[0],
                 load_task_list=False,
                 show=False,
+                mode=mode,
             )
-            _configure_context_request_window(context_window, request)
-            window: TrimReviewWindow | UnifiedMainWindow = context_window
+            review_window.load_review_request(request)
+            window: TrimReviewWindow | UnifiedMainWindow = review_window
         else:
             window = self._open_workspace(
                 key,
-                self._page_for_request(request),
+                DesktopPage.BACKUP_RESTORE,
                 show=False,
             )
             window.load_request(request)
         self._focus(window)
         self.queue.acknowledge(request)
-
-    @staticmethod
-    def _page_for_request(request: ReviewRequest) -> DesktopPage:
-        mapping = {
-            ReviewOperation.CONVERSATION_CLEANUP: DesktopPage.CLEANUP,
-            ReviewOperation.CONTEXT_TRIM: DesktopPage.CONTEXT,
-            ReviewOperation.MEMORY_EDIT: DesktopPage.MEMORY,
-            ReviewOperation.BACKUP: DesktopPage.BACKUP_RESTORE,
-            ReviewOperation.RESTORE: DesktopPage.BACKUP_RESTORE,
-        }
-        return mapping[request.operation]
 
     def _open_workspace(
         self,
@@ -163,11 +171,13 @@ class DesktopWindowManager:
         thread_id: str | None = None,
         load_task_list: bool = True,
         show: bool = True,
+        mode: ReviewMode = ReviewMode.CONTEXT_TRIM,
     ) -> TrimReviewWindow:
         window = TrimReviewWindow(
             paths=self.paths,
             thread_id=thread_id,
             load_task_list=load_task_list,
+            mode=mode,
         )
         self._register_window(key, window)
         if show:

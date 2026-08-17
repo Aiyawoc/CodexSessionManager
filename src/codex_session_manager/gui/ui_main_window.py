@@ -111,6 +111,15 @@ class Ui_MainWindow(object):
 
         self.toolRailLayout.addWidget(self.projectTaskRailButton)
 
+        self.memoryRailButton = QToolButton(self.toolRail)
+        self.memoryRailButton.setObjectName(u"memoryRailButton")
+        self.memoryRailButton.setCheckable(True)
+        self.memoryRailButton.setChecked(False)
+        self.memoryRailButton.setAutoRaise(True)
+        self.memoryRailButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+
+        self.toolRailLayout.addWidget(self.memoryRailButton)
+
         self.toolRailSpacer = QSpacerItem(20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
 
         self.toolRailLayout.addItem(self.toolRailSpacer)
@@ -482,7 +491,9 @@ class Ui_MainWindow(object):
 #if QT_CONFIG(shortcut)
         self.summaryLabel.setBuddy(self.summaryEdit)
 #endif // QT_CONFIG(shortcut)
-        QWidget.setTabOrder(self.languageCombo, self.threadIdEdit)
+        QWidget.setTabOrder(self.languageCombo, self.projectTaskRailButton)
+        QWidget.setTabOrder(self.projectTaskRailButton, self.memoryRailButton)
+        QWidget.setTabOrder(self.memoryRailButton, self.threadIdEdit)
         QWidget.setTabOrder(self.threadIdEdit, self.loadButton)
         QWidget.setTabOrder(self.loadButton, self.taskListView)
         QWidget.setTabOrder(self.taskListView, self.taskRefreshButton)
@@ -531,6 +542,13 @@ class Ui_MainWindow(object):
 #endif // QT_CONFIG(tooltip)
 #if QT_CONFIG(accessibility)
         self.projectTaskRailButton.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u9879\u76ee\u4e0e\u4efb\u52a1", None))
+#endif // QT_CONFIG(accessibility)
+        self.memoryRailButton.setText(QCoreApplication.translate("MainWindow", u"\u8bb0\u5fc6", None))
+#if QT_CONFIG(tooltip)
+        self.memoryRailButton.setToolTip(QCoreApplication.translate("MainWindow", u"\u8bb0\u5fc6\u7ba1\u7406", None))
+#endif // QT_CONFIG(tooltip)
+#if QT_CONFIG(accessibility)
+        self.memoryRailButton.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u8bb0\u5fc6\u7ba1\u7406", None))
 #endif // QT_CONFIG(accessibility)
         self.taskTitle.setText(QCoreApplication.translate("MainWindow", u"\u9879\u76ee\u4e0e\u4efb\u52a1", None))
         self.taskPaneCollapseButton.setText(QCoreApplication.translate("MainWindow", u"\u6536\u8d77", None))

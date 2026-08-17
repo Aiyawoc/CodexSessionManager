@@ -305,14 +305,22 @@ class ReviewRequestStore:
             requested_ids = set(request.target_ids)
             requested_paths = set(request.target_paths)
             for target in bundle.targets:
-                if target.target_id and requested_ids and target.target_id not in requested_ids:
+                if (
+                    request.operation is ReviewOperation.CONVERSATION_CLEANUP
+                    and target.target_id
+                    and requested_ids
+                    and target.target_id not in requested_ids
+                ):
                     raise ValueError("suggestion target is outside the review request ids")
                 if (
-                    target.target_path
+                    request.operation is ReviewOperation.MEMORY_EDIT
+                    and target.target_path
                     and requested_paths
                     and target.target_path not in requested_paths
                 ):
                     raise ValueError("suggestion target is outside the review request paths")
+                if request.operation is ReviewOperation.CONTEXT_TRIM and target.target_path:
+                    raise ValueError("context trim suggestions must target turn or item ids")
         return request
 
 

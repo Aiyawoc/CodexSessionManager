@@ -165,7 +165,7 @@ scripts/install_user.sh /absolute/path/to/CodexSessionManager.app
 
 ### GUI 操作流程
 
-直接启动 CodexSessionManager 会打开统一审查工作台，左侧提供“对话清理、上下文优化、记忆管理、待处理计划、备份与恢复”五类入口。当前对话清理页可加载密封建议、取消选择，并在重新读取当前状态后保存最终 ActionPlan；该操作不会创建备份或执行归档。待处理页可只读索引审查请求和已保存 TrimPlan；尚未完成的备份归档、记忆写入和统一恢复动作保持禁用。
+直接启动 CodexSessionManager 会打开原有的项目/任务、时间线、上下文和动作审查 GUI。上下文优化继续使用这套完整界面；对话清理请求会把 LLM/Skill 初筛后的安全候选按项目灌入原任务列表并预选，由用户取消或调整后再进入本地计划与备份门禁。左侧工具栏第二个按钮切换到记忆管理模式，继续复用相同窗口布局；当前只展示明确请求的记忆来源，文件分段和写入仍保持禁用。待处理计划与备份/恢复继续作为辅助入口，不替代主审查 GUI。
 
 <p align="center">
   <img src="docs/images/context-trimming-demo-cn.gif" alt="使用虚构对话数据演示十二秒上下文裁剪流程" width="100%">
@@ -176,7 +176,9 @@ scripts/install_user.sh /absolute/path/to/CodexSessionManager.app
 2. **时间线**显示模型可见的 turn/item，并默认过滤空内部事件；Token 数量使用紧凑单位。
 3. **上下文**内容可编辑，支持显示隐藏标签、分段渲染、Markdown 预览和本地敏感命中高亮。
 4. **裁剪动作**支持 `keep`、`exclude`、`summary` 和 `protect`。当前请求、进行中 turn、有效目标、未解决错误和未知 item 等硬保护内容不能被静默删除。
-5. **备份并复验**只深读所选根任务及其派生后代，使用 age recipient 加密并立即完整解密校验；它不会隐式归档任务。
+5. **外部建议灌入**只接受本地重新绑定的对话、turn 或 item ID 与当前指纹；硬保护和 `validate_selections` 始终拥有最终否决权。
+6. **记忆管理**通过左侧第二按钮进入同一窗口壳；当前为只读来源审查，后续将沿用类似的分段、动作、diff 和最终确认流程。
+7. **备份并复验**只深读所选根任务及其派生后代，使用 age recipient 加密并立即完整解密校验；它不会隐式归档任务。
 
 “保存方案”只将已审查的 `TrimPlan` 写入 CSM 数据目录，不修改 Codex。“派生精简任务”会先重新校验计划、等待原任务处于 `idle` 或 `notLoaded`，再创建新的派生任务。
 
@@ -212,13 +214,13 @@ csm cleanup apply PLAN.json --confirm PLAN_ID
 | `csm schema audit` | 生成不含私有路径或对话内容的版本化协议差异报告 |
 | `csm acceptance report` | 汇总固定阶段、散列任务 ID 与证据哈希；始终标记非生产验收 |
 | `csm backup create\|verify` | 流式 age 加密备份与完整复验 |
-| `csm cleanup review` | 生成密封清理建议并打开只读审查页，不创建执行计划 |
+| `csm cleanup review` | 生成密封清理建议并灌入原项目/任务 GUI，由用户最终选择 |
 | `csm cleanup plan\|apply` | 计划式归档/反归档工作流 |
 | `csm purge plan\|apply` | 独立门禁的永久删除工作流 |
 | `csm restore plan\|apply` | 使用新对话 ID 进行逻辑恢复 |
 | `csm import {chatgpt\|codex} ...` | 规划并应用官方 ChatGPT 导出或 Codex rollout 数据导入 |
 | `csm trim review\|suggest\|apply` | GUI/人工审查、本地建议与派生裁剪 |
-| `csm gui open` | 打开统一工作台、指定页面或密封审查请求 |
+| `csm gui open` | 打开原审查 GUI 的指定模式或密封请求；pending/backup 使用辅助入口 |
 | `csm hook install\|status\|uninstall` | 可选 PreCompact/PostCompact 集成 |
 | `csm audit show\|verify` | 查看并验证 CSM 审计链 |
 

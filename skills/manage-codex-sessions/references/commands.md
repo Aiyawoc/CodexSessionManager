@@ -21,6 +21,8 @@ Hook 中禁止使用 `uv`、`.venv`、网络下载或依赖安装。
 ```text
 csm threads list --project /absolute/project/path
 csm threads show TASK_ID
+csm cleanup review --older-than-days 90
+csm cleanup review --request REVIEW_REQUEST.json
 csm cleanup plan --action archive --older-than-days 90
 csm backup create OUT.csmbackup --thread TASK_ID --recipient AGE_RECIPIENT --identity IDENTITY_FILE
 csm cleanup apply PLAN.json --confirm PLAN_ID
@@ -32,6 +34,7 @@ csm purge apply PLAN.json --confirm PLAN_ID --permanent-phrase "PERMANENTLY DELE
 `reconcile` 只在 Codex App 原生任务工具已完成归档后使用；它不执行 Codex 写入。
 
 选择根任务创建备份时，CSM 会自动展开其完整派生后代；输出中的 `covered_thread_ids` 必须与随后归档计划的 affected IDs 对齐。
+`cleanup review` 只生成结构化建议和桌面审查请求，不创建归档 ActionPlan，也不满足备份或执行授权。
 
 ## 备份、恢复与导入
 
@@ -53,6 +56,12 @@ csm import codex apply PLAN.json /path/to/other/.codex/sessions --confirm PLAN_I
 csm trim review TASK_ID
 csm trim suggest TASK_ID
 csm trim apply PLAN.json --confirm PLAN_ID
+csm gui open --page cleanup
+csm gui open --page context
+csm gui open --page memory
+csm gui open --page pending
+csm gui open --page backup_restore
+csm gui open --request REVIEW_REQUEST.json
 csm hook status
 csm hook install --yes
 csm hook uninstall --yes

@@ -120,6 +120,48 @@ class CleanupPlanner:
             options={"stale_before": cutoff.isoformat(), "automatic_ceiling": "archive"},
         )
 
+    def archive_candidates(
+        self,
+        snapshots: tuple[ThreadSnapshot, ...],
+        *,
+        now: datetime | None = None,
+        criteria: InventoryFilter | None = None,
+    ) -> tuple[ThreadSnapshot, ...]:
+        """Return safe, top-level archive suggestions without creating a write plan."""
+
+        effective_now = (now or utc_now()).astimezone(UTC)
+        cutoff = effective_now - self.policy.stale_after
+        all_snapshots = {snapshot.id: snapshot for snapshot in snapshots}
+        candidates: list[ThreadSnapshot] = []
+        for snapshot in snapshots:
+            if (
+                snapshot.archived
+                or snapshot.pinned
+                or snapshot.ephemeral
+                or not snapshot.mapping_complete
+                or not snapshot.content_complete
+            ):
+                continue
+            if snapshot.status not in SAFE_INACTIVE_STATUSES:
+                continue
+            if snapshot.updated_at is None or snapshot.updated_at >= cutoff:
+                continue
+            candidates.append(snapshot)
+        candidate_ids = {snapshot.id for snapshot in candidates}
+        roots = _non_overlapping_roots(
+            [
+                root
+                for root in _top_level_candidates(candidates, all_snapshots)
+                if {root.id, *root.spawned_descendant_ids} <= candidate_ids
+                and (criteria is None or matches_filter(root, criteria))
+            ]
+        )
+        if len(roots) > self.policy.maximum_roots:
+            roots = sorted(
+                roots, key=lambda item: item.updated_at or datetime.min.replace(tzinfo=UTC)
+            )[: self.policy.maximum_roots]
+        return tuple(roots)
+
     def archive_hydration_ids(
         self,
         summaries: tuple[ThreadSnapshot, ...],

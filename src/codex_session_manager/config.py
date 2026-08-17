@@ -33,6 +33,18 @@ class AppPaths:
     audit_db: Path
     codex_home: Path
 
+    @property
+    def review_requests_dir(self) -> Path:
+        return self.data_dir / "review-requests"
+
+    @property
+    def suggestions_dir(self) -> Path:
+        return self.data_dir / "suggestions"
+
+    @property
+    def pending_review_requests_dir(self) -> Path:
+        return self.data_dir / "pending-review-requests"
+
     def ensure(self) -> None:
         """Create application-owned directories with user-only permissions."""
 
@@ -44,6 +56,9 @@ class AppPaths:
             self.plans_dir,
             self.imports_dir,
             self.backups_dir,
+            self.review_requests_dir,
+            self.suggestions_dir,
+            self.pending_review_requests_dir,
         ):
             path.mkdir(parents=True, exist_ok=True, mode=0o700)
             with contextlib.suppress(OSError):

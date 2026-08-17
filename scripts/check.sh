@@ -17,7 +17,10 @@ uv run --locked pyside6-uic src/codex_session_manager/gui/precompact_prompt.ui -
 cmp "$CSM_CHECK_ROOT/ui_main_window.py" src/codex_session_manager/gui/ui_main_window.py
 cmp "$CSM_CHECK_ROOT/ui_precompact_prompt.py" src/codex_session_manager/gui/ui_precompact_prompt.py
 uv run --locked pyside6-rcc src/codex_session_manager/gui/resources.qrc -o "$CSM_CHECK_ROOT/resources_rc.py"
-cmp "$CSM_CHECK_ROOT/resources_rc.py" src/codex_session_manager/gui/resources_rc.py
+# RCC v3 embeds checkout-dependent source mtimes in qt_resource_struct. Compare
+# names, payloads, and tree records while ignoring only those timestamp bytes.
+uv run --locked python scripts/compare_qt_resources.py \
+  "$CSM_CHECK_ROOT/resources_rc.py" src/codex_session_manager/gui/resources_rc.py
 uv run --locked ruff format --check .
 uv run --locked ruff check .
 uv run --locked mypy src/codex_session_manager

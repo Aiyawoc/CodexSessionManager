@@ -31,6 +31,7 @@ def test_cli_exposes_planned_command_surface() -> None:
         "audit",
         "schema",
         "acceptance",
+        "gui",
     ):
         assert command in root.stdout
 
@@ -38,6 +39,20 @@ def test_cli_exposes_planned_command_surface() -> None:
     assert codex_import.exit_code == 0
     assert "plan" in codex_import.stdout
     assert "apply" in codex_import.stdout
+
+    gui = runner.invoke(app, ["gui", "open", "--help"])
+    assert gui.exit_code == 0
+    assert "--request" in gui.stdout
+    assert "--page" in gui.stdout
+    assert "--thread" in gui.stdout
+
+    cleanup = runner.invoke(app, ["cleanup", "--help"])
+    assert cleanup.exit_code == 0
+    assert "review" in cleanup.stdout
+    cleanup_review = runner.invoke(app, ["cleanup", "review", "--help"])
+    assert cleanup_review.exit_code == 0
+    assert "--older-than-days" in cleanup_review.stdout
+    assert "--request" in cleanup_review.stdout
 
 
 def test_cli_version_does_not_contact_app_server() -> None:

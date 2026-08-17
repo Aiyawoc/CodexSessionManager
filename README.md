@@ -165,6 +165,8 @@ The installer atomically replaces `~/Applications/CodexSessionManager.app`, reta
 
 ### GUI workflow
 
+Launching CodexSessionManager now opens a unified review workspace with five entries: Conversation Cleanup, Context Optimization, Memory Management, Pending Plans, and Backup & Restore. The cleanup page can load sealed suggestions, let users deselect them, and persist a final ActionPlan after re-reading current state; this does not create a backup or execute an archive. The pending page provides a read-only index of queued review requests and saved TrimPlans. Incomplete backup/archive, memory-write, and unified-restore actions remain disabled.
+
 <p align="center">
   <img src="docs/images/context-trimming-demo-en.gif" alt="Twelve-second context-trimming demo using fictional conversation data" width="100%">
 </p>
@@ -185,13 +187,15 @@ csm doctor
 csm schema audit --output schema-audit-v1.json
 csm threads list
 csm threads show CONVERSATION_ID --include-content
-csm trim review --thread-id CONVERSATION_ID
+csm gui open --page pending
+csm trim review CONVERSATION_ID
 csm audit show
 ```
 
-Create and verify an encrypted backup before planning an archive:
+You can generate non-executing cleanup suggestions before entering the plan-and-backup workflow:
 
 ```bash
+csm cleanup review --older-than-days 90
 csm backup create backup.csmbackup \
   --thread CONVERSATION_ID \
   --recipient age1... \
@@ -208,11 +212,13 @@ Important command groups:
 | `csm schema audit` | Write a versioned protocol-difference report without private paths or conversation content |
 | `csm acceptance report` | Record fixed stages, hashed task IDs, and evidence hashes; always non-production |
 | `csm backup create\|verify` | Streaming age-encrypted backup and full verification |
-| `csm cleanup plan\|apply` | Reversible archive/unarchive workflow |
+| `csm cleanup review` | Create sealed cleanup suggestions and open read-only review without an execution plan |
+| `csm cleanup plan\|apply` | Plan-based archive/unarchive workflow |
 | `csm purge plan\|apply` | Separately gated permanent deletion workflow |
 | `csm restore plan\|apply` | Logical restore with new conversation IDs |
 | `csm import {chatgpt\|codex} ...` | Plan and apply imports from official ChatGPT exports or Codex rollout data |
 | `csm trim review\|suggest\|apply` | GUI/manual review, local suggestions, and derived trimming |
+| `csm gui open` | Open the unified workspace, a specific page, or a sealed review request |
 | `csm hook install\|status\|uninstall` | Optional PreCompact/PostCompact integration |
 | `csm audit show\|verify` | Inspect and verify the CSM audit chain |
 
@@ -402,3 +408,14 @@ The current project code was generated entirely by ChatGPT, but generated code i
 CodexSessionManager is released under the [MIT License](LICENSE). Bundled dependencies and tools retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ⭐ If this project is useful to you, consider giving it a Star. Continued maintenance and iteration are planned.
+
+## 🗺️ Planned: memory file management
+
+The next planned capability is guarded management of memory files used to preserve durable project or agent context. The initial roadmap is intentionally safety-first and should reuse CSM's existing review, planning, backup, and audit model.
+
+- [ ] Define supported memory-file locations, formats, ownership rules, and project/account boundaries.
+- [ ] Add read-only discovery, indexing, search, preview, metadata, and sensitive-data review for memory files.
+- [ ] Add reviewed change plans with before/after diff, validation, explicit confirmation, and protection against out-of-scope writes.
+- [ ] Add backup, version history, restore, and rollback so memory edits remain recoverable and auditable.
+- [ ] Expose memory management through consistent GUI, CLI, and Skill workflows, with clear links between memories, projects, and conversations.
+- [ ] Add focused tests and documentation for permission boundaries, concurrent changes, malformed files, recovery, and cross-platform behavior.

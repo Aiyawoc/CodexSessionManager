@@ -165,6 +165,8 @@ scripts/install_user.sh /absolute/path/to/CodexSessionManager.app
 
 ### GUI 操作流程
 
+直接启动 CodexSessionManager 会打开统一审查工作台，左侧提供“对话清理、上下文优化、记忆管理、待处理计划、备份与恢复”五类入口。当前对话清理页可加载密封建议、取消选择，并在重新读取当前状态后保存最终 ActionPlan；该操作不会创建备份或执行归档。待处理页可只读索引审查请求和已保存 TrimPlan；尚未完成的备份归档、记忆写入和统一恢复动作保持禁用。
+
 <p align="center">
   <img src="docs/images/context-trimming-demo-cn.gif" alt="使用虚构对话数据演示十二秒上下文裁剪流程" width="100%">
 </p>
@@ -185,13 +187,15 @@ csm doctor
 csm schema audit --output schema-audit-v1.json
 csm threads list
 csm threads show CONVERSATION_ID --include-content
-csm trim review --thread-id CONVERSATION_ID
+csm gui open --page pending
+csm trim review CONVERSATION_ID
 csm audit show
 ```
 
-归档前先创建并验证加密备份：
+可先生成不执行写入的清理建议，再进入计划与备份流程：
 
 ```bash
+csm cleanup review --older-than-days 90
 csm backup create backup.csmbackup \
   --thread CONVERSATION_ID \
   --recipient age1... \
@@ -208,11 +212,13 @@ csm cleanup apply PLAN.json --confirm PLAN_ID
 | `csm schema audit` | 生成不含私有路径或对话内容的版本化协议差异报告 |
 | `csm acceptance report` | 汇总固定阶段、散列任务 ID 与证据哈希；始终标记非生产验收 |
 | `csm backup create\|verify` | 流式 age 加密备份与完整复验 |
-| `csm cleanup plan\|apply` | 可恢复的归档/反归档工作流 |
+| `csm cleanup review` | 生成密封清理建议并打开只读审查页，不创建执行计划 |
+| `csm cleanup plan\|apply` | 计划式归档/反归档工作流 |
 | `csm purge plan\|apply` | 独立门禁的永久删除工作流 |
 | `csm restore plan\|apply` | 使用新对话 ID 进行逻辑恢复 |
 | `csm import {chatgpt\|codex} ...` | 规划并应用官方 ChatGPT 导出或 Codex rollout 数据导入 |
 | `csm trim review\|suggest\|apply` | GUI/人工审查、本地建议与派生裁剪 |
+| `csm gui open` | 打开统一工作台、指定页面或密封审查请求 |
 | `csm hook install\|status\|uninstall` | 可选 PreCompact/PostCompact 集成 |
 | `csm audit show\|verify` | 查看并验证 CSM 审计链 |
 
@@ -402,3 +408,14 @@ CSM 可以为 CSM 备份、Codex rollout 数据和官方 ChatGPT 导出生成逻
 CodexSessionManager 使用 [MIT License](LICENSE)。打包的依赖与工具保留各自许可证，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ⭐ 如果本项目对你有帮助，欢迎 Star 支持，我会持续维护迭代。
+
+## 🗺️ 计划：记忆文件管理
+
+下一阶段计划增加对记忆文件的受控管理，用于维护可长期保留的项目或 Agent 上下文。首版将继续沿用 CSM 现有的审查、计划、备份和审计思路，以安全性和可恢复性为优先目标。
+
+- [ ] 明确支持的记忆文件位置、格式、归属规则，以及项目/账号之间的边界。
+- [ ] 增加记忆文件的只读发现、索引、搜索、预览、元数据查看和敏感信息审查。
+- [ ] 增加带修改前后 diff、校验、明确确认和越界写入保护的变更计划。
+- [ ] 增加备份、版本历史、恢复和回滚，使记忆修改可恢复、可审计。
+- [ ] 通过统一的 GUI、CLI 和 Skill 工作流提供记忆管理，并清晰关联记忆、项目与对话。
+- [ ] 补充权限边界、并发修改、损坏文件、恢复流程和跨平台行为的专项测试与文档。

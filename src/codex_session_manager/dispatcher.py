@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from io import TextIOWrapper
+from pathlib import Path
 from typing import Literal, cast
 
 
@@ -45,6 +46,14 @@ def main() -> int:
         from codex_session_manager.gui.main import run_gui
 
         return run_gui()
+    if len(arguments) == 2 and arguments[0] == "--request":
+        from codex_session_manager.gui.main import run_gui
+
+        try:
+            return run_gui(request_path=Path(arguments[1]))
+        except (OSError, ValueError) as exc:
+            print(f"无法打开审查请求：{exc}", file=sys.stderr)
+            return 2
     if arguments[0] == "cli":
         return _run_cli(arguments[1:])
     if (

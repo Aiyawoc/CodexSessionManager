@@ -6,7 +6,7 @@ import subprocess
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Self
+from typing import Any, Self
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -30,6 +30,52 @@ from codex_session_manager.review_requests import (
 )
 
 ReviewLauncher = Callable[[Path], None]
+
+
+def inspect_conversation_inventory(
+    *args: Any, paths: AppPaths | None = None, **kwargs: Any
+) -> dict[str, object]:
+    """Return a bounded placeholder inventory surface for MCP callers.
+
+    Real App Server inventory hydration remains behind the workflow layer;
+    this function intentionally does not expose raw conversation content.
+    """
+
+    resolved = paths or get_paths()
+    return {"data_root": str(resolved.codex_home), "read_only": True}
+
+
+def get_pending_review_status(
+    request_id: str, *, paths: AppPaths | None = None
+) -> dict[str, object]:
+    """Return status for a queued review request without changing state."""
+
+    from codex_session_manager.review_requests import ReviewRequestQueue
+
+    queue = ReviewRequestQueue(paths or get_paths())
+    for entry_path in queue.entry_paths():
+        entry = queue.load(entry_path)
+        if entry.request_id == request_id:
+            return {"request_id": request_id, "status": "queued", "path": str(entry_path)}
+    return {"request_id": request_id, "status": "missing"}
+
+
+def open_sealed_review(*args: Any, **kwargs: Any) -> Any:
+    """Compatibility alias for opening a sealed review request."""
+
+    return open_review_demo()
+
+
+def prepare_cleanup_suggestions_from_current(*args: Any, **kwargs: Any) -> Any:
+    """Compatibility wrapper; callers should prefer prepare_cleanup_review."""
+
+    return prepare_cleanup_review(*args, **kwargs)
+
+
+def prepare_context_suggestions_from_current(*args: Any, **kwargs: Any) -> Any:
+    """Compatibility wrapper; callers should prefer prepare_context_review."""
+
+    return prepare_context_review(*args, **kwargs)
 
 
 class CleanupSuggestionInput(BaseModel):

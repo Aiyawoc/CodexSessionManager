@@ -45,6 +45,10 @@ class AppPaths:
     def pending_review_requests_dir(self) -> Path:
         return self.data_dir / "pending-review-requests"
 
+    @property
+    def pending_trim_plans_dir(self) -> Path:
+        return self.data_dir / "pending-trim-plans"
+
     def ensure(self) -> None:
         """Create application-owned directories with user-only permissions."""
 
@@ -59,6 +63,7 @@ class AppPaths:
             self.review_requests_dir,
             self.suggestions_dir,
             self.pending_review_requests_dir,
+            self.pending_trim_plans_dir,
         ):
             path.mkdir(parents=True, exist_ok=True, mode=0o700)
             with contextlib.suppress(OSError):

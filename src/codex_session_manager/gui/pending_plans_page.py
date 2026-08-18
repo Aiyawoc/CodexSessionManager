@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -23,6 +24,8 @@ from codex_session_manager.pending import (
     PendingPlanEntry,
     PendingPlanStore,
 )
+from codex_session_manager.pending_plans import PendingPlanStatus, PendingTrimPlanStore
+from codex_session_manager.pending_service import PendingPlanService
 
 
 class PendingPlansPage(QWidget):
@@ -30,10 +33,17 @@ class PendingPlansPage(QWidget):
 
     open_review_requested = Signal(str)
     open_thread_requested = Signal(str)
+    check_requested = Signal(str)
+    cancel_requested = Signal(str)
+    pending_changed = Signal()
+    pending_changed = Signal()
 
     def __init__(self, paths: AppPaths, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.store = PendingPlanStore(paths)
+        self.pending_store = PendingTrimPlanStore(paths)
+        self.pending_service = PendingPlanService(self.pending_store)
+        self.pending_trim_store = PendingTrimPlanStore(paths)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 20, 20, 20)
@@ -72,6 +82,18 @@ class PendingPlansPage(QWidget):
         self.open_button.setEnabled(False)
         self.open_button.clicked.connect(self._open_selected)
         actions.addWidget(self.open_button)
+        self.check_button = QPushButton("检查状态")
+        self.check_button.setEnabled(False)
+        self.check_button.clicked.connect(self._check_selected)
+        actions.addWidget(self.check_button)
+        self.cancel_button = QPushButton("取消计划")
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self._cancel_selected)
+        actions.addWidget(self.cancel_button)
+        self.cancel_button = QPushButton("取消计划")
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self._cancel_selected)
+        actions.addWidget(self.cancel_button)
         root.addLayout(actions)
 
     def refresh(self) -> None:
@@ -92,7 +114,11 @@ class PendingPlansPage(QWidget):
     @staticmethod
     def _item_for(entry: PendingPlanEntry) -> QTreeWidgetItem:
         created = PendingPlansPage._format_datetime(entry.created_at)
-        kind_label = "审查请求" if entry.kind is PendingEntryKind.REVIEW_REQUEST else "上下文方案"
+        kind_label = {
+            PendingEntryKind.REVIEW_REQUEST: "审查请求",
+            PendingEntryKind.PENDING_TRIM_PLAN: "待处理上下文方案",
+            PendingEntryKind.TRIM_PLAN: "上下文方案",
+        }[entry.kind]
         state_label = "可复核" if entry.state is PendingEntryState.READY else "校验失败"
         summary = entry.summary if entry.error is None else f"{entry.summary} {entry.error}"
         item = QTreeWidgetItem(
@@ -131,6 +157,15 @@ class PendingPlansPage(QWidget):
     def _selection_changed(self) -> None:
         entry = self._selected_entry()
         self.open_button.setEnabled(entry is not None and entry.state is PendingEntryState.READY)
+        pending = entry is not None and entry.kind is PendingEntryKind.PENDING_TRIM_PLAN
+        self.check_button.setEnabled(pending)
+        self.cancel_button.setEnabled(pending)
+
+    def _check_selected(self) -> None:
+        entry = self._selected_entry()
+        if entry is None or entry.kind is not PendingEntryKind.PENDING_TRIM_PLAN:
+            return
+        self.check_requested.emit(entry.entry_id)
 
     def _open_selected(self) -> None:
         entry = self._selected_entry()
@@ -140,3 +175,16 @@ class PendingPlansPage(QWidget):
             self.open_review_requested.emit(entry.path)
         elif entry.target_id:
             self.open_thread_requested.emit(entry.target_id)
+
+    def _cancel_selected(self) -> None:
+        entry = self._selected_entry()
+        if entry is None or entry.kind is not PendingEntryKind.PENDING_TRIM_PLAN:
+            return
+        try:
+            pending = self.pending_trim_store.load(Path(entry.path))
+        except (OSError, ValueError):
+            return
+        if pending.status in {PendingPlanStatus.APPLIED, PendingPlanStatus.CANCELLED}:
+            return
+        self.pending_trim_store.transition(pending, PendingPlanStatus.CANCELLED)
+        self.refresh()

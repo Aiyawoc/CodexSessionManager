@@ -236,3 +236,5 @@ open_review_demo
 - 已明确标注未签名/未公证/未生产验收的限制。
 
 正式公开发布还需要单独完成 Developer ID、公证、Windows 原生验收和发布资产检查。
+
+正式公开发布使用更严格的人工门禁，见 [`v1.1.0 正式发布前人工验收 Runbook`](formal-release-manual-v1.1.0.md)。

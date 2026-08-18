@@ -293,6 +293,7 @@ csm hook uninstall --yes
 - [架构决策记录](docs/adr/)
 - [App Server schema 人工批准流程](docs/acceptance/app-server-schema-approval.md)
 - [`v1.1.0` 首次交付验收 Runbook](docs/acceptance/first-delivery-v1.1.0.md)
+- [`v1.1.0` 正式发布前人工验收 Runbook](docs/acceptance/formal-release-manual-v1.1.0.md)
 - [`v1.1.0` 首次交付候选说明](docs/releases/v1.1.0-first-delivery.md)
 - [`v1.0.1` macOS 真实账号验收 Runbook](docs/acceptance/macos-real-account-v1.0.1.md)
 - [`v1.0.1` 加固候选说明](docs/releases/v1.0.1-test.md)

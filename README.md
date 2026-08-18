@@ -293,6 +293,7 @@ Installation does not silently enable Hooks. After installation, review and trus
 - [Architecture decision records](docs/adr/)
 - [Human App Server schema approval process](docs/acceptance/app-server-schema-approval.md)
 - [`v1.1.0` first-delivery acceptance runbook](docs/acceptance/first-delivery-v1.1.0.md)
+- [`v1.1.0` pre-release manual acceptance runbook](docs/acceptance/formal-release-manual-v1.1.0.md)
 - [`v1.1.0` first-delivery candidate notes](docs/releases/v1.1.0-first-delivery.md)
 - [`v1.0.1` macOS real-account acceptance runbook](docs/acceptance/macos-real-account-v1.0.1.md)
 - [`v1.0.1` hardening-candidate notes](docs/releases/v1.0.1-test.md)

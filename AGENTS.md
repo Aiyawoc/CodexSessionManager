@@ -32,7 +32,8 @@
 - 领域语言与关系：`CONTEXT.md`；长期架构决策：`docs/adr/`。
 - 用户工作流、安装和安全说明：`README-cn.md`；英文说明：`README.md`。
 - App Server 新画像人工批准：`docs/acceptance/app-server-schema-approval.md`。
-- v1.0.1 真实账号人工验收：`docs/acceptance/macos-real-account-v1.0.1.md`。
+- v1.0.1 历史真实账号人工验收：`docs/acceptance/macos-real-account-v1.0.1.md`。
+- v1.1.0 首次交付验收：`docs/acceptance/first-delivery-v1.1.0.md`。
 - Python 版本、依赖组和锁文件：`.python-version`、`pyproject.toml`、`uv.lock`。
 - Skill 使用入口：`skills/manage-codex-sessions/SKILL.md`。
 - Skill 安全不变量：`skills/manage-codex-sessions/references/safety.md`。

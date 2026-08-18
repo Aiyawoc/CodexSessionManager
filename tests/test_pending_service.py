@@ -13,7 +13,7 @@ def test_pending_plan_service_transitions_are_safe(tmp_path, app_paths):
         plan_id="plan-1",
         plan_sha256="a" * 64,
         source_thread_id="thread-1",
-        source_thread_fingerprint="fingerprint",
+        source_thread_fingerprint="b" * 64,
         capability_fingerprint="capability",
     )
     pending = PendingTrimPlan(

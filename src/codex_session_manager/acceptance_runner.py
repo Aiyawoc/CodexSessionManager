@@ -31,6 +31,7 @@ from codex_session_manager.version import __version__
 class AutomatedCheckStatus(StrEnum):
     PASSED = "passed"
     FAILED = "failed"
+    SKIPPED = "skipped"
 
 
 class AutomatedAcceptanceCheck(FrozenModel):
@@ -89,6 +90,9 @@ def _run_check(
 ) -> AutomatedAcceptanceCheck:
     try:
         detail = function(paths)
+    except FileNotFoundError as exc:
+        status = AutomatedCheckStatus.FAILED if required else AutomatedCheckStatus.SKIPPED
+        detail = str(exc)
     except BaseException as exc:
         status = AutomatedCheckStatus.FAILED
         detail = f"{type(exc).__name__}: {exc}"

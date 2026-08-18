@@ -40,6 +40,7 @@ class UnifiedMainWindow(QMainWindow):
 
     open_thread_requested = Signal(str)
     open_review_requested = Signal(str)
+    open_pending_requested = Signal(str)
     window_closed = Signal()
 
     def __init__(self, paths: AppPaths, parent: QWidget | None = None) -> None:
@@ -113,6 +114,7 @@ class UnifiedMainWindow(QMainWindow):
         self.context_page.open_thread_requested.connect(self.open_thread_requested)
         self.pending_page.open_thread_requested.connect(self.open_thread_requested)
         self.pending_page.open_review_requested.connect(self.open_review_requested)
+        self.pending_page.open_pending_requested.connect(self.open_pending_requested)
         self.open_page(DesktopPage.CONTEXT)
 
     @property

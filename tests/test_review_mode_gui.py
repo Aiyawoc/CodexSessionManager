@@ -7,7 +7,13 @@ from codex_session_manager.gui import controller as controller_module
 from codex_session_manager.gui.controller import TrimReviewWindow
 from codex_session_manager.gui.review_mode import ReviewMode
 from codex_session_manager.memory import MemoryAction, MemoryService, MemorySourceRegistry
-from codex_session_manager.models import TrimAction
+from codex_session_manager.models import TrimAction, TrimPlan, TrimSelection
+from codex_session_manager.pending_plans import (
+    PendingPlanStatus,
+    PendingTrimPlan,
+    PendingTrimPlanStore,
+)
+from codex_session_manager.plans import PlanStore
 from codex_session_manager.review_requests import (
     ReviewOperation,
     ReviewRequest,
@@ -158,6 +164,66 @@ def test_memory_request_injects_llm_suggestions_with_local_protection_veto(
     assert window.memory_selections[heading.segment_id].action is MemoryAction.PROTECT
     assert "已灌入 1 条 LLM 建议" in window.ui.taskContextStatusLabel.text()
     assert "1 条" in window.ui.taskContextStatusLabel.text()
+
+
+def test_ready_pending_trim_plan_loads_exact_saved_selection_and_marks_applied(
+    qtbot, app_paths, capabilities, snapshot_factory, monkeypatch
+) -> None:
+    snapshot = snapshot_factory("pending-review-thread")
+    plan = TrimPlan.create(
+        source_thread=snapshot,
+        capability_fingerprint=capabilities.fingerprint,
+        selections=(
+            TrimSelection(
+                target_id=snapshot.turns[0].id,
+                action=TrimAction.KEEP,
+            ),
+        ),
+        estimated_tokens_after=snapshot.token_estimate,
+        trigger="hook",
+    )
+    plan_path = PlanStore(app_paths).save(plan)
+    store = PendingTrimPlanStore(app_paths)
+    ready = store.transition(
+        PendingTrimPlan(
+            plan_id=plan.plan_id,
+            plan_path=str(plan_path),
+            plan_sha256=plan.plan_sha256,
+            source_thread_id=plan.source_thread_id,
+            source_fingerprint=plan.source_thread_fingerprint,
+            created_at=plan.created_at,
+        ),
+        PendingPlanStatus.READY,
+    )
+
+    class FakeWorkflows:
+        def read_thread(self, thread_id: str, *, include_turns: bool = True) -> ThreadReadResult:
+            assert thread_id == snapshot.id
+            assert include_turns
+            return ThreadReadResult(capabilities, snapshot)
+
+    window = TrimReviewWindow(
+        paths=app_paths,
+        load_task_list=False,
+        workflows=FakeWorkflows(),  # type: ignore[arg-type]
+    )
+    qtbot.addWidget(window)
+
+    window.load_pending_trim_plan(ready)
+    qtbot.waitUntil(lambda: window.document is not None, timeout=2000)
+
+    assert window.current_plan == plan
+    assert window.property("csmPendingTrimPlanId") == plan.plan_id
+    assert window.selections[snapshot.turns[0].id].action is TrimAction.KEEP
+
+    monkeypatch.setattr(
+        controller_module.QMessageBox,
+        "information",
+        lambda *_args, **_kwargs: controller_module.QMessageBox.StandardButton.Ok,
+    )
+    window._apply_succeeded(window._generation, "derived-thread")
+
+    assert store.load(store.path_for(plan.plan_id)).status is PendingPlanStatus.APPLIED
 
 
 def test_cleanup_request_is_injected_into_original_project_list(

@@ -1,0 +1,11 @@
+diff --git a/scripts/deploy_lib/__init__.py b/scripts/deploy_lib/__init__.py
+index e4b13a8..51051c9 100644
+--- a/scripts/deploy_lib/__init__.py
++++ b/scripts/deploy_lib/__init__.py
+@@ -21,2 +21,4 @@
+-DEFAULT_IGNORE_DIRS = {"site-packages", "deployment", ".git", ".qtcreator", "build", "dist",
+-                       "tests", "doc", "docs", "examples", ".vscode", "__pycache__"}
++DEFAULT_IGNORE_DIRS = {"site-packages", ".venv", ".venv-build", ".uv-cache",
++                       ".nuitka-cache", "deployment", ".git", ".qtcreator", "build", "dist",
++                       "vendor", "artifacts", "tests", "doc", "docs", "examples", ".vscode",
++                       "__pycache__"}

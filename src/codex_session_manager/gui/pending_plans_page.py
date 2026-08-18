@@ -1,11 +1,10 @@
-"""Read-only pending review and saved trim-plan center."""
+"""Pending review and delayed TrimPlan center."""
 
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QThreadPool, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -18,32 +17,30 @@ from PySide6.QtWidgets import (
 )
 
 from codex_session_manager.config import AppPaths
+from codex_session_manager.gui.worker import FunctionWorker
 from codex_session_manager.pending import (
     PendingEntryKind,
     PendingEntryState,
     PendingPlanEntry,
     PendingPlanStore,
 )
-from codex_session_manager.pending_plans import PendingPlanStatus, PendingTrimPlanStore
-from codex_session_manager.pending_service import PendingPlanService
+from codex_session_manager.workflows import ApplicationWorkflows, PendingTrimInspection
 
 
 class PendingPlansPage(QWidget):
-    """List persisted work without applying plans or deleting invalid entries."""
+    """Recheck delayed plans before opening the original context-review GUI."""
 
     open_review_requested = Signal(str)
     open_thread_requested = Signal(str)
-    check_requested = Signal(str)
-    cancel_requested = Signal(str)
-    pending_changed = Signal()
+    open_pending_requested = Signal(str)
     pending_changed = Signal()
 
     def __init__(self, paths: AppPaths, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.store = PendingPlanStore(paths)
-        self.pending_store = PendingTrimPlanStore(paths)
-        self.pending_service = PendingPlanService(self.pending_store)
-        self.pending_trim_store = PendingTrimPlanStore(paths)
+        self.workflows = ApplicationWorkflows(paths=paths, request_timeout=45)
+        self.thread_pool = QThreadPool.globalInstance()
+        self._busy = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 20, 20, 20)
@@ -54,8 +51,8 @@ class PendingPlansPage(QWidget):
         root.addWidget(title)
 
         self.status_label = QLabel(
-            "这里汇总尚未被桌面接收的审查请求，以及已经保存但尚未应用的 TrimPlan。"
-            "打开条目只进入复核页面，不直接执行写入。"
+            "这里汇总未被桌面接收的审查请求、已保存 TrimPlan，以及 Hook 创建的"
+            "待处理上下文计划。Hook 计划必须重新检查内容、能力和任务状态后才能继续。"
         )
         self.status_label.setObjectName("workspacePageStatus")
         self.status_label.setWordWrap(True)
@@ -78,18 +75,14 @@ class PendingPlansPage(QWidget):
         self.refresh_button.clicked.connect(self.refresh)
         actions.addWidget(self.refresh_button)
         actions.addStretch(1)
-        self.open_button = QPushButton("打开复核")
-        self.open_button.setEnabled(False)
-        self.open_button.clicked.connect(self._open_selected)
-        actions.addWidget(self.open_button)
         self.check_button = QPushButton("检查状态")
         self.check_button.setEnabled(False)
         self.check_button.clicked.connect(self._check_selected)
         actions.addWidget(self.check_button)
-        self.cancel_button = QPushButton("取消计划")
-        self.cancel_button.setEnabled(False)
-        self.cancel_button.clicked.connect(self._cancel_selected)
-        actions.addWidget(self.cancel_button)
+        self.open_button = QPushButton("打开复核")
+        self.open_button.setEnabled(False)
+        self.open_button.clicked.connect(self._open_selected)
+        actions.addWidget(self.open_button)
         self.cancel_button = QPushButton("取消计划")
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self._cancel_selected)
@@ -103,11 +96,14 @@ class PendingPlansPage(QWidget):
             self.tree.addTopLevelItem(self._item_for(entry))
         for column in range(5):
             self.tree.resizeColumnToContents(column)
-        ready = sum(entry.state is PendingEntryState.READY for entry in entries)
-        invalid = len(entries) - ready
+        counts = {
+            state: sum(entry.state is state for entry in entries) for state in PendingEntryState
+        }
         self.status_label.setText(
-            f"共 {len(entries)} 个条目：可复核 {ready} 个，校验失败 {invalid} 个。"
-            "校验失败条目会保留，等待用户在后续管理流程中处理。"
+            f"共 {len(entries)} 个条目：等待 {counts[PendingEntryState.WAITING]}，"
+            f"可复核 {counts[PendingEntryState.READY]}，"
+            f"已结束 {counts[PendingEntryState.TERMINAL]}，"
+            f"校验失败 {counts[PendingEntryState.INVALID]}。"
         )
         self._selection_changed()
 
@@ -116,10 +112,15 @@ class PendingPlansPage(QWidget):
         created = PendingPlansPage._format_datetime(entry.created_at)
         kind_label = {
             PendingEntryKind.REVIEW_REQUEST: "审查请求",
-            PendingEntryKind.PENDING_TRIM_PLAN: "待处理上下文方案",
+            PendingEntryKind.PENDING_TRIM_PLAN: "Hook 上下文方案",
             PendingEntryKind.TRIM_PLAN: "上下文方案",
         }[entry.kind]
-        state_label = "可复核" if entry.state is PendingEntryState.READY else "校验失败"
+        state_label = {
+            PendingEntryState.WAITING: "等待复核",
+            PendingEntryState.READY: "可复核",
+            PendingEntryState.TERMINAL: entry.lifecycle_status or "已结束",
+            PendingEntryState.INVALID: "校验失败",
+        }[entry.state]
         summary = entry.summary if entry.error is None else f"{entry.summary} {entry.error}"
         item = QTreeWidgetItem(
             (
@@ -156,16 +157,52 @@ class PendingPlansPage(QWidget):
 
     def _selection_changed(self) -> None:
         entry = self._selected_entry()
-        self.open_button.setEnabled(entry is not None and entry.state is PendingEntryState.READY)
-        pending = entry is not None and entry.kind is PendingEntryKind.PENDING_TRIM_PLAN
-        self.check_button.setEnabled(pending)
-        self.cancel_button.setEnabled(pending)
+        actionable = (
+            entry is not None
+            and entry.kind is PendingEntryKind.PENDING_TRIM_PLAN
+            and entry.state
+            in {
+                PendingEntryState.WAITING,
+                PendingEntryState.READY,
+            }
+        )
+        self.check_button.setEnabled(bool(actionable) and not self._busy)
+        self.cancel_button.setEnabled(bool(actionable) and not self._busy)
+        self.open_button.setEnabled(
+            entry is not None and entry.state is PendingEntryState.READY and not self._busy
+        )
+        self.refresh_button.setEnabled(not self._busy)
 
     def _check_selected(self) -> None:
         entry = self._selected_entry()
-        if entry is None or entry.kind is not PendingEntryKind.PENDING_TRIM_PLAN:
+        if entry is None or entry.kind is not PendingEntryKind.PENDING_TRIM_PLAN or self._busy:
             return
-        self.check_requested.emit(entry.entry_id)
+        self._busy = True
+        self.status_label.setText("正在重新读取 App Server 状态并复核计划…")
+        self._selection_changed()
+
+        def inspect() -> PendingTrimInspection:
+            return self.workflows.inspect_pending_trim_plan(entry.entry_id)
+
+        worker = FunctionWorker(inspect, self)
+        worker.signals.result.connect(self._check_succeeded)
+        worker.signals.error.connect(self._check_failed)
+        worker.signals.finished.connect(self._check_finished)
+        self.thread_pool.start(worker)
+
+    def _check_succeeded(self, value: object) -> None:
+        if not isinstance(value, PendingTrimInspection):
+            self.status_label.setText("待处理计划检查返回了异常结果。")
+            return
+        self.status_label.setText(f"计划 {value.plan.plan_id} 检查结果：{value.result.value}。")
+        self.pending_changed.emit()
+
+    def _check_failed(self, message: str) -> None:
+        self.status_label.setText(f"待处理计划检查失败：{message}")
+
+    def _check_finished(self) -> None:
+        self._busy = False
+        self.refresh()
 
     def _open_selected(self) -> None:
         entry = self._selected_entry()
@@ -173,18 +210,24 @@ class PendingPlansPage(QWidget):
             return
         if entry.kind is PendingEntryKind.REVIEW_REQUEST:
             self.open_review_requested.emit(entry.path)
+        elif entry.kind is PendingEntryKind.PENDING_TRIM_PLAN:
+            self.open_pending_requested.emit(entry.entry_id)
         elif entry.target_id:
             self.open_thread_requested.emit(entry.target_id)
 
     def _cancel_selected(self) -> None:
         entry = self._selected_entry()
-        if entry is None or entry.kind is not PendingEntryKind.PENDING_TRIM_PLAN:
+        if (
+            entry is None
+            or entry.kind is not PendingEntryKind.PENDING_TRIM_PLAN
+            or entry.state not in {PendingEntryState.WAITING, PendingEntryState.READY}
+            or self._busy
+        ):
             return
         try:
-            pending = self.pending_trim_store.load(Path(entry.path))
-        except (OSError, ValueError):
+            self.workflows.cancel_pending_trim_plan(entry.entry_id)
+        except (OSError, ValueError) as exc:
+            self.status_label.setText(f"取消待处理计划失败：{exc}")
             return
-        if pending.status in {PendingPlanStatus.APPLIED, PendingPlanStatus.CANCELLED}:
-            return
-        self.pending_trim_store.transition(pending, PendingPlanStatus.CANCELLED)
+        self.pending_changed.emit()
         self.refresh()

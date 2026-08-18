@@ -6,6 +6,12 @@ from codex_session_manager.cleanup import CleanupPlanner
 from codex_session_manager.gui.main_window import UnifiedMainWindow
 from codex_session_manager.gui.single_instance import DesktopPage
 from codex_session_manager.models import TrimAction, TrimPlan, TrimSelection
+from codex_session_manager.pending import PendingEntryKind, PendingPlanEntry
+from codex_session_manager.pending_plans import (
+    PendingPlanStatus,
+    PendingTrimPlan,
+    PendingTrimPlanStore,
+)
 from codex_session_manager.plans import PlanStore
 from codex_session_manager.review_requests import (
     ReviewOperation,
@@ -134,3 +140,46 @@ def test_pending_page_routes_saved_trim_plan_back_to_context_review(
         qtbot.mouseClick(window.pending_page.open_button, Qt.MouseButton.LeftButton)
 
     assert emitted.args == ["thread-pending"]
+
+
+def test_pending_page_opens_only_rechecked_ready_hook_plan(
+    qtbot, app_paths, capabilities, snapshot_factory
+) -> None:
+    snapshot = snapshot_factory("thread-hook-pending")
+    plan = TrimPlan.create(
+        source_thread=snapshot,
+        capability_fingerprint=capabilities.fingerprint,
+        selections=(TrimSelection(target_id=snapshot.turns[0].id, action=TrimAction.KEEP),),
+        estimated_tokens_after=snapshot.token_estimate,
+        trigger="hook",
+    )
+    plan_path = PlanStore(app_paths).save(plan)
+    store = PendingTrimPlanStore(app_paths)
+    waiting = PendingTrimPlan(
+        plan_id=plan.plan_id,
+        plan_path=str(plan_path),
+        plan_sha256=plan.plan_sha256,
+        source_thread_id=plan.source_thread_id,
+        source_fingerprint=plan.source_thread_fingerprint,
+        created_at=plan.created_at,
+    )
+    ready = store.transition(waiting, PendingPlanStatus.READY)
+    assert ready.status is PendingPlanStatus.READY
+
+    window = UnifiedMainWindow(app_paths)
+    qtbot.addWidget(window)
+    window.open_page(DesktopPage.PENDING)
+    pending_item = next(
+        window.pending_page.tree.topLevelItem(index)
+        for index in range(window.pending_page.tree.topLevelItemCount())
+        if PendingPlanEntry.model_validate(
+            window.pending_page.tree.topLevelItem(index).data(0, Qt.ItemDataRole.UserRole)
+        ).kind
+        is PendingEntryKind.PENDING_TRIM_PLAN
+    )
+    window.pending_page.tree.setCurrentItem(pending_item)
+
+    with qtbot.waitSignal(window.open_pending_requested, timeout=1000) as emitted:
+        qtbot.mouseClick(window.pending_page.open_button, Qt.MouseButton.LeftButton)
+
+    assert emitted.args == [plan.plan_id]

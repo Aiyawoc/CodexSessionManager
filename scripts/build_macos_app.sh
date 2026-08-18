@@ -28,6 +28,8 @@ CSM_NUITKA_CRASH_REPORT="$CSM_REPO_ROOT/nuitka-crash-report.xml"
 CSM_NUITKA_REPORT="$CSM_REPO_ROOT/build/nuitka-compilation-report.xml"
 CSM_NUITKA_SOURCE="$CSM_BUILD_ENV/lib/python3.13/site-packages/nuitka/build/static_src/HelpersSafeStrings.c"
 CSM_NUITKA_BACKUP=""
+CSM_PYSIDE_DEPLOY_SOURCE="$CSM_BUILD_ENV/lib/python3.13/site-packages/PySide6/scripts/deploy_lib/__init__.py"
+CSM_PYSIDE_DEPLOY_BACKUP=""
 restore_build_inputs() {
   if [ -f "$CSM_BUILD_SPEC" ]; then
     rm -f "$CSM_BUILD_SPEC"
@@ -35,6 +37,10 @@ restore_build_inputs() {
   if [ -n "$CSM_NUITKA_BACKUP" ] && [ -f "$CSM_NUITKA_BACKUP" ]; then
     cp "$CSM_NUITKA_BACKUP" "$CSM_NUITKA_SOURCE"
     rm -f "$CSM_NUITKA_BACKUP"
+  fi
+  if [ -n "$CSM_PYSIDE_DEPLOY_BACKUP" ] && [ -f "$CSM_PYSIDE_DEPLOY_BACKUP" ]; then
+    cp "$CSM_PYSIDE_DEPLOY_BACKUP" "$CSM_PYSIDE_DEPLOY_SOURCE"
+    rm -f "$CSM_PYSIDE_DEPLOY_BACKUP"
   fi
 }
 cleanup_build_operation() {
@@ -53,6 +59,12 @@ CSM_NUITKA_BACKUP=$(mktemp "${TMPDIR:-/tmp}/csm-nuitka-source.XXXXXX")
 cp "$CSM_NUITKA_SOURCE" "$CSM_NUITKA_BACKUP"
 patch -s -p1 -d "$CSM_BUILD_ENV/lib/python3.13/site-packages/nuitka" \
   < "$CSM_REPO_ROOT/packaging/patches/nuitka-4.0-macos-utf8-path.patch"
+test "$(shasum -a 256 "$CSM_PYSIDE_DEPLOY_SOURCE" | awk '{print $1}')" = \
+  "8d5ef1e1eeeb6b538f74b134308559e3aca58bb1f920dcf27d637bb935355a38"
+CSM_PYSIDE_DEPLOY_BACKUP=$(mktemp "${TMPDIR:-/tmp}/csm-pyside-deploy.XXXXXX")
+cp "$CSM_PYSIDE_DEPLOY_SOURCE" "$CSM_PYSIDE_DEPLOY_BACKUP"
+patch -s -p1 -d "$CSM_BUILD_ENV/lib/python3.13/site-packages/PySide6" \
+  < "$CSM_REPO_ROOT/packaging/patches/pyside6-6.11.1-deploy-ignore-virtualenvs.patch"
 "$CSM_REPO_ROOT/scripts/fetch_age_macos_arm64.sh"
 "$CSM_REPO_ROOT/scripts/build_icon_macos.sh"
 rm -rf "$CSM_REPO_ROOT/deployment" "$CSM_REPO_ROOT/dist/CodexSessionManager.app"
@@ -88,6 +100,8 @@ install -m 0644 "$CSM_REPO_ROOT/vendor/age/verification.json" "$CSM_APP/Contents
 install -m 0644 "$CSM_REPO_ROOT/THIRD_PARTY_NOTICES.md" "$CSM_APP/Contents/Resources/licenses/THIRD_PARTY_NOTICES.md"
 install -m 0644 "$CSM_REPO_ROOT/packaging/patches/nuitka-4.0-macos-utf8-path.patch" \
   "$CSM_APP/Contents/Resources/licenses/nuitka-4.0-macos-utf8-path.patch"
+install -m 0644 "$CSM_REPO_ROOT/packaging/patches/pyside6-6.11.1-deploy-ignore-virtualenvs.patch" \
+  "$CSM_APP/Contents/Resources/licenses/pyside6-6.11.1-deploy-ignore-virtualenvs.patch"
 install -m 0644 "$CSM_BUILD_ENV/lib/python3.13/site-packages/nuitka-4.0.dist-info/licenses/LICENSE.txt" \
   "$CSM_APP/Contents/Resources/licenses/nuitka-GPLv3.txt"
 install -m 0644 "$CSM_BUILD_ENV/lib/python3.13/site-packages/nuitka-4.0.dist-info/licenses/LICENSE-RUNTIME.txt" \

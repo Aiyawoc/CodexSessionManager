@@ -19,7 +19,9 @@ class PendingEntryKind(StrEnum):
 
 
 class PendingEntryState(StrEnum):
+    WAITING = "waiting"
     READY = "ready"
+    TERMINAL = "terminal"
     INVALID = "invalid"
 
 
@@ -36,6 +38,7 @@ class PendingPlanEntry(BaseModel):
     operation: str | None = None
     target_id: str | None = None
     source: str | None = None
+    lifecycle_status: str | None = None
     summary: str
     error: str | None = None
 
@@ -110,21 +113,29 @@ class PendingPlanStore:
         for path in sorted(self.pending_trim_plans.root.glob("*.json")):
             try:
                 plan = self.pending_trim_plans.load(path)
+                state = {
+                    PendingPlanStatus.WAITING: PendingEntryState.WAITING,
+                    PendingPlanStatus.READY: PendingEntryState.READY,
+                    PendingPlanStatus.INVALIDATED: PendingEntryState.TERMINAL,
+                    PendingPlanStatus.EXPIRED: PendingEntryState.TERMINAL,
+                    PendingPlanStatus.CANCELLED: PendingEntryState.TERMINAL,
+                    PendingPlanStatus.APPLIED: PendingEntryState.TERMINAL,
+                }[plan.status]
                 entries.append(
                     PendingPlanEntry(
                         entry_id=plan.plan_id,
                         kind=PendingEntryKind.PENDING_TRIM_PLAN,
-                        state=(
-                            PendingEntryState.READY
-                            if plan.status in {PendingPlanStatus.WAITING, PendingPlanStatus.READY}
-                            else PendingEntryState.INVALID
-                        ),
+                        state=state,
                         path=str(path),
                         created_at=plan.created_at,
                         operation="context_trim",
                         target_id=plan.source_thread_id,
-                        source=plan.status.value,
-                        summary=f"待处理上下文计划，状态 {plan.status.value}。",
+                        source="hook",
+                        lifecycle_status=plan.status.value,
+                        summary=(
+                            f"待处理上下文计划，状态 {plan.status.value}。"
+                            + (f" {plan.invalid_reason}" if plan.invalid_reason else "")
+                        ),
                     )
                 )
             except (OSError, ValueError) as exc:

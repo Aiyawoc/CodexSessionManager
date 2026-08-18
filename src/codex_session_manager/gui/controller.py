@@ -81,6 +81,13 @@ from codex_session_manager.models import (
     TrimSelection,
     TurnSnapshot,
 )
+from codex_session_manager.pending_plans import (
+    PendingPlanStatus,
+    PendingTrimPlan,
+    PendingTrimPlanStore,
+)
+from codex_session_manager.pending_service import PendingPlanService
+from codex_session_manager.plans import PlanStore
 from codex_session_manager.review_requests import (
     ReviewOperation,
     ReviewRequest,
@@ -196,6 +203,8 @@ class TrimReviewWindow(QMainWindow):
         self._updating_content = False
         self._content_overlay_generation = 0
         self.current_plan: TrimPlan | None = None
+        self.pending_trim_plan: PendingTrimPlan | None = None
+        self._pending_plan_override: TrimPlan | None = None
         self._updating_controls = False
         self._generation = 0
         self._task_generation = 0
@@ -522,6 +531,31 @@ class TrimReviewWindow(QMainWindow):
         raise ValueError(
             f"review operation is not supported by the main review GUI: {request.operation}"
         )
+
+    def load_pending_trim_plan(self, pending: PendingTrimPlan) -> None:
+        """Load one READY Hook plan into the original context-review GUI."""
+
+        store = PendingTrimPlanStore(self.paths)
+        stored = store.load(store.path_for(pending.plan_id))
+        if stored != pending:
+            raise ValueError("pending TrimPlan changed before opening review")
+        if stored.status is not PendingPlanStatus.READY:
+            raise ValueError("pending TrimPlan must be READY before review")
+        plan_path = Path(stored.plan_path)
+        plans_root = self.paths.plans_dir.resolve(strict=True)
+        if plan_path.is_symlink() or plan_path.resolve(strict=True).parent != plans_root:
+            raise ValueError("pending TrimPlan escaped the private plans directory")
+        plan = PlanStore(self.paths).load_trim(plan_path)
+        if plan.plan_id != stored.plan_id or plan.plan_sha256 != stored.plan_sha256:
+            raise ValueError("pending TrimPlan identity binding mismatch")
+        self.pending_trim_plan = stored
+        self._pending_plan_override = plan
+        self.trigger = plan.trigger
+        self.source_turn_id = plan.source_turn_id
+        self.setProperty("csmPendingTrimPlanId", plan.plan_id)
+        self.set_review_mode(ReviewMode.CONTEXT_TRIM, refresh=False)
+        self.ui.threadIdEdit.setText(plan.source_thread_id)
+        self.load_thread(plan.source_thread_id)
 
     def _apply_review_mode(self) -> None:
         """Apply mode-specific labels and visibility without rebuilding widgets."""
@@ -2158,6 +2192,17 @@ class TrimReviewWindow(QMainWindow):
                 suggested = external.plan
                 applied = external.applied_target_ids
                 ignored = external.ignored_protected_target_ids
+            pending_override = self._pending_plan_override
+            if pending_override is not None:
+                pending_override.verify()
+                if pending_override.source_thread_id != result.snapshot.id:
+                    raise ValueError("pending TrimPlan belongs to another conversation")
+                if pending_override.source_thread_fingerprint != result.snapshot.trim_fingerprint:
+                    raise ValueError("pending TrimPlan source fingerprint changed")
+                if pending_override.capability_fingerprint != result.capabilities.fingerprint:
+                    raise ValueError("pending TrimPlan capability fingerprint changed")
+                validate_selections(result.snapshot, pending_override.selections)
+                suggested = pending_override
             return ReviewDocument(
                 result.snapshot,
                 result.capabilities,
@@ -2863,6 +2908,14 @@ class TrimReviewWindow(QMainWindow):
         if generation != self._generation or self._closing:
             return
         thread_id = str(value)
+        pending = self.pending_trim_plan
+        if pending is not None:
+            try:
+                store = PendingTrimPlanStore(self.paths)
+                current = store.load(store.path_for(pending.plan_id))
+                self.pending_trim_plan = PendingPlanService(store).applied(current)
+            except (OSError, ValueError) as exc:
+                self._show_error(self._t("pending_state_update_failed", error=exc))
         self.derived_created.emit(thread_id)
         QMessageBox.information(
             self,

@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from codex_session_manager.config import AppPaths, private_atomic_write, stable_app_executable
 from codex_session_manager.hashing import canonical_json_bytes, fingerprint, utc_now
 from codex_session_manager.models import TrimPlan
+from codex_session_manager.pending_plans import PendingTrimPlan, PendingTrimPlanStore
 from codex_session_manager.plans import PlanStore
 
 LOGGER = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ HOOK_TIMEOUT_SECONDS = 600
 INTERNAL_DEADLINE_SECONDS = 540
 LIGHT_PROMPT_SECONDS = 15
 MAX_HOOK_INPUT_BYTES = 1024 * 1024
+PENDING_TRIM_LIFETIME = timedelta(hours=24)
 CSM_STATUS_PREFIX = "CSM 上下文裁剪"
 
 
@@ -238,6 +240,28 @@ class HookHandler:
         self.plan_gate = plan_gate or _plan_has_current_write_capability
         self.decisions = HookDecisionStore(paths)
         self.plans = PlanStore(paths)
+        self.pending_plans = PendingTrimPlanStore(paths)
+
+    def _ensure_pending_plan(self, plan: TrimPlan, plan_path: Path) -> None:
+        pending_path = self.pending_plans.path_for(plan.plan_id)
+        if pending_path.exists():
+            existing = self.pending_plans.load(pending_path)
+            if existing.plan_sha256 != plan.plan_sha256 or Path(existing.plan_path).resolve(
+                strict=False
+            ) != plan_path.resolve(strict=False):
+                raise ValueError("cached pending TrimPlan binding mismatch")
+            return
+        self.pending_plans.save(
+            PendingTrimPlan(
+                plan_id=plan.plan_id,
+                plan_path=str(plan_path),
+                plan_sha256=plan.plan_sha256,
+                source_thread_id=plan.source_thread_id,
+                source_fingerprint=plan.source_thread_fingerprint,
+                created_at=plan.created_at,
+                expires_at=plan.created_at + PENDING_TRIM_LIFETIME,
+            )
+        )
 
     @staticmethod
     def _default_reviewer(hook_input: HookInput, deadline: float) -> TrimPlan | None:
@@ -279,6 +303,8 @@ class HookHandler:
                             )
                         )
                         return output
+                    if cached_plan is not None and existing.plan_path:
+                        self._ensure_pending_plan(cached_plan, Path(existing.plan_path))
                     return existing.output
             except BaseException:
                 self.decisions.discard(hook_input.dedupe_key)
@@ -307,6 +333,7 @@ class HookHandler:
                         # The persisted plan is the only condition under which the
                         # hook may stop native compaction.
                         persisted = self.plans.save(plan)
+                        self._ensure_pending_plan(plan, persisted)
                         output = _stop(plan)
                         plan_path = str(persisted)
             except BaseException:

@@ -13,7 +13,13 @@ from codex_session_manager.audit import AuditStore
 from codex_session_manager.backup import DecryptionSpec, EncryptionSpec
 from codex_session_manager.cleanup import CleanupPolicy
 from codex_session_manager.inventory import InventoryService
-from codex_session_manager.models import PlanAction
+from codex_session_manager.models import PlanAction, TrimAction, TrimPlan, TrimSelection
+from codex_session_manager.pending_plans import (
+    PendingPlanStatus,
+    PendingTrimPlan,
+    PendingTrimPlanStore,
+)
+from codex_session_manager.plans import PlanStore
 from codex_session_manager.review_requests import (
     ReviewOperation,
     ReviewRequest,
@@ -167,6 +173,44 @@ def test_selected_archive_workflow_hydrates_only_target_closure(app_paths, capab
     assert prepared.path.is_file()
     assert prepared.plan.action is PlanAction.ARCHIVE
     assert prepared.plan.targets[0].affected_thread_ids == ("root", "child")
+
+
+def test_pending_trim_workflow_rechecks_current_state_before_ready(app_paths, capabilities) -> None:
+    client = _WorkflowClient()
+
+    def connect(**_kwargs):
+        return client, capabilities
+
+    workflows = ApplicationWorkflows(
+        paths=app_paths,
+        connection_factory=connect,  # type: ignore[arg-type]
+    )
+    snapshot = workflows.read_thread("root", include_turns=True).snapshot
+    plan = TrimPlan.create(
+        source_thread=snapshot,
+        capability_fingerprint=capabilities.fingerprint,
+        selections=(TrimSelection(target_id=snapshot.turns[0].id, action=TrimAction.KEEP),),
+        estimated_tokens_after=snapshot.token_estimate,
+        trigger="hook",
+    )
+    plan_path = PlanStore(app_paths).save(plan)
+    store = PendingTrimPlanStore(app_paths)
+    store.save(
+        PendingTrimPlan(
+            plan_id=plan.plan_id,
+            plan_path=str(plan_path),
+            plan_sha256=plan.plan_sha256,
+            source_thread_id=plan.source_thread_id,
+            source_fingerprint=plan.source_thread_fingerprint,
+            created_at=plan.created_at,
+        )
+    )
+
+    inspection = workflows.inspect_pending_trim_plan(plan.plan_id)
+
+    assert inspection.result.value == "ready"
+    assert inspection.pending.status is PendingPlanStatus.READY
+    assert inspection.plan == plan
 
 
 def test_policy_archive_workflow_prefilters_summaries_before_hydration(

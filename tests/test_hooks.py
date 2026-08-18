@@ -19,6 +19,7 @@ from codex_session_manager.hooks import (
     HookOutput,
 )
 from codex_session_manager.models import TrimAction, TrimPlan, TrimSelection
+from codex_session_manager.pending_plans import PendingPlanStatus, PendingTrimPlanStore
 
 
 def _hook_input() -> dict[str, object]:
@@ -92,6 +93,12 @@ def test_precompact_blocks_only_after_plan_is_persisted(
     decision_files = tuple((app_paths.data_dir / "hook-decisions").glob("*.json"))
     assert len(decision_files) == 1
     assert tuple(app_paths.plans_dir.glob("trim-*.json"))
+    pending = PendingTrimPlanStore(app_paths).load(
+        PendingTrimPlanStore(app_paths).path_for(plan.plan_id)
+    )
+    assert pending.status is PendingPlanStatus.WAITING
+    assert pending.plan_sha256 == plan.plan_sha256
+    assert pending.expires_at is not None
 
 
 def test_precompact_is_fail_open_for_cancel_and_concurrent_duplicate(

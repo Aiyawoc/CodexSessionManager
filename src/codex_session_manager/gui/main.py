@@ -20,7 +20,9 @@ from codex_session_manager.gui.single_instance import (
     InstanceRole,
     SingleInstanceBroker,
 )
+from codex_session_manager.pending_service import PendingCheckResult
 from codex_session_manager.review_requests import ReviewOperation, ReviewRequestQueue
+from codex_session_manager.workflows import ApplicationWorkflows
 
 
 class DesktopWindowManager:
@@ -115,6 +117,27 @@ class DesktopWindowManager:
             mode=ReviewMode.CONTEXT_TRIM,
         )
 
+    def _open_pending_trim_plan(self, plan_id: str) -> None:
+        inspection = ApplicationWorkflows(
+            paths=self.paths,
+            request_timeout=45,
+        ).inspect_pending_trim_plan(plan_id)
+        if inspection.result is not PendingCheckResult.READY:
+            raise ValueError(f"pending TrimPlan is not ready: {inspection.result.value}")
+        key = f"pending-trim:{plan_id}"
+        existing = self._windows.get(key)
+        if existing is not None:
+            self._focus(existing)
+            return
+        window = self._open_review_window(
+            key,
+            load_task_list=False,
+            show=False,
+            mode=ReviewMode.CONTEXT_TRIM,
+        )
+        window.load_pending_trim_plan(inspection.pending)
+        self._focus(window)
+
     def _open_review_request(self, pending_path: Path) -> None:
         request = self.queue.load_request(pending_path)
         key = f"request:{request.request_id}"
@@ -158,6 +181,7 @@ class DesktopWindowManager:
         window = UnifiedMainWindow(self.paths)
         window.open_thread_requested.connect(self._open_thread)
         window.open_review_requested.connect(lambda path: self._open_review_request(Path(path)))
+        window.open_pending_requested.connect(self._open_pending_trim_plan)
         self._register_window(key, window)
         window.open_page(page)
         if show:

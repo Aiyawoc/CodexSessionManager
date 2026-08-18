@@ -41,7 +41,7 @@ Long-running Codex work spreads conversations across projects and lets context g
 > `v1.0.0` is a **test prerelease**. The macOS build is ad-hoc signed and not notarized; the Windows build is unsigned. Verify the matching SHA-256 file before launch and do not treat either build as production-ready.
 
 > [!NOTE]
-> The current `main` source reports `1.0.1` as a hardening candidate, but no matching binary has been published. The links below still point to the released `v1.0.0` test build.
+> The current `main` source reports `1.1.0` as a first-delivery candidate, but no matching binary has been published. The links below still point to the released `v1.0.0` test build.
 
 **Requirements**
 
@@ -292,6 +292,8 @@ Installation does not silently enable Hooks. After installation, review and trus
 - [Domain language and relationships](CONTEXT.md)
 - [Architecture decision records](docs/adr/)
 - [Human App Server schema approval process](docs/acceptance/app-server-schema-approval.md)
+- [`v1.1.0` first-delivery acceptance runbook](docs/acceptance/first-delivery-v1.1.0.md)
+- [`v1.1.0` first-delivery candidate notes](docs/releases/v1.1.0-first-delivery.md)
 - [`v1.0.1` macOS real-account acceptance runbook](docs/acceptance/macos-real-account-v1.0.1.md)
 - [`v1.0.1` hardening-candidate notes](docs/releases/v1.0.1-test.md)
 - [`v1.0.0` test-release notes](docs/releases/v1.0.0-test.md)
@@ -360,13 +362,19 @@ macOS arm64, on real Apple Silicon hardware:
 ```bash
 scripts/build_macos_app.sh
 scripts/accept_macos_bundle.sh dist/CodexSessionManager.app
+scripts/accept_first_delivery.sh \
+  --evidence-dir build/first-delivery-bundle-$(date +%Y%m%d-%H%M%S) \
+  --app dist/CodexSessionManager.app
+scripts/package_macos_release.sh --app dist/CodexSessionManager.app
 ```
+
+The final script validates the source `.app`, creates a ZIP and `.sha256`, extracts it into a clean temporary directory, and validates the extracted bundle again without overwriting existing artifacts. Test-channel filenames include `-test`; public release still requires Developer ID signing, notarization, and stapling.
 
 Windows x64, on Windows AMD64 or the manual GitHub Actions workflow:
 
 ```powershell
 .\scripts\check_windows.ps1
-.\scripts\build_windows_app.ps1 -Version 1.0.1
+.\scripts\build_windows_app.ps1 -Version 1.1.0
 ```
 
 Both builds use `pyside6-deploy` / Nuitka standalone mode and include pinned Python, Qt, plugins, application dependencies, and a verified age binary. Formal public distribution still requires Developer ID signing/notarization/stapling on macOS and an appropriate Authenticode signature on Windows.

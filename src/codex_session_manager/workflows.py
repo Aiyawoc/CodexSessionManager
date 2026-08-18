@@ -38,6 +38,12 @@ from codex_session_manager.models import (
     ThreadSnapshot,
     TrimPlan,
 )
+from codex_session_manager.pending_plans import (
+    PendingPlanStatus,
+    PendingTrimPlan,
+    PendingTrimPlanStore,
+)
+from codex_session_manager.pending_service import PendingCheckResult, PendingPlanService
 from codex_session_manager.plans import PlanModel, PlanStore
 from codex_session_manager.review_requests import (
     ReviewRequest,
@@ -105,6 +111,13 @@ class CleanupCandidateInventory:
 class BackupArchiveResult:
     backup: BackupCreationResult
     action: ActionExecutionResult
+
+
+@dataclass(frozen=True, slots=True)
+class PendingTrimInspection:
+    result: PendingCheckResult
+    pending: PendingTrimPlan
+    plan: TrimPlan
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,6 +325,54 @@ class ApplicationWorkflows:
                 capabilities,
                 inventory.read(thread_id, include_turns=include_turns),
             )
+
+    def inspect_pending_trim_plan(self, plan_id: str) -> PendingTrimInspection:
+        """Re-read source state and persist the delayed plan's lifecycle result."""
+
+        store = PendingTrimPlanStore(self.paths)
+        pending_path = store.path_for(plan_id)
+        pending = store.load(pending_path)
+        try:
+            plan_path = Path(pending.plan_path)
+            plans_root = self.paths.plans_dir.resolve(strict=True)
+            if plan_path.is_symlink() or plan_path.resolve(strict=True).parent != plans_root:
+                raise ValueError("pending TrimPlan escaped the private plans directory")
+            plan_store = PlanStore(self.paths)
+            plan = plan_store.load_trim(plan_path)
+            if (
+                plan.plan_id != pending.plan_id
+                or plan.plan_sha256 != pending.plan_sha256
+                or plan_path.resolve(strict=True) != plan_store.path_for(plan).resolve(strict=False)
+            ):
+                raise ValueError("pending TrimPlan identity binding mismatch")
+        except (OSError, ValueError) as exc:
+            if pending.status in {PendingPlanStatus.WAITING, PendingPlanStatus.READY}:
+                store.transition(
+                    pending,
+                    PendingPlanStatus.INVALIDATED,
+                    reason=str(exc),
+                )
+            raise
+        with self.session() as session:
+            _client, capabilities, inventory = session.services()
+            snapshot = inventory.read(plan.source_thread_id, include_turns=True)
+            result = PendingPlanService(store).check(
+                pending,
+                plan=plan,
+                capabilities=capabilities,
+                current_thread_fingerprint=snapshot.trim_fingerprint,
+                thread_status=snapshot.status,
+            )
+        return PendingTrimInspection(
+            result=result,
+            pending=store.load(pending_path),
+            plan=plan,
+        )
+
+    def cancel_pending_trim_plan(self, plan_id: str) -> PendingTrimPlan:
+        store = PendingTrimPlanStore(self.paths)
+        pending = store.load(store.path_for(plan_id))
+        return PendingPlanService(store).cancel(pending)
 
     def prepare_cleanup_plan(
         self,

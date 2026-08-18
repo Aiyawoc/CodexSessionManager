@@ -41,7 +41,7 @@
 > `v1.0.0` 是**测试版 prerelease**。macOS 包仅作 ad-hoc 签名且未经公证；Windows 包未签名。启动前必须核对同名 SHA-256 文件，不要将这两个包视为生产版本。
 
 > [!NOTE]
-> 当前 `main` 源码版本为 `1.0.1` 加固候选，尚未发布对应二进制。下列下载链接仍指向已发布的 `v1.0.0` 测试版。
+> 当前 `main` 源码版本为 `1.1.0` 首次交付候选，尚未发布对应二进制。下列下载链接仍指向已发布的 `v1.0.0` 测试版。
 
 **运行条件**
 
@@ -292,6 +292,8 @@ csm hook uninstall --yes
 - [领域语言与关系](CONTEXT.md)
 - [架构决策记录](docs/adr/)
 - [App Server schema 人工批准流程](docs/acceptance/app-server-schema-approval.md)
+- [`v1.1.0` 首次交付验收 Runbook](docs/acceptance/first-delivery-v1.1.0.md)
+- [`v1.1.0` 首次交付候选说明](docs/releases/v1.1.0-first-delivery.md)
 - [`v1.0.1` macOS 真实账号验收 Runbook](docs/acceptance/macos-real-account-v1.0.1.md)
 - [`v1.0.1` 加固候选说明](docs/releases/v1.0.1-test.md)
 - [`v1.0.0` 测试版说明](docs/releases/v1.0.0-test.md)
@@ -361,13 +363,19 @@ scripts/launch_test_app.sh /absolute/path/printed/as/TEST_ROOT
 ```bash
 scripts/build_macos_app.sh
 scripts/accept_macos_bundle.sh dist/CodexSessionManager.app
+scripts/accept_first_delivery.sh \
+  --evidence-dir build/first-delivery-bundle-$(date +%Y%m%d-%H%M%S) \
+  --app dist/CodexSessionManager.app
+scripts/package_macos_release.sh --app dist/CodexSessionManager.app
 ```
+
+最后一个脚本会先验收原 `.app`，再创建 ZIP 和 `.sha256`，解压到干净临时目录并再次验收，不覆盖既有资产。测试通道文件名带 `-test`；正式公开发布仍需要 Developer ID 签名、公证和 staple。
 
 在 Windows AMD64 或手动 GitHub Actions 工作流中构建 Windows x64：
 
 ```powershell
 .\scripts\check_windows.ps1
-.\scripts\build_windows_app.ps1 -Version 1.0.1
+.\scripts\build_windows_app.ps1 -Version 1.1.0
 ```
 
 两个平台均使用 `pyside6-deploy` / Nuitka standalone，并携带固定版本的 Python、Qt、插件、应用依赖和已验证 age 二进制。正式公开分发仍要求 macOS Developer ID 签名、公证与 staple，以及适当的 Windows Authenticode 签名。

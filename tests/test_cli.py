@@ -86,7 +86,7 @@ def test_cli_exposes_planned_command_surface() -> None:
 def test_cli_version_does_not_contact_app_server() -> None:
     result = CliRunner().invoke(app, ["version"])
     assert result.exit_code == 0
-    assert result.stdout.strip() == "1.0.1"
+    assert result.stdout.strip() == "1.1.0"
 
 
 def test_inventory_time_filter_requires_explicit_timezone() -> None:

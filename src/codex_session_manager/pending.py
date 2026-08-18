@@ -7,6 +7,7 @@ from enum import StrEnum
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 
 from codex_session_manager.config import AppPaths
+from codex_session_manager.pending_plans import PendingPlanStatus, PendingTrimPlanStore
 from codex_session_manager.plans import PlanStore
 from codex_session_manager.review_requests import ReviewRequestQueue
 
@@ -14,6 +15,7 @@ from codex_session_manager.review_requests import ReviewRequestQueue
 class PendingEntryKind(StrEnum):
     REVIEW_REQUEST = "review_request"
     TRIM_PLAN = "trim_plan"
+    PENDING_TRIM_PLAN = "pending_trim_plan"
 
 
 class PendingEntryState(StrEnum):
@@ -46,9 +48,14 @@ class PendingPlanStore:
         self.paths.ensure()
         self.review_queue = ReviewRequestQueue(paths)
         self.plans = PlanStore(paths)
+        self.pending_trim_plans = PendingTrimPlanStore(paths)
 
     def list_entries(self) -> tuple[PendingPlanEntry, ...]:
-        entries = [*self._review_entries(), *self._trim_plan_entries()]
+        entries = [
+            *self._review_entries(),
+            *self._trim_plan_entries(),
+            *self._pending_trim_entries(),
+        ]
         return tuple(
             sorted(
                 entries,
@@ -96,6 +103,41 @@ class PendingPlanStore:
                     ),
                 )
             )
+        return tuple(entries)
+
+    def _pending_trim_entries(self) -> tuple[PendingPlanEntry, ...]:
+        entries: list[PendingPlanEntry] = []
+        for path in sorted(self.pending_trim_plans.root.glob("*.json")):
+            try:
+                plan = self.pending_trim_plans.load(path)
+                entries.append(
+                    PendingPlanEntry(
+                        entry_id=plan.plan_id,
+                        kind=PendingEntryKind.PENDING_TRIM_PLAN,
+                        state=(
+                            PendingEntryState.READY
+                            if plan.status in {PendingPlanStatus.WAITING, PendingPlanStatus.READY}
+                            else PendingEntryState.INVALID
+                        ),
+                        path=str(path),
+                        created_at=plan.created_at,
+                        operation="context_trim",
+                        target_id=plan.source_thread_id,
+                        source=plan.status.value,
+                        summary=f"待处理上下文计划，状态 {plan.status.value}。",
+                    )
+                )
+            except (OSError, ValueError) as exc:
+                entries.append(
+                    PendingPlanEntry(
+                        entry_id=path.stem,
+                        kind=PendingEntryKind.PENDING_TRIM_PLAN,
+                        state=PendingEntryState.INVALID,
+                        path=str(path),
+                        summary="待处理上下文计划无法读取。",
+                        error=str(exc),
+                    )
+                )
         return tuple(entries)
 
     def _trim_plan_entries(self) -> tuple[PendingPlanEntry, ...]:

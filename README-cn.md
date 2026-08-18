@@ -165,7 +165,7 @@ scripts/install_user.sh /absolute/path/to/CodexSessionManager.app
 
 ### GUI 操作流程
 
-直接启动 CodexSessionManager 会打开原有的项目/任务、时间线、上下文和动作审查 GUI。上下文优化继续使用这套完整界面；对话清理请求会把 LLM/Skill 初筛候选按项目灌入原任务列表并预选，同时列出当前真实盘点中可由用户主动补选的安全根目标。满足 14 天可信归档和当前备份证据门禁的永久删除候选只在独立只读分组中展示，默认不选中，也不会进入归档流程。左侧工具栏第二个按钮切换到记忆管理模式，继续复用相同窗口布局；当前只展示明确请求的记忆来源，文件分段和写入仍保持禁用。待处理计划与备份/恢复继续作为辅助入口，不替代主审查 GUI。
+直接启动 CodexSessionManager 会打开原有的项目/任务、时间线、上下文和动作审查 GUI。上下文优化继续使用这套完整界面；对话清理请求会把 LLM/Skill 初筛候选按项目灌入原任务列表并预选，同时列出当前真实盘点中可由用户主动补选的安全根目标。满足 14 天可信归档和当前备份证据门禁的永久删除候选只在独立只读分组中展示，默认不选中，也不会进入归档流程。左侧工具栏第二个按钮切换到记忆管理模式，继续复用相同窗口布局；它只加载用户明确登记的 UTF-8 Markdown/文本文件，按结构拆分后支持保留、删除、替换和保护，并在写入前展示完整 diff、创建私有版本备份、复核并发漂移、原子替换和重读验证。待处理计划与备份/恢复继续作为辅助入口，不替代主审查 GUI。
 
 <p align="center">
   <img src="docs/images/context-trimming-demo-cn.gif" alt="使用虚构对话数据演示十二秒上下文裁剪流程" width="100%">
@@ -179,7 +179,7 @@ scripts/install_user.sh /absolute/path/to/CodexSessionManager.app
 5. **清理候选补选**把 LLM 建议与本地当前安全候选清晰区分：LLM 建议默认预选，本地补选默认不选；两者在最终计划和备份前都重新检查完整后代闭包。
 6. **永久删除资格**只读展示已归档至少 14 天、具有可信归档历史和当前有效备份的根候选；这里不生成删除计划，永久删除仍要求独立流程和精确确认。
 7. **外部建议灌入**只接受本地重新绑定的对话、turn 或 item ID 与当前指纹；硬保护和 `validate_selections` 始终拥有最终否决权。
-8. **记忆管理**通过左侧第二按钮进入同一窗口壳；当前为只读来源审查，后续将沿用类似的分段、动作、diff 和最终确认流程。
+8. **记忆管理**通过左侧第二按钮进入同一窗口壳。只有已登记来源可见；LLM 建议会先绑定当前 segment ID 与内容 SHA-256，标题、front matter、代码块和结构空白仍受本地硬保护。用户确认后先创建版本，再原子写入并重读验证。
 9. **备份并归档**在清理模式中先冻结根及全部后代范围、创建并完整复验 age 备份，再重读状态和建议指纹、重建最终计划并归档；漂移或验证失败会停止归档。普通任务管理中的“备份并复验”仍不会隐式归档。
 
 “保存方案”只将已审查的 `TrimPlan` 写入 CSM 数据目录，不修改 Codex。“派生精简任务”会先重新校验计划、等待原任务处于 `idle` 或 `notLoaded`，再创建新的派生任务。
@@ -193,6 +193,9 @@ csm threads list
 csm threads show CONVERSATION_ID --include-content
 csm gui open --page pending
 csm trim review CONVERSATION_ID
+csm memory sources
+csm memory review SOURCE_ID
+csm acceptance run --output acceptance-first-delivery.json
 csm audit show
 ```
 
@@ -223,7 +226,9 @@ csm cleanup apply PLAN.json --confirm PLAN_ID
 | `csm restore plan\|apply` | 使用新对话 ID 进行逻辑恢复 |
 | `csm import {chatgpt\|codex} ...` | 规划并应用官方 ChatGPT 导出或 Codex rollout 数据导入 |
 | `csm trim review\|suggest\|apply` | GUI/人工审查、本地建议与派生裁剪 |
+| `csm memory ...` | 登记、分段审查、diff、版本备份、原子写入与恢复本地记忆文件 |
 | `csm gui open` | 打开原审查 GUI 的指定模式或密封请求；pending/backup 使用辅助入口 |
+| `csm acceptance run\|release` | 运行隔离的首次交付检查；release 额外要求 age 与稳定安装包 |
 | `csm hook install\|status\|uninstall` | 可选 PreCompact/PostCompact 集成 |
 | `csm audit show\|verify` | 查看并验证 CSM 审计链 |
 
@@ -260,11 +265,14 @@ prepare_cleanup_suggestions
 open_cleanup_review
 prepare_context_suggestions
 open_context_review
+inspect_memory_source
+prepare_memory_suggestions
+open_memory_review
 get_pending_review_status
 open_review_demo
 ```
 
-这些工具生成的建议和请求仍需由原 GUI 中的用户最终确认。真实 ChatGPT 连接器、Tunnel 认证和已安装应用端到端联调属于独立验收项。
+这些工具生成的建议和请求仍需由原 GUI 中的用户最终确认。记忆工具只接受已登记的 source ID，不接受任意文件路径，也不暴露写入执行器。真实 ChatGPT 连接器、Tunnel 认证和已安装应用端到端联调属于独立验收项。
 
 ### 可选 Hook
 
@@ -320,6 +328,7 @@ git clone https://github.com/Aiyawoc/CodexSessionManager.git
 cd CodexSessionManager
 uv sync --locked --compile-bytecode
 scripts/check.sh
+csm acceptance run --output acceptance-first-delivery.json
 ```
 
 `scripts/check.sh` 会检查 Qt 生成文件、Ruff 格式与 lint、严格 mypy、PySide6 offscreen 测试和 Skill 契约。源码、安装、Skill、Hook 和生命周期还可以分别运行：
@@ -441,13 +450,8 @@ CodexSessionManager 使用 [MIT License](LICENSE)。打包的依赖与工具保�
 
 ⭐ 如果本项目对你有帮助，欢迎 Star 支持，我会持续维护迭代。
 
-## 🗺️ 计划：记忆文件管理
+## 🗺️ 记忆文件管理状态
 
-下一阶段计划增加对记忆文件的受控管理，用于维护可长期保留的项目或 Agent 上下文。首版将继续沿用 CSM 现有的审查、计划、备份和审计思路，以安全性和可恢复性为优先目标。
+首次交付已实现：显式来源登记、路径/符号链接边界、UTF-8 Markdown/文本分段、稳定 segment ID、`KEEP/DELETE/REPLACE/PROTECT`、LLM 建议指纹绑定、原 GUI 最终确认、unified diff、私有版本、并发漂移检测、原子写入、重读验证、审计和计划式恢复。该功能不管理 ChatGPT 账号的服务器端 Memory。
 
-- [ ] 明确支持的记忆文件位置、格式、归属规则，以及项目/账号之间的边界。
-- [ ] 增加记忆文件的只读发现、索引、搜索、预览、元数据查看和敏感信息审查。
-- [ ] 增加带修改前后 diff、校验、明确确认和越界写入保护的变更计划。
-- [ ] 增加备份、版本历史、恢复和回滚，使记忆修改可恢复、可审计。
-- [ ] 通过统一的 GUI、CLI 和 Skill 工作流提供记忆管理，并清晰关联记忆、项目与对话。
-- [ ] 补充权限边界、并发修改、损坏文件、恢复流程和跨平台行为的专项测试与文档。
+后续增强项包括：全文搜索、更丰富的 Markdown 语义、可选加密记忆版本、跨文件批量方案，以及在真实 Windows 安装包中的专项 UI 验收。

@@ -23,6 +23,7 @@ csm threads list --project /absolute/project/path
 csm threads show TASK_ID
 csm cleanup review --older-than-days 90
 csm acceptance run --output acceptance-report.json
+csm acceptance release --output release-acceptance.json
 csm mcp serve --host 127.0.0.1 --port 8765
 csm cleanup review --request REVIEW_REQUEST.json
 csm cleanup plan --action archive --older-than-days 90
@@ -74,6 +75,25 @@ csm audit show
 
 `cleanup`、`context` 和 `memory` 三种 `--page` 值复用原有审查 GUI；记忆模式由左侧第二按钮切换。`pending` 与 `backup_restore` 使用辅助入口。
 
+## 记忆文件管理
+
+```text
+csm memory register /confirmed/root/MEMORY.md --root /confirmed/root
+csm memory unregister SOURCE_ID
+csm memory sources
+csm memory list
+csm memory show SOURCE_ID
+csm memory suggest SOURCE_ID
+csm memory review SOURCE_ID
+csm memory plan SOURCE_ID --delete SEGMENT_ID --replace SEGMENT_ID=TEXT --protect SEGMENT_ID
+csm memory apply PLAN.json --confirm PLAN_ID
+csm memory history SOURCE_ID
+csm memory restore plan SOURCE_ID BACKUP_ID
+csm memory restore apply PLAN.json --confirm PLAN_ID
+```
+
+只有 `register` 明确登记的 UTF-8 Markdown/文本文件可进入记忆流程。`AGENTS.md` 等指令文件还需要 `--allow-instruction-file`。`plan` 只保存不可变方案并输出 unified diff；`apply` 在精确 plan ID 确认后创建私有版本、复核内容/mtime/inode/模式、原子替换并重读验证。恢复也先创建计划，并在覆盖前再次备份当前版本。
+
 ## 维护者协议与验收证据
 
 以下命令只生成 CSM 自有的只读/脱敏报告，不执行 Codex 写入，也不能绕过真实账号人工阶段：
@@ -81,6 +101,8 @@ csm audit show
 ```text
 csm schema audit --output schema-audit-v1.json
 csm acceptance report acceptance-v1.json --schema-report schema-audit-v1.json --stage doctor=passed
+csm acceptance run --output acceptance-first-delivery.json
+csm acceptance release --output acceptance-release.json
 ```
 
 未知 schema 报告不得自动加入信任列表。验收报告只接受固定阶段、散列任务 ID 和 SHA-256，并始终标记 `production_ready: false`。

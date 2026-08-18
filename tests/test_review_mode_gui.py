@@ -6,6 +6,7 @@ from codex_session_manager.cleanup import CleanupPlanner
 from codex_session_manager.gui import controller as controller_module
 from codex_session_manager.gui.controller import TrimReviewWindow
 from codex_session_manager.gui.review_mode import ReviewMode
+from codex_session_manager.memory import MemoryAction, MemoryService, MemorySourceRegistry
 from codex_session_manager.models import TrimAction
 from codex_session_manager.review_requests import (
     ReviewOperation,
@@ -20,10 +21,17 @@ from codex_session_manager.review_requests import (
 from codex_session_manager.workflows import CleanupCandidateInventory, ThreadReadResult
 
 
-def test_memory_management_uses_second_button_in_original_gui(qtbot, app_paths) -> None:
+def test_memory_management_uses_second_button_in_original_gui(qtbot, app_paths, tmp_path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    memory_path = root / "MEMORY.md"
+    memory_path.write_text("# Profile\n\nLikes tea.\n", encoding="utf-8")
+    source = MemorySourceRegistry(app_paths).register(
+        file_path=memory_path,
+        root_path=root,
+    )
     window = TrimReviewWindow(paths=app_paths, load_task_list=False)
     qtbot.addWidget(window)
-    window._memory_paths = ("/tmp/project/MEMORY.md",)
     window.load_task_list = lambda: None  # type: ignore[method-assign]
 
     qtbot.mouseClick(window.ui.memoryRailButton, Qt.MouseButton.LeftButton)
@@ -35,15 +43,121 @@ def test_memory_management_uses_second_button_in_original_gui(qtbot, app_paths) 
     group = window.ui.taskListView.topLevelItem(0)
     assert group is not None
     assert group.childCount() == 1
-    assert group.child(0).data(0, Qt.ItemDataRole.UserRole) == "/tmp/project/MEMORY.md"
+    assert group.child(0).data(0, Qt.ItemDataRole.UserRole) == source.source_id
     assert window.ui.actionTitle.text() == "记忆动作"
     assert window.ui.contentBrowser.isReadOnly()
+    assert window.memory_snapshot is not None
+    assert window.memory_timeline_model is not None
+    assert window.memory_timeline_model.rowCount() >= 3
+    assert not window.ui.savePlanButton.isEnabled()
+    assert not window.ui.applyButton.isEnabled()
 
     qtbot.mouseClick(window.ui.projectTaskRailButton, Qt.MouseButton.LeftButton)
 
     assert window.review_mode is ReviewMode.CONTEXT_TRIM
     assert window.ui.projectTaskRailButton.isChecked()
     assert not window.ui.memoryRailButton.isChecked()
+
+
+def test_memory_gui_action_uses_plan_backup_and_atomic_apply(
+    qtbot, app_paths, tmp_path, monkeypatch
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    memory_path = root / "MEMORY.md"
+    memory_path.write_text("# Profile\n\nLikes tea.\n", encoding="utf-8")
+    MemorySourceRegistry(app_paths).register(file_path=memory_path, root_path=root)
+    window = TrimReviewWindow(
+        paths=app_paths,
+        load_task_list=False,
+        mode=ReviewMode.MEMORY_EDIT,
+    )
+    qtbot.addWidget(window)
+    assert window.memory_snapshot is not None
+    assert window.memory_timeline_model is not None
+    paragraph_row = next(
+        index
+        for index, segment in enumerate(window.memory_snapshot.segments)
+        if "Likes tea" in segment.text
+    )
+    window.ui.timelineView.setCurrentIndex(window.memory_timeline_model.index(paragraph_row, 0))
+    qtbot.wait(1)
+    window.ui.actionCombo.setCurrentIndex(2)
+    window.ui.summaryEdit.setPlainText("Likes green tea.")
+    assert (
+        window.memory_selections[window.memory_snapshot.segments[paragraph_row].segment_id].action
+        is MemoryAction.REPLACE
+    )
+    assert window.ui.savePlanButton.isEnabled()
+    assert window.ui.applyButton.isEnabled()
+
+    monkeypatch.setattr(
+        controller_module.QMessageBox,
+        "exec",
+        lambda _self: controller_module.QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(
+        controller_module.QMessageBox,
+        "information",
+        lambda *_args, **_kwargs: controller_module.QMessageBox.StandardButton.Ok,
+    )
+    window._apply_memory_plan()
+
+    assert memory_path.read_text(encoding="utf-8").endswith("Likes green tea.\n")
+    assert len(window.memory_service.history(window.memory_snapshot.source_id)) == 1
+
+
+def test_memory_request_injects_llm_suggestions_with_local_protection_veto(
+    qtbot, app_paths, tmp_path
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    memory_path = root / "MEMORY.md"
+    memory_path.write_text("# Profile\n\nLikes tea.\n", encoding="utf-8")
+    source = MemorySourceRegistry(app_paths).register(file_path=memory_path, root_path=root)
+    snapshot = MemoryService(app_paths).snapshot(source.source_id)
+    paragraph = next(segment for segment in snapshot.segments if "Likes tea" in segment.text)
+    heading = next(segment for segment in snapshot.segments if segment.text.startswith("# "))
+    bundle = SuggestionBundle.create(
+        operation=ReviewOperation.MEMORY_EDIT,
+        source=ReviewSource.MCP,
+        targets=(
+            SuggestionTarget(
+                target_id=paragraph.segment_id,
+                source_fingerprint=paragraph.content_sha256,
+                suggested_action=SuggestedAction.REPLACE,
+                suggested_text="Likes green tea.",
+                reason="LLM 初筛：偏好已更新",
+                confidence=0.9,
+            ),
+            SuggestionTarget(
+                target_id=heading.segment_id,
+                source_fingerprint=heading.content_sha256,
+                suggested_action=SuggestedAction.DELETE,
+                reason="LLM 初筛：标题似乎冗余",
+                confidence=0.6,
+            ),
+        ),
+    )
+    bundle_path = SuggestionBundleStore(app_paths).save(bundle)
+    request = ReviewRequest.create(
+        operation=ReviewOperation.MEMORY_EDIT,
+        source=ReviewSource.MCP,
+        account_root_fingerprint=codex_account_fingerprint(app_paths),
+        target_paths=(str(memory_path),),
+        suggestion_bundle_path=bundle_path,
+    )
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+
+    window.load_review_request(request)
+
+    assert window.review_mode is ReviewMode.MEMORY_EDIT
+    assert window.memory_selections[paragraph.segment_id].action is MemoryAction.REPLACE
+    assert window.memory_selections[paragraph.segment_id].replacement == "Likes green tea."
+    assert window.memory_selections[heading.segment_id].action is MemoryAction.PROTECT
+    assert "已灌入 1 条 LLM 建议" in window.ui.taskContextStatusLabel.text()
+    assert "1 条" in window.ui.taskContextStatusLabel.text()
 
 
 def test_cleanup_request_is_injected_into_original_project_list(

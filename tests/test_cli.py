@@ -32,6 +32,8 @@ def test_cli_exposes_planned_command_surface() -> None:
         "schema",
         "acceptance",
         "gui",
+        "mcp",
+        "memory",
     ):
         assert command in root.stdout
 
@@ -53,6 +55,32 @@ def test_cli_exposes_planned_command_surface() -> None:
     assert cleanup_review.exit_code == 0
     assert "--older-than-days" in cleanup_review.stdout
     assert "--request" in cleanup_review.stdout
+
+    memory = runner.invoke(app, ["memory", "--help"])
+    assert memory.exit_code == 0
+    for command in (
+        "register",
+        "unregister",
+        "sources",
+        "list",
+        "show",
+        "suggest",
+        "review",
+        "plan",
+        "apply",
+        "history",
+        "restore",
+    ):
+        assert command in memory.stdout
+    memory_restore = runner.invoke(app, ["memory", "restore", "--help"])
+    assert memory_restore.exit_code == 0
+    assert "plan" in memory_restore.stdout
+    assert "apply" in memory_restore.stdout
+
+    acceptance = runner.invoke(app, ["acceptance", "--help"])
+    assert acceptance.exit_code == 0
+    assert "run" in acceptance.stdout
+    assert "release" in acceptance.stdout
 
 
 def test_cli_version_does_not_contact_app_server() -> None:

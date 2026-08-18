@@ -22,24 +22,24 @@
 - [x] 将默认桌面入口恢复为原有审查 GUI，并扩展为上下文、对话清理和记忆三种模式；
 - [x] 对话清理请求可把 LLM/Skill 初筛候选按项目灌入原任务列表并预选；
 - [x] 上下文请求可把绑定 turn/item 指纹的外部建议灌入原时间线与动作面板；
-- [x] 原 GUI 左侧工具栏新增记忆管理第二按钮，并提供同布局的只读来源审查入口；
+- [x] 原 GUI 左侧工具栏新增记忆管理第二按钮，并提供分段、diff、版本备份与原子写入；
 - [x] 新增只读待处理计划中心，可索引审查请求与已保存 TrimPlan；
 - [x] 新增本地安全清理候选池、`prepare_cleanup_review` 与 `csm cleanup review`；
 - [x] 清理页可按用户最终选择重读当前状态、复核建议指纹并保存不可变 ActionPlan；
 - [x] 原 GUI 对话清理模式及“备份并归档”闭环；
 - [ ] 待处理计划的状态流转、空闲复核与继续应用；
-- [ ] 记忆文件管理 MVP；
-- [ ] 将只读桥接函数注册为 ChatGPT MCP/App 对外工具并完成真实入口联调。
+- [x] 记忆文件管理 MVP；
+- [x] 将对话、上下文和记忆只读桥接函数注册为 MCP 对外工具；
+- [ ] 完成真实 ChatGPT 连接器与固定 Tunnel 的端到端联调。
 
 ### 0.1 当前剩余缺口（按优先级）
 
 1. **对话清理增强项**：核心“LLM 候选 → 人工最终选择 → age 完整复验 → 重建最终计划 → 归档与审计”闭环已完成；仍需支持用户从当前真实盘点补选新的安全根目标，并单独展示满足门禁的永久删除候选。
-2. **ChatGPT MCP/App 正式入口**：`open_review_demo`、`prepare_cleanup_review` 和 `open_cleanup_review` 已有本地只读编排实现，但尚未注册为对外 MCP 工具，也未完成从真实 ChatGPT 对话到已安装桌面应用的端到端验收。
+2. **ChatGPT MCP/App 真实入口联调**：对话、上下文和记忆工具已经注册，并具备 Bearer/Origin 边界；仍需在用户固定 Cloudflare Tunnel 与真实 ChatGPT 连接器上完成端到端验收。
 3. **待处理计划状态机**：当前页面能安全索引请求和 TrimPlan，但尚未记录已应用/已取消状态，不能在源任务 idle 后重新探测能力并继续执行。
 4. **原 GUI 内部控制器拆分**：产品交互已明确复用原有审查 GUI，不再以新工作台替代；大型控制器后续仍需按任务列表、内容审查、计划执行和记忆审查拆成内部控制器，但保持同一窗口体验。
-5. **记忆文件管理 MVP**：允许根登记、分段模型、diff、版本备份、原子写入、并发漂移校验和恢复均尚未实现。
-6. **统一备份/恢复中心**：已有对话备份与逻辑恢复服务，但资源提供器、历史清单和 GUI 向导尚未接入；记忆文件备份/恢复尚不存在。
-7. **外部建议来源标识与发布验收**：外部建议的本地 ID/指纹绑定、硬保护否决和 TrimPlan 重建已实现；仍缺逐项来源标识、真实账号联调、安装包运行验收以及 macOS/Windows 目标环境验证。
+5. **统一备份/恢复中心**：已有对话备份/逻辑恢复和记忆私有版本/计划式恢复，但跨资源历史清单与统一向导尚未完成。
+6. **外部建议来源标识与发布验收**：外部建议的本地 ID/指纹绑定和硬保护否决已实现；仍缺逐项可视来源标识、真实账号联调、签名公证以及 macOS/Windows 目标环境验证。
 
 ## 1. 产品目标
 
@@ -373,10 +373,10 @@ open_cleanup_review
 
 ### 支持范围
 
-- [ ] 用户显式登记的 `MEMORY.md`；
-- [ ] 用户明确允许的项目说明文件；
-- [ ] CSM 配置中登记的用户级记忆根；
-- [ ] `AGENTS.md` 等指令文件使用独立开关，不默认作为普通记忆修改。
+- [x] 用户显式登记的 `MEMORY.md`；
+- [x] 用户明确允许的项目说明文件；
+- [x] CSM 配置中登记的用户级记忆根；
+- [x] `AGENTS.md` 等指令文件使用独立开关，不默认作为普通记忆修改。
 
 ### 新增模型
 
@@ -386,7 +386,7 @@ MemorySnapshot
 MemorySegment
 MemorySelection
 MemoryPlan
-MemoryBackupManifest
+MemoryVersionManifest
 MemoryRestorePlan
 ```
 
@@ -417,25 +417,28 @@ PROTECT
 
 ### 安全写入
 
-- [ ] 只允许登记根目录；
-- [ ] 拒绝符号链接和路径逃逸；
-- [ ] 写入前检查指纹、大小、mtime，必要时检查 inode；
-- [ ] 自动创建加密备份或私有版本快照；
-- [ ] 展示最终 unified diff；
-- [ ] 用户再次确认；
-- [ ] 临时文件写入、flush、fsync、原子替换；
-- [ ] 重读并验证结果；
-- [ ] 记录审计事件；
-- [ ] 失败时保留原文件。
+- [x] 只允许登记根目录；
+- [x] 拒绝符号链接和路径逃逸；
+- [x] 写入前检查指纹、大小、mtime、inode 和模式；
+- [x] 自动创建私有版本快照并完整复验；
+- [x] 展示最终 unified diff；
+- [x] 用户再次确认；
+- [x] 临时文件写入、flush、fsync、原子替换；
+- [x] 重读并验证结果；
+- [x] 记录审计事件；
+- [x] 失败时回退并保留原文件。
 
 ### CLI
 
 ```text
 csm memory sources
+csm memory register FILE --root ROOT
+csm memory unregister SOURCE_ID
 csm memory list
 csm memory show SOURCE_ID
 csm memory review SOURCE_ID
 csm memory suggest SOURCE_ID
+csm memory plan SOURCE_ID ...
 csm memory apply PLAN.json --confirm PLAN_ID
 csm memory history SOURCE_ID
 csm memory restore plan ...
@@ -444,12 +447,12 @@ csm memory restore apply ...
 
 ### 验收标准
 
-- [ ] 不可修改允许范围外文件；
-- [ ] 并发修改使旧计划失效；
-- [ ] 每次修改有可恢复版本；
-- [ ] diff 与实际写入一致；
-- [ ] 编码、换行符和未知 Markdown 保持；
-- [ ] 敏感信息默认不离开本机。
+- [x] 不可修改允许范围外文件；
+- [x] 并发修改使旧计划失效；
+- [x] 每次修改有可恢复版本；
+- [x] diff 与实际写入一致；
+- [x] UTF-8 BOM、换行符和未修改 Markdown 字节保持；
+- [x] MCP 默认不返回正文，只有显式 `include_content` 才提供已登记来源内容。
 
 ## 阶段 5：统一备份/恢复中心
 
@@ -475,6 +478,7 @@ csm memory restore apply ...
 - [x] 限制请求大小并校验精确 Origin，工具参数和认证信息不进入访问日志；
 - [x] 只注册盘点、建议准备、打开审查、状态查询和演示工具；
 - [x] 不注册归档、永久删除、上下文应用或记忆写入执行器；
+- [x] 新增隔离的 `acceptance run` 与带 age/稳定安装包门禁的 `acceptance release`；
 - [ ] 完成真实 ChatGPT 连接器、Cloudflare Tunnel、OAuth/访问策略和安装包联调；
 
 ### MCP 工具边界

@@ -10,6 +10,7 @@ from codex_session_manager.mcp_server import (
     McpApplication,
     McpHttpConfig,
 )
+from codex_session_manager.memory import MemorySourceRegistry
 from codex_session_manager.review_requests import ReviewRequestQueue, ReviewRequestStore
 
 
@@ -50,6 +51,9 @@ def test_mcp_initialization_and_tool_surface_are_bounded(app_paths) -> None:
         "open_cleanup_review",
         "prepare_context_suggestions",
         "open_context_review",
+        "inspect_memory_source",
+        "prepare_memory_suggestions",
+        "open_memory_review",
         "get_pending_review_status",
         "open_review_demo",
     }
@@ -60,8 +64,75 @@ def test_mcp_initialization_and_tool_surface_are_bounded(app_paths) -> None:
     )
     annotations = {tool["name"]: tool["annotations"] for tool in tools}
     assert annotations["inspect_conversation_inventory"]["readOnlyHint"] is True
+    assert annotations["inspect_memory_source"]["readOnlyHint"] is True
     assert annotations["get_pending_review_status"]["readOnlyHint"] is True
     assert all(value["destructiveHint"] is False for value in annotations.values())
+
+
+def test_mcp_memory_suggestions_bind_registered_segments_and_open_original_gui(
+    tmp_path, app_paths
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    target = root / "MEMORY.md"
+    target.write_text("# Profile\n\nLikes tea.\n", encoding="utf-8")
+    source = MemorySourceRegistry(app_paths).register(file_path=target, root_path=root)
+    launched: list[Path] = []
+    application = McpApplication(paths=app_paths, launcher=launched.append)
+
+    inspected = application.handle_message(
+        _request(
+            1,
+            "tools/call",
+            {
+                "name": "inspect_memory_source",
+                "arguments": {"source_id": source.source_id, "include_content": True},
+            },
+        )
+    )
+    assert inspected is not None
+    payload = inspected["result"]["structuredContent"]
+    paragraph = next(item for item in payload["segments"] if "Likes tea" in item["text"])
+
+    prepared = application.handle_message(
+        _request(
+            2,
+            "tools/call",
+            {
+                "name": "prepare_memory_suggestions",
+                "arguments": {
+                    "source_id": source.source_id,
+                    "suggestions": [
+                        {
+                            "target_id": paragraph["target_id"],
+                            "suggested_action": "replace",
+                            "suggested_text": "Likes green tea.",
+                            "reason": "用户偏好已更新",
+                            "confidence": 0.9,
+                        }
+                    ],
+                },
+            },
+        )
+    )
+    assert prepared is not None
+    review = prepared["result"]["structuredContent"]
+    request = ReviewRequestStore(app_paths).load(Path(review["request_path"]))
+    assert request.target_paths == (str(target),)
+
+    opened = application.handle_message(
+        _request(
+            3,
+            "tools/call",
+            {
+                "name": "open_memory_review",
+                "arguments": {"request_id": request.request_id},
+            },
+        )
+    )
+    assert opened is not None
+    assert opened["result"]["structuredContent"]["launched"] is True
+    assert launched == [Path(review["request_path"])]
 
 
 def test_mcp_demo_open_and_status_use_immutable_local_queue(app_paths) -> None:

@@ -42,6 +42,7 @@ from codex_session_manager.gui.i18n import (
 from codex_session_manager.gui.i18n import (
     text as ui_text,
 )
+from codex_session_manager.gui.memory_segment_model import MemorySegmentModel
 from codex_session_manager.gui.protocol_tags import (
     protocol_segments,
     protocol_tag_spans,
@@ -57,6 +58,17 @@ from codex_session_manager.gui.theme import DANGER, ON_DANGER, PANEL, PANEL_MUTE
 from codex_session_manager.gui.timeline_model import TurnTimelineModel
 from codex_session_manager.gui.ui_main_window import Ui_MainWindow
 from codex_session_manager.gui.worker import FunctionWorker
+from codex_session_manager.memory import (
+    MemoryAction,
+    MemoryApplyResult,
+    MemoryPlan,
+    MemorySegment,
+    MemorySelection,
+    MemoryService,
+    MemorySnapshot,
+    memory_unified_diff,
+    render_memory,
+)
 from codex_session_manager.models import (
     SAFE_INACTIVE_STATUSES,
     ActionPlan,
@@ -72,6 +84,7 @@ from codex_session_manager.models import (
 from codex_session_manager.review_requests import (
     ReviewOperation,
     ReviewRequest,
+    SuggestedAction,
     SuggestionBundle,
     SuggestionBundleStore,
     SuggestionTarget,
@@ -103,6 +116,13 @@ ACTION_BY_INDEX = {
     3: TrimAction.PROTECT,
 }
 INDEX_BY_ACTION = {value: key for key, value in ACTION_BY_INDEX.items()}
+MEMORY_ACTION_BY_INDEX = {
+    0: MemoryAction.KEEP,
+    1: MemoryAction.DELETE,
+    2: MemoryAction.REPLACE,
+    3: MemoryAction.PROTECT,
+}
+INDEX_BY_MEMORY_ACTION = {value: key for key, value in MEMORY_ACTION_BY_INDEX.items()}
 MAX_PREVIEW_CHARS = 200_000
 
 
@@ -154,6 +174,12 @@ class TrimReviewWindow(QMainWindow):
         self._cleanup_suggestions: dict[str, SuggestionTarget] = {}
         self._cleanup_initial_selection_pending = False
         self._memory_paths: tuple[str, ...] = ()
+        self.memory_service = MemoryService(self.paths)
+        self.memory_snapshot: MemorySnapshot | None = None
+        self.memory_selections: dict[str, MemorySelection] = {}
+        self.memory_timeline_model: MemorySegmentModel | None = None
+        self.current_memory_segment: MemorySegment | None = None
+        self.current_memory_plan: MemoryPlan | None = None
         self.thread_pool = QThreadPool.globalInstance()
         self.document: ReviewDocument | None = None
         self.timeline_model: TurnTimelineModel | None = None
@@ -402,6 +428,8 @@ class TrimReviewWindow(QMainWindow):
 
         if self.timeline_model is not None:
             self.timeline_model.set_language(self._language)
+        if self.memory_timeline_model is not None:
+            self.memory_timeline_model.set_language(self._language)
         self._refresh_timeline_summary()
         if self.document is None:
             self.ui.taskContextStatusLabel.setText(
@@ -524,18 +552,20 @@ class TrimReviewWindow(QMainWindow):
         self.ui.contentTagsButton.setVisible(not memory_mode)
         self.ui.contentMarkdownButton.setVisible(not memory_mode)
         self.ui.actionCombo.setVisible(not cleanup_mode)
-        self.ui.actionCombo.setEnabled(context_mode)
+        self.ui.actionCombo.setEnabled(context_mode or memory_mode)
         self.ui.summaryLabel.setVisible(not cleanup_mode)
         self.ui.summaryEdit.setVisible(not cleanup_mode)
-        self.ui.summaryEdit.setEnabled(context_mode and self.ui.actionCombo.currentIndex() == 2)
+        self.ui.summaryEdit.setEnabled(
+            (context_mode or memory_mode) and self.ui.actionCombo.currentIndex() == 2
+        )
         self.ui.aiConsentCheck.setVisible(context_mode)
         self.ui.suggestButton.setVisible(context_mode)
-        self.ui.savePlanButton.setVisible(context_mode)
-        self.ui.applyButton.setVisible(context_mode and not self.hook_mode)
+        self.ui.savePlanButton.setVisible(context_mode or memory_mode)
+        self.ui.applyButton.setVisible((context_mode or memory_mode) and not self.hook_mode)
         self.ui.savingProgress.setVisible(context_mode)
         self.ui.tokenLabel.setVisible(context_mode)
         if memory_mode:
-            self.ui.timelineView.setModel(None)
+            self.ui.timelineView.setModel(self.memory_timeline_model)
         elif self.timeline_model is not None:
             self.ui.timelineView.setModel(self.timeline_model)
 
@@ -596,9 +626,13 @@ class TrimReviewWindow(QMainWindow):
         ):
             self.ui.actionCombo.setItemText(index, self._t(key))
         self.ui.summaryLabel.setText(self._t("memory_replacement"))
-        self.ui.reasonBrowser.setPlainText(self._t("memory_readonly_reason"))
+        self.ui.savePlanButton.setText(self._t("memory_save_plan"))
+        self.ui.applyButton.setText(self._t("memory_apply_plan"))
         self.ui.contentBrowser.setReadOnly(True)
-        self.ui.taskContextStatusLabel.setText(self._t("memory_waiting"))
+        if self.memory_snapshot is None:
+            self.ui.reasonBrowser.setPlainText(self._t("memory_waiting_reason"))
+            self.ui.taskContextStatusLabel.setText(self._t("memory_waiting"))
+        self._update_memory_action_state()
 
     @Slot()
     def _project_rail_clicked(self) -> None:
@@ -1086,8 +1120,25 @@ class TrimReviewWindow(QMainWindow):
 
     def _populate_memory_sources(self) -> None:
         query = self.ui.threadIdEdit.text().strip().casefold()
-        visible_paths = tuple(
-            path for path in self._memory_paths if not query or query in path.casefold()
+        try:
+            sources = self.memory_service.sources.list()
+        except (OSError, ValueError) as exc:
+            self._show_error(self._t("memory_sources_failed", error=exc))
+            return
+        if self._memory_paths:
+            requested = {
+                Path(value).expanduser().resolve(strict=False) for value in self._memory_paths
+            }
+            sources = tuple(
+                source for source in sources if source.path.resolve(strict=False) in requested
+            )
+        visible_sources = tuple(
+            source
+            for source in sources
+            if not query
+            or query in source.source_id.casefold()
+            or query in source.relative_path.casefold()
+            or query in str(source.path).casefold()
         )
         self._task_selection_guard = True
         try:
@@ -1095,12 +1146,17 @@ class TrimReviewWindow(QMainWindow):
             group = QTreeWidgetItem([self._t("memory_sources"), ""])
             group.setFirstColumnSpanned(True)
             group.setFlags(group.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-            for target_path in visible_paths:
-                item = QTreeWidgetItem(
-                    [Path(target_path).name or target_path, self._t("memory_readonly")]
+            for source in visible_sources:
+                item = QTreeWidgetItem([source.relative_path, self._t("memory_registered")])
+                item.setData(0, Qt.ItemDataRole.UserRole, source.source_id)
+                item.setToolTip(
+                    0,
+                    self._t(
+                        "memory_source_tooltip",
+                        path=source.path,
+                        source_id=source.source_id,
+                    ),
                 )
-                item.setData(0, Qt.ItemDataRole.UserRole, target_path)
-                item.setToolTip(0, target_path)
                 group.addChild(item)
             self.ui.taskListView.addTopLevelItem(group)
             group.setExpanded(True)
@@ -1112,18 +1168,170 @@ class TrimReviewWindow(QMainWindow):
         finally:
             self._task_selection_guard = False
         self.ui.taskListStatusLabel.setText(
-            self._t("memory_source_count", count=len(visible_paths))
+            self._t("memory_source_count", count=len(visible_sources))
         )
         self._update_task_action_state()
 
     def _show_memory_source(self, item: QTreeWidgetItem) -> None:
-        target_path = item.data(0, Qt.ItemDataRole.UserRole)
-        if not isinstance(target_path, str) or not target_path:
+        source_id = item.data(0, Qt.ItemDataRole.UserRole)
+        if not isinstance(source_id, str) or not source_id:
             return
+        try:
+            snapshot = self.memory_service.snapshot(source_id)
+        except (KeyError, OSError, ValueError) as exc:
+            self._show_error(self._t("memory_load_failed", error=exc))
+            return
+        self.memory_snapshot = snapshot
+        self.memory_selections = {
+            segment.segment_id: MemorySelection(
+                segment_id=segment.segment_id,
+                action=(MemoryAction.PROTECT if segment.protected else MemoryAction.KEEP),
+                reason=segment.protection_reason or self._t("memory_default_keep_reason"),
+            )
+            for segment in snapshot.segments
+        }
+        applied_suggestions, ignored_suggestions = self._inject_memory_suggestions(snapshot)
+        self.current_memory_plan = None
+        self.memory_timeline_model = MemorySegmentModel(
+            snapshot,
+            self.memory_selections,
+            self,
+            language=self._language,
+        )
+        self.ui.timelineView.setModel(self.memory_timeline_model)
+        self._configure_views()
+        selection_model = self.ui.timelineView.selectionModel()
+        if selection_model is not None:
+            selection_model.selectionChanged.connect(self._memory_selection_changed)
+        if snapshot.segments:
+            preferred = next(
+                (index for index, segment in enumerate(snapshot.segments) if not segment.protected),
+                0,
+            )
+            self.ui.timelineView.setCurrentIndex(self.memory_timeline_model.index(preferred, 0))
         self.ui.contentBrowser.setReadOnly(True)
-        self.ui.contentBrowser.setPlainText(self._t("memory_source_preview", path=target_path))
-        self.ui.reasonBrowser.setPlainText(self._t("memory_readonly_reason"))
-        self.ui.taskContextStatusLabel.setText(self._t("memory_source_selected", path=target_path))
+        self.ui.taskContextStatusLabel.setText(
+            self._t(
+                "memory_external_suggestions_loaded",
+                path=snapshot.relative_path,
+                applied=applied_suggestions,
+                ignored=ignored_suggestions,
+            )
+            if applied_suggestions or ignored_suggestions
+            else self._t(
+                "memory_source_loaded",
+                path=snapshot.relative_path,
+                segments=len(snapshot.segments),
+                size=snapshot.size_bytes,
+            )
+        )
+        self.ui.timelineHelp.setText(
+            self._t(
+                "memory_segment_summary",
+                editable=sum(not segment.protected for segment in snapshot.segments),
+                protected=sum(segment.protected for segment in snapshot.segments),
+            )
+        )
+        self._update_memory_action_state()
+
+    def _inject_memory_suggestions(self, snapshot: MemorySnapshot) -> tuple[int, int]:
+        request = self.review_request
+        bundle = self.review_bundle
+        if (
+            request is None
+            or request.operation is not ReviewOperation.MEMORY_EDIT
+            or bundle is None
+        ):
+            return 0, 0
+        by_id = {segment.segment_id: segment for segment in snapshot.segments}
+        action_map = {
+            SuggestedAction.KEEP: MemoryAction.KEEP,
+            SuggestedAction.DELETE: MemoryAction.DELETE,
+            SuggestedAction.REPLACE: MemoryAction.REPLACE,
+            SuggestedAction.PROTECT: MemoryAction.PROTECT,
+        }
+        applied = 0
+        ignored = 0
+        for suggestion in bundle.targets:
+            if suggestion.target_id is None:
+                ignored += 1
+                continue
+            segment = by_id.get(suggestion.target_id)
+            action = action_map.get(suggestion.suggested_action)
+            if (
+                segment is None
+                or action is None
+                or suggestion.source_fingerprint != segment.content_sha256
+            ):
+                ignored += 1
+                continue
+            if segment.protected and action in {MemoryAction.DELETE, MemoryAction.REPLACE}:
+                ignored += 1
+                continue
+            self.memory_selections[segment.segment_id] = MemorySelection(
+                segment_id=segment.segment_id,
+                action=action,
+                replacement=(suggestion.suggested_text if action is MemoryAction.REPLACE else None),
+                reason=suggestion.reason,
+                suggested=True,
+            )
+            applied += 1
+        return applied, ignored
+
+    @Slot(QItemSelection, QItemSelection)
+    def _memory_selection_changed(
+        self,
+        selected: QItemSelection,
+        _deselected: QItemSelection,
+    ) -> None:
+        if self.memory_timeline_model is None or not selected.indexes():
+            return
+        segment = self.memory_timeline_model.segment_for(selected.indexes()[0])
+        if segment is not None:
+            self._show_memory_segment(segment)
+
+    def _show_memory_segment(self, segment: MemorySegment) -> None:
+        self.current_memory_segment = segment
+        self._updating_controls = True
+        try:
+            selection = self.memory_selections.get(segment.segment_id)
+            action = selection.action if selection is not None else MemoryAction.KEEP
+            self.ui.contentBrowser.setReadOnly(True)
+            self.ui.contentBrowser.setPlainText(segment.text)
+            self.ui.actionCombo.setCurrentIndex(INDEX_BY_MEMORY_ACTION[action])
+            self.ui.summaryEdit.setPlainText(selection.replacement or "" if selection else "")
+            self.ui.summaryEdit.setEnabled(action is MemoryAction.REPLACE and not segment.protected)
+            self.ui.reasonBrowser.setPlainText(
+                segment.protection_reason
+                or (
+                    selection.reason
+                    if selection is not None
+                    else self._t("memory_default_keep_reason")
+                )
+            )
+            self.ui.riskLabel.setText(
+                self._t("memory_protected_segment")
+                if segment.protected
+                else self._t("memory_editable_segment")
+            )
+        finally:
+            self._updating_controls = False
+        self._update_memory_action_state()
+
+    def _memory_has_changes(self) -> bool:
+        return any(
+            selection.action in {MemoryAction.DELETE, MemoryAction.REPLACE}
+            for selection in self.memory_selections.values()
+        )
+
+    def _update_memory_action_state(self) -> None:
+        if self.review_mode is not ReviewMode.MEMORY_EDIT:
+            return
+        loaded = self.memory_snapshot is not None
+        has_changes = loaded and self._memory_has_changes()
+        self.ui.actionCombo.setEnabled(loaded and self.current_memory_segment is not None)
+        self.ui.savePlanButton.setEnabled(bool(has_changes) and not self._write_in_progress)
+        self.ui.applyButton.setEnabled(bool(has_changes) and not self._write_in_progress)
 
     def _selected_task_ids(self) -> tuple[str, ...]:
         values: list[str] = []
@@ -2272,6 +2480,8 @@ class TrimReviewWindow(QMainWindow):
 
     @Slot()
     def _content_edited(self) -> None:
+        if self.review_mode is ReviewMode.MEMORY_EDIT:
+            return
         if self._updating_content or self._content_markdown_preview or self.current_target is None:
             return
         if self._target_protected_reasons(self.current_target):
@@ -2326,6 +2536,9 @@ class TrimReviewWindow(QMainWindow):
 
     @Slot(int)
     def _action_changed(self, index: int) -> None:
+        if self.review_mode is ReviewMode.MEMORY_EDIT:
+            self._memory_action_changed(index)
+            return
         if self._updating_controls or self.current_target is None:
             return
         action = ACTION_BY_INDEX[index]
@@ -2370,6 +2583,9 @@ class TrimReviewWindow(QMainWindow):
 
     @Slot()
     def _summary_changed(self) -> None:
+        if self.review_mode is ReviewMode.MEMORY_EDIT:
+            self._memory_replacement_changed()
+            return
         if self._updating_controls or self.current_target is None:
             return
         selection = self.selections.get(self.current_target.id)
@@ -2379,6 +2595,58 @@ class TrimReviewWindow(QMainWindow):
         if text:
             self.selections[self.current_target.id] = selection.model_copy(update={"summary": text})
             self._update_estimate()
+
+    def _memory_action_changed(self, index: int) -> None:
+        if self._updating_controls or self.current_memory_segment is None:
+            return
+        segment = self.current_memory_segment
+        action = MEMORY_ACTION_BY_INDEX[index]
+        if segment.protected and action in {MemoryAction.DELETE, MemoryAction.REPLACE}:
+            self._show_error(self._t("memory_hard_protected_action"))
+            self._show_memory_segment(segment)
+            return
+        existing = self.memory_selections.get(segment.segment_id)
+        replacement = self.ui.summaryEdit.toPlainText()
+        if action is MemoryAction.REPLACE and not replacement:
+            replacement = segment.text.rstrip("\r\n")
+        self.memory_selections[segment.segment_id] = MemorySelection(
+            segment_id=segment.segment_id,
+            action=action,
+            replacement=replacement if action is MemoryAction.REPLACE else None,
+            reason=(
+                segment.protection_reason
+                if action is MemoryAction.PROTECT and segment.protection_reason
+                else existing.reason
+                if existing is not None
+                else self._t("memory_manual_reason")
+            ),
+            suggested=False,
+        )
+        self._updating_controls = True
+        try:
+            self.ui.summaryEdit.setEnabled(action is MemoryAction.REPLACE)
+            if action is MemoryAction.REPLACE:
+                self.ui.summaryEdit.setPlainText(replacement)
+            else:
+                self.ui.summaryEdit.clear()
+        finally:
+            self._updating_controls = False
+        if self.memory_timeline_model is not None:
+            self.memory_timeline_model.selections = self.memory_selections
+            self.memory_timeline_model.refresh_actions()
+        self._update_memory_action_state()
+
+    def _memory_replacement_changed(self) -> None:
+        if self._updating_controls or self.current_memory_segment is None:
+            return
+        segment = self.current_memory_segment
+        selection = self.memory_selections.get(segment.segment_id)
+        if selection is None or selection.action is not MemoryAction.REPLACE:
+            return
+        self.memory_selections[segment.segment_id] = selection.model_copy(
+            update={"replacement": self.ui.summaryEdit.toPlainText()}
+        )
+        self._update_memory_action_state()
 
     @Slot()
     def _regenerate_suggestions(self) -> None:
@@ -2422,6 +2690,9 @@ class TrimReviewWindow(QMainWindow):
 
     @Slot()
     def _save_plan(self) -> None:
+        if self.review_mode is ReviewMode.MEMORY_EDIT:
+            self._save_memory_plan()
+            return
         try:
             plan = self._build_plan()
         except (ValueError, OSError, TrimError) as exc:
@@ -2469,6 +2740,9 @@ class TrimReviewWindow(QMainWindow):
 
     @Slot()
     def _apply_plan(self) -> None:
+        if self.review_mode is ReviewMode.MEMORY_EDIT:
+            self._apply_memory_plan()
+            return
         try:
             plan = self._build_plan()
         except (ValueError, OSError, TrimError) as exc:
@@ -2494,6 +2768,96 @@ class TrimReviewWindow(QMainWindow):
         )
         worker.signals.finished.connect(lambda current=generation: self._apply_finished(current))
         self.thread_pool.start(worker)
+
+    def _build_memory_plan(self) -> tuple[MemoryPlan, str]:
+        snapshot = self.memory_snapshot
+        if snapshot is None:
+            raise ValueError("no memory source is loaded")
+        plan = MemoryPlan.create(snapshot, tuple(self.memory_selections.values()))
+        result = render_memory(snapshot, plan.selections)
+        diff = memory_unified_diff(snapshot, result)
+        if not diff:
+            raise ValueError("memory selections do not change the source")
+        return plan, diff
+
+    def _save_memory_plan(self) -> None:
+        if self._write_in_progress:
+            self._show_error(self._t("write_in_progress"))
+            return
+        try:
+            plan, diff = self._build_memory_plan()
+            path = self.memory_service.plans.save(plan)
+        except (OSError, ValueError) as exc:
+            self._show_error(self._t("memory_plan_failed", error=exc))
+            return
+        self.current_memory_plan = plan
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Information)
+        dialog.setWindowTitle(self._t("memory_plan_saved_title"))
+        dialog.setText(
+            self._t(
+                "memory_plan_saved",
+                plan_id=plan.plan_id,
+                path=path,
+            )
+        )
+        dialog.setDetailedText(diff)
+        dialog.exec()
+        self.plan_saved.emit(plan)
+
+    def _apply_memory_plan(self) -> None:
+        if self._write_in_progress:
+            self._show_error(self._t("write_in_progress"))
+            return
+        try:
+            plan, diff = self._build_memory_plan()
+            self.memory_service.plans.save(plan)
+        except (OSError, ValueError) as exc:
+            self._show_error(self._t("memory_plan_failed", error=exc))
+            return
+        confirmation = QMessageBox(self)
+        confirmation.setIcon(QMessageBox.Icon.Warning)
+        confirmation.setWindowTitle(self._t("memory_apply_confirm_title"))
+        confirmation.setText(
+            self._t(
+                "memory_apply_confirm",
+                plan_id=plan.plan_id,
+                path=plan.source_path,
+            )
+        )
+        confirmation.setDetailedText(diff)
+        confirmation.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        confirmation.setDefaultButton(QMessageBox.StandardButton.No)
+        if confirmation.exec() != QMessageBox.StandardButton.Yes:
+            return
+        self._write_in_progress = True
+        self._set_busy(True, self._t("memory_apply_busy"))
+        try:
+            result = self.memory_service.apply(plan, confirmation=plan.plan_id)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self._show_error(self._t("memory_apply_failed", error=exc))
+            return
+        finally:
+            self._write_in_progress = False
+            self._set_busy(False)
+        self.current_memory_plan = plan
+        self._memory_apply_succeeded(result)
+
+    def _memory_apply_succeeded(self, result: MemoryApplyResult) -> None:
+        QMessageBox.information(
+            self,
+            self._t("memory_apply_done_title"),
+            self._t(
+                "memory_apply_done",
+                backup_id=result.backup_id,
+                content_sha256=result.content_sha256,
+            ),
+        )
+        current = self.ui.taskListView.currentItem()
+        if current is not None:
+            self._show_memory_source(current)
 
     def _apply_succeeded(self, generation: int, value: object) -> None:
         if generation != self._generation or self._closing:
@@ -2539,6 +2903,15 @@ class TrimReviewWindow(QMainWindow):
 
     def _set_busy(self, busy: bool, message: str | None = None) -> None:
         self.ui.loadButton.setEnabled(not busy)
+        if self.review_mode is ReviewMode.MEMORY_EDIT:
+            self._update_memory_action_state()
+            if busy:
+                self.ui.savePlanButton.setEnabled(False)
+                self.ui.applyButton.setEnabled(False)
+            if message:
+                self.ui.taskContextStatusLabel.setText(message)
+                self.ui.taskContextStatusLabel.setToolTip(message)
+            return
         self.ui.suggestButton.setEnabled(not busy and self.document is not None)
         self.ui.savePlanButton.setEnabled(
             not busy

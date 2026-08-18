@@ -58,14 +58,17 @@ PreCompact Hook 只保存计划。在 GUI 关闭、崩溃、启动失败或超�
 
 ## 记忆管理
 
-- 使用原 GUI 左侧工具栏第二个按钮进入记忆管理模式；`memory_edit` 请求会把明确请求的本地路径灌入同一任务列表和内容/动作布局。
-- 当前模式只读，不读取或改写未登记路径，也不管理 ChatGPT 服务器端 Memory。
-- 后续启用分段和写入时，仍必须由本地复核路径、指纹、diff、备份和原子写入；LLM 只能提供 `KEEP/DELETE/REPLACE/PROTECT` 建议。
+- 先用 `csm memory register FILE --root ROOT` 显式登记本地 UTF-8 Markdown/文本文件。禁止猜测目录；拒绝符号链接、路径逃逸和未登记路径。`AGENTS.md` 等指令文件只有用户明确要求时才使用 `--allow-instruction-file`。
+- 用 `csm memory show SOURCE_ID` 查看稳定分段、segment ID 和当前 source fingerprint；用 `csm memory review SOURCE_ID` 在原 GUI 左侧第二按钮中审查。
+- LLM 只能经 `inspect_memory_source` 和 `prepare_memory_suggestions` 提出 `KEEP/DELETE/REPLACE/PROTECT`。本地重新绑定 segment ID 与内容 SHA-256；标题、front matter、代码块和结构空白的硬保护不能被建议覆盖。
+- GUI 或 `csm memory plan` 必须展示最终 unified diff。`csm memory apply PLAN --confirm PLAN_ID` 会在写入前重新检查内容、mtime、inode、模式和路径，创建私有版本备份，再使用同目录临时文件、flush、fsync、原子替换和重读验证。
+- 用 `csm memory history SOURCE_ID` 查看已验证版本。恢复必须先 `csm memory restore plan`，再以精确 plan ID 执行；覆盖前再次备份当前版本。
+- 记忆功能只管理明确登记的本地文件，不声称管理 ChatGPT 服务器端 Memory。
 
 ## MCP 编排边界
 
 - `csm mcp serve` 只注册盘点、建议准备、打开审查、状态查询和只读演示工具。
-- 允许调用：`inspect_conversation_inventory`、`prepare_cleanup_suggestions`、`open_cleanup_review`、`prepare_context_suggestions`、`open_context_review`、`get_pending_review_status`、`open_review_demo`。
+- 允许调用：`inspect_conversation_inventory`、`prepare_cleanup_suggestions`、`open_cleanup_review`、`prepare_context_suggestions`、`open_context_review`、`inspect_memory_source`、`prepare_memory_suggestions`、`open_memory_review`、`get_pending_review_status`、`open_review_demo`。
 - MCP 不提供 `delete_*`、`purge_*`、归档执行、`execute_trim`、`apply_memory_edit` 或任何绕过 GUI 最终确认的工具。
 - `prepare_*` 只把 LLM 给出的目标 ID 和理由绑定到本地当前指纹并保存不可变建议；不得把工具返回解释为已执行写入。
 - 公网 Tunnel 前使用独立认证策略；静态 Bearer token 只从本地环境变量读取，不放入命令、日志、Issue 或模型上下文。

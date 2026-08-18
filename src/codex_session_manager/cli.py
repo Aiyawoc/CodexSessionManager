@@ -76,6 +76,8 @@ schema_app = typer.Typer(help="只读审计本地 Codex App Server schema。")
 acceptance_app = typer.Typer(help="记录脱敏、分阶段的人工验收证据。")
 gui_app = typer.Typer(help="打开统一桌面审查工作台或指定页面。")
 mcp_app = typer.Typer(help="运行只读 MCP 编排服务。")
+memory_app = typer.Typer(help="管理用户明确登记的本地 Markdown/文本记忆文件。")
+memory_restore_app = typer.Typer(help="从 CSM 私有记忆版本中计划并执行恢复。")
 
 app.add_typer(threads_app, name="threads")
 app.add_typer(cleanup_app, name="cleanup")
@@ -92,6 +94,8 @@ app.add_typer(schema_app, name="schema")
 app.add_typer(acceptance_app, name="acceptance")
 app.add_typer(gui_app, name="gui")
 app.add_typer(mcp_app, name="mcp")
+app.add_typer(memory_app, name="memory")
+memory_app.add_typer(memory_restore_app, name="restore")
 
 
 @mcp_app.command("serve")
@@ -109,12 +113,280 @@ def mcp_serve(
 @acceptance_app.command("run")
 def acceptance_run(
     output: Annotated[Path, typer.Option("--output")],
+    markdown_output: Annotated[Path | None, typer.Option("--markdown-output")] = None,
 ) -> None:
     """运行非破坏性的自动验收检查。"""
 
     from codex_session_manager.acceptance_runner import run_automated_acceptance
 
-    _emit(run_automated_acceptance(output))
+    try:
+        result = run_automated_acceptance(output, markdown_output=markdown_output)
+    except (FileExistsError, OSError, ValueError) as exc:
+        raise typer.BadParameter(f"无法运行自动验收：{exc}") from exc
+    _emit(result)
+
+
+@acceptance_app.command("release")
+def acceptance_release(
+    output: Annotated[Path, typer.Option("--output")],
+    markdown_output: Annotated[Path | None, typer.Option("--markdown-output")] = None,
+) -> None:
+    """增加 age 与稳定安装包门禁，生成首次交付发布验收报告。"""
+
+    from codex_session_manager.acceptance_runner import run_automated_acceptance
+
+    try:
+        result = run_automated_acceptance(
+            output,
+            markdown_output=markdown_output,
+            release_mode=True,
+        )
+    except (FileExistsError, OSError, ValueError) as exc:
+        raise typer.BadParameter(f"无法运行发布验收：{exc}") from exc
+    _emit(result)
+    if not result["delivery_ready"]:
+        raise typer.Exit(code=1)
+
+
+@memory_app.command("register")
+def memory_register(
+    file_path: Path,
+    root: Annotated[Path | None, typer.Option("--root")] = None,
+    allow_instruction_file: Annotated[
+        bool,
+        typer.Option("--allow-instruction-file"),
+    ] = False,
+) -> None:
+    """显式登记一个允许由 CSM 管理的本地记忆文件。"""
+
+    from codex_session_manager.memory import MemorySourceRegistry
+
+    try:
+        source = MemorySourceRegistry(get_paths()).register(
+            file_path=file_path,
+            root_path=root,
+            allow_instruction_file=allow_instruction_file,
+        )
+    except (OSError, ValueError) as exc:
+        raise typer.BadParameter(f"无法登记记忆文件：{exc}") from exc
+    _emit(source)
+
+
+@memory_app.command("unregister")
+def memory_unregister(source_id: str) -> None:
+    """移除 CSM 登记，不删除或修改原文件。"""
+
+    from codex_session_manager.memory import MemorySourceRegistry
+
+    try:
+        MemorySourceRegistry(get_paths()).unregister(source_id)
+    except KeyError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    _emit({"source_id": source_id, "unregistered": True, "file_deleted": False})
+
+
+def _memory_sources_payload() -> tuple[BaseModel, ...]:
+    from codex_session_manager.memory import MemorySourceRegistry
+
+    return MemorySourceRegistry(get_paths()).list()
+
+
+@memory_app.command("sources")
+def memory_sources() -> None:
+    """列出明确登记的记忆来源。"""
+
+    _emit(_memory_sources_payload())
+
+
+@memory_app.command("list")
+def memory_list() -> None:
+    """列出明确登记的记忆来源。"""
+
+    _emit(_memory_sources_payload())
+
+
+@memory_app.command("show")
+def memory_show(source_id: str) -> None:
+    """读取一个登记来源并显示稳定分段与当前指纹。"""
+
+    from codex_session_manager.memory import MemoryService
+
+    try:
+        _emit(MemoryService(get_paths()).snapshot(source_id))
+    except (KeyError, OSError, ValueError) as exc:
+        raise typer.BadParameter(f"无法读取记忆来源：{exc}") from exc
+
+
+@memory_app.command("suggest")
+def memory_suggest(source_id: str) -> None:
+    """仅输出本地安全默认动作；不创建计划或写入文件。"""
+
+    from codex_session_manager.memory import MemoryAction, MemoryService
+
+    try:
+        snapshot = MemoryService(get_paths()).snapshot(source_id)
+    except (KeyError, OSError, ValueError) as exc:
+        raise typer.BadParameter(f"无法读取记忆来源：{exc}") from exc
+    _emit(
+        {
+            "source_id": source_id,
+            "source_fingerprint": snapshot.source_fingerprint,
+            "suggestions": tuple(
+                {
+                    "segment_id": segment.segment_id,
+                    "action": (
+                        MemoryAction.PROTECT.value if segment.protected else MemoryAction.KEEP.value
+                    ),
+                    "reason": segment.protection_reason or "MVP 默认保留，等待用户或 LLM 建议",
+                }
+                for segment in snapshot.segments
+            ),
+        }
+    )
+
+
+@memory_app.command("review")
+def memory_review(source_id: str) -> None:
+    """通过密封请求在原 GUI 的记忆模式中打开已登记来源。"""
+
+    from codex_session_manager.gui.main import run_gui
+    from codex_session_manager.memory import MemorySourceRegistry
+    from codex_session_manager.review_requests import (
+        ReviewOperation,
+        ReviewRequest,
+        ReviewRequestQueue,
+        ReviewRequestStore,
+        ReviewSource,
+        codex_account_fingerprint,
+    )
+
+    paths = get_paths()
+    try:
+        source = MemorySourceRegistry(paths).get(source_id)
+        request = ReviewRequest.create(
+            operation=ReviewOperation.MEMORY_EDIT,
+            source=ReviewSource.CLI,
+            account_root_fingerprint=codex_account_fingerprint(paths),
+            target_paths=(str(source.path),),
+        )
+        request_path = ReviewRequestStore(paths).save(request)
+        ReviewRequestQueue(paths).enqueue(request_path)
+    except (KeyError, OSError, ValueError) as exc:
+        raise typer.BadParameter(f"无法准备记忆审查：{exc}") from exc
+    raise typer.Exit(run_gui(request_path=request_path))
+
+
+def _parse_memory_replacements(values: list[str] | None) -> dict[str, str]:
+    replacements: dict[str, str] = {}
+    for value in values or ():
+        segment_id, separator, replacement = value.partition("=")
+        if not separator or not segment_id:
+            raise typer.BadParameter("--replace 必须使用 SEGMENT_ID=TEXT")
+        if segment_id in replacements:
+            raise typer.BadParameter(f"重复 --replace segment id：{segment_id}")
+        replacements[segment_id] = replacement
+    return replacements
+
+
+@memory_app.command("plan")
+def memory_plan(
+    source_id: str,
+    delete: Annotated[list[str] | None, typer.Option("--delete")] = None,
+    replace: Annotated[
+        list[str] | None,
+        typer.Option("--replace", help="可重复：SEGMENT_ID=TEXT"),
+    ] = None,
+    protect: Annotated[list[str] | None, typer.Option("--protect")] = None,
+) -> None:
+    """根据用户选择创建不可变 MemoryPlan 并显示 unified diff。"""
+
+    from codex_session_manager.memory import (
+        MemoryAction,
+        MemorySelection,
+        MemoryService,
+    )
+
+    replacements = _parse_memory_replacements(replace)
+    action_ids = [*(delete or ()), *replacements, *(protect or ())]
+    if len(action_ids) != len(set(action_ids)):
+        raise typer.BadParameter("同一 segment 只能指定一个记忆动作")
+    selections = tuple(
+        [MemorySelection(segment_id=value, action=MemoryAction.DELETE) for value in delete or ()]
+        + [
+            MemorySelection(
+                segment_id=segment_id,
+                action=MemoryAction.REPLACE,
+                replacement=text,
+            )
+            for segment_id, text in replacements.items()
+        ]
+        + [
+            MemorySelection(segment_id=value, action=MemoryAction.PROTECT)
+            for value in protect or ()
+        ]
+    )
+    try:
+        plan, diff, path = MemoryService(get_paths()).create_plan(source_id, selections)
+    except (KeyError, OSError, ValueError) as exc:
+        raise typer.BadParameter(f"无法创建记忆计划：{exc}") from exc
+    _emit({"plan": plan, "path": path, "diff": diff})
+
+
+@memory_app.command("apply")
+def memory_apply(
+    plan_path: Path,
+    confirm: Annotated[str, typer.Option("--confirm", help="精确 plan_id")],
+) -> None:
+    """备份、并发复核、原子写入并重读验证一个 MemoryPlan。"""
+
+    from codex_session_manager.memory import MemoryPlanStore, MemoryService
+
+    try:
+        plan = MemoryPlanStore(get_paths()).load(plan_path)
+        _emit(MemoryService(get_paths()).apply(plan, confirmation=confirm))
+    except (KeyError, OSError, ValueError, RuntimeError) as exc:
+        raise typer.BadParameter(f"无法应用记忆计划：{exc}") from exc
+
+
+@memory_app.command("history")
+def memory_history(source_id: str) -> None:
+    """列出经过完整哈希复核的私有记忆版本。"""
+
+    from codex_session_manager.memory import MemoryService
+
+    try:
+        _emit(MemoryService(get_paths()).history(source_id))
+    except (KeyError, OSError, ValueError) as exc:
+        raise typer.BadParameter(f"无法读取记忆历史：{exc}") from exc
+
+
+@memory_restore_app.command("plan")
+def memory_restore_plan(source_id: str, backup_id: str) -> None:
+    """为一个已验证私有版本创建不可变恢复计划。"""
+
+    from codex_session_manager.memory import MemoryService
+
+    try:
+        plan, path = MemoryService(get_paths()).create_restore_plan(source_id, backup_id)
+    except (KeyError, OSError, ValueError) as exc:
+        raise typer.BadParameter(f"无法创建记忆恢复计划：{exc}") from exc
+    _emit({"plan": plan, "path": path})
+
+
+@memory_restore_app.command("apply")
+def memory_restore_apply(
+    plan_path: Path,
+    confirm: Annotated[str, typer.Option("--confirm", help="精确 plan_id")],
+) -> None:
+    """先备份当前版本，再原子恢复已验证的旧版本。"""
+
+    from codex_session_manager.memory import MemoryPlanStore, MemoryService
+
+    try:
+        plan = MemoryPlanStore(get_paths()).load_restore(plan_path)
+        _emit(MemoryService(get_paths()).apply_restore(plan, confirmation=confirm))
+    except (KeyError, OSError, ValueError, RuntimeError) as exc:
+        raise typer.BadParameter(f"无法恢复记忆版本：{exc}") from exc
 
 
 def _jsonable(value: Any) -> Any:

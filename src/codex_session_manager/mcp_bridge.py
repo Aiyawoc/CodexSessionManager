@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Self
+from typing import Self
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from codex_session_manager.app_server import connect_and_probe
 from codex_session_manager.cleanup import CleanupPlanner, CleanupPolicy
 from codex_session_manager.config import AppPaths, get_paths, stable_app_executable
 from codex_session_manager.hashing import fingerprint, utc_now
-from codex_session_manager.inventory import InventoryFilter
+from codex_session_manager.inventory import InventoryFilter, InventoryService
+from codex_session_manager.memory import MemoryService
 from codex_session_manager.models import ThreadItemSnapshot, ThreadSnapshot, TurnSnapshot
 from codex_session_manager.review_requests import (
     ReviewOperation,
@@ -30,19 +33,54 @@ from codex_session_manager.review_requests import (
 )
 
 ReviewLauncher = Callable[[Path], None]
+_SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 def inspect_conversation_inventory(
-    *args: Any, paths: AppPaths | None = None, **kwargs: Any
+    *,
+    paths: AppPaths | None = None,
+    older_than_days: int = 90,
 ) -> dict[str, object]:
-    """Return a bounded placeholder inventory surface for MCP callers.
+    """Return current safe cleanup roots without conversation content."""
 
-    Real App Server inventory hydration remains behind the workflow layer;
-    this function intentionally does not expose raw conversation content.
-    """
-
+    if older_than_days < 1:
+        raise ValueError("older_than_days must be at least 1")
     resolved = paths or get_paths()
-    return {"data_root": str(resolved.codex_home), "read_only": True}
+    client, capabilities = connect_and_probe(request_timeout=45)
+    try:
+        inventory = InventoryService(client)
+        summaries = inventory.list(
+            include_active=True,
+            include_archived=True,
+            include_turns=False,
+        )
+        planner = CleanupPlanner(CleanupPolicy(stale_after=timedelta(days=older_than_days)))
+        hydration_ids = planner.archive_hydration_ids(summaries)
+        snapshots = inventory.hydrate(summaries, hydration_ids) if hydration_ids else summaries
+        roots = planner.archive_candidates(snapshots)
+    finally:
+        client.close()
+    return {
+        "read_only": True,
+        "older_than_days": older_than_days,
+        "account_root_fingerprint": codex_account_fingerprint(resolved),
+        "capability_fingerprint": capabilities.fingerprint,
+        "candidate_count": len(roots),
+        "candidates": tuple(
+            {
+                "target_id": root.id,
+                "title": root.title,
+                "project": root.git_remote or root.cwd,
+                "status": root.status.value,
+                "last_activity": (
+                    root.updated_at.isoformat() if root.updated_at is not None else None
+                ),
+                "descendant_count": len(root.spawned_descendant_ids),
+                "size_bytes": root.size_bytes,
+            }
+            for root in roots
+        ),
+    }
 
 
 def get_pending_review_status(
@@ -50,32 +88,110 @@ def get_pending_review_status(
 ) -> dict[str, object]:
     """Return status for a queued review request without changing state."""
 
-    from codex_session_manager.review_requests import ReviewRequestQueue
-
-    queue = ReviewRequestQueue(paths or get_paths())
+    if _SAFE_REQUEST_ID.fullmatch(request_id) is None:
+        raise ValueError("unsafe review request id")
+    resolved = paths or get_paths()
+    queue = ReviewRequestQueue(resolved)
     for entry_path in queue.entry_paths():
         entry = queue.load(entry_path)
         if entry.request_id == request_id:
-            return {"request_id": request_id, "status": "queued", "path": str(entry_path)}
+            return {"request_id": request_id, "status": "queued"}
+    request_path = resolved.review_requests_dir / f"review-{request_id}.json"
+    if request_path.is_file():
+        ReviewRequestStore(resolved).load(request_path)
+        return {"request_id": request_id, "status": "accepted"}
     return {"request_id": request_id, "status": "missing"}
 
 
-def open_sealed_review(*args: Any, **kwargs: Any) -> Any:
-    """Compatibility alias for opening a sealed review request."""
+def open_sealed_review(
+    request_id: str,
+    *,
+    expected_operation: ReviewOperation,
+    paths: AppPaths | None = None,
+    launcher: ReviewLauncher | None = None,
+) -> dict[str, object]:
+    """Validate, queue, and open one existing immutable review request."""
 
-    return open_review_demo()
+    if _SAFE_REQUEST_ID.fullmatch(request_id) is None:
+        raise ValueError("unsafe review request id")
+    resolved = paths or get_paths()
+    request_path = resolved.review_requests_dir / f"review-{request_id}.json"
+    request = ReviewRequestStore(resolved).load(request_path)
+    if request.operation is not expected_operation:
+        raise ValueError("review request operation does not match the requested tool")
+    _request, pending_path = ReviewRequestQueue(resolved).enqueue(request_path)
+    launch = launcher or _launch_installed_desktop
+    try:
+        launch(request_path)
+    except OSError as exc:
+        return {
+            "request_id": request_id,
+            "operation": request.operation.value,
+            "queued": True,
+            "launched": False,
+            "launch_error": str(exc),
+            "pending_request_path": str(pending_path),
+        }
+    return {
+        "request_id": request_id,
+        "operation": request.operation.value,
+        "queued": True,
+        "launched": True,
+        "pending_request_path": str(pending_path),
+    }
 
 
-def prepare_cleanup_suggestions_from_current(*args: Any, **kwargs: Any) -> Any:
-    """Compatibility wrapper; callers should prefer prepare_cleanup_review."""
+def prepare_cleanup_suggestions_from_current(
+    *,
+    paths: AppPaths | None = None,
+    older_than_days: int = 90,
+    llm_suggestions: tuple[CleanupSuggestionInput, ...] | None = None,
+) -> CleanupReviewResult | None:
+    """Read current App Server state and prepare a locally rebound cleanup review."""
 
-    return prepare_cleanup_review(*args, **kwargs)
+    resolved = paths or get_paths()
+    client, _capabilities = connect_and_probe(request_timeout=45)
+    try:
+        inventory = InventoryService(client)
+        summaries = inventory.list(
+            include_active=True,
+            include_archived=True,
+            include_turns=False,
+        )
+        planner = CleanupPlanner(CleanupPolicy(stale_after=timedelta(days=older_than_days)))
+        hydration_ids = planner.archive_hydration_ids(summaries)
+        snapshots = inventory.hydrate(summaries, hydration_ids) if hydration_ids else summaries
+    finally:
+        client.close()
+    return prepare_cleanup_review(
+        snapshots,
+        paths=resolved,
+        older_than_days=older_than_days,
+        source=ReviewSource.MCP,
+        llm_suggestions=llm_suggestions,
+    )
 
 
-def prepare_context_suggestions_from_current(*args: Any, **kwargs: Any) -> Any:
-    """Compatibility wrapper; callers should prefer prepare_context_review."""
+def prepare_context_suggestions_from_current(
+    *,
+    paths: AppPaths | None = None,
+    thread_id: str,
+    llm_suggestions: tuple[ContextSuggestionInput, ...],
+) -> ContextReviewResult:
+    """Read the current conversation and bind LLM suggestions to current fingerprints."""
 
-    return prepare_context_review(*args, **kwargs)
+    resolved = paths or get_paths()
+    client, _capabilities = connect_and_probe(request_timeout=45)
+    try:
+        snapshot = InventoryService(client).read(thread_id, include_turns=True)
+    finally:
+        client.close()
+    return prepare_context_review(
+        snapshot,
+        llm_suggestions,
+        paths=resolved,
+        source=ReviewSource.MCP,
+    )
 
 
 class CleanupSuggestionInput(BaseModel):
@@ -114,6 +230,35 @@ class ContextSuggestionInput(BaseModel):
             and not (self.suggested_text or "").strip()
         ):
             raise ValueError("context summary suggestion requires suggested_text")
+        return self
+
+
+class MemorySuggestionInput(BaseModel):
+    """Untrusted LLM memory suggestion before local segment binding."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    target_id: str = Field(min_length=1)
+    suggested_action: SuggestedAction
+    reason: str = Field(min_length=1)
+    confidence: float = Field(ge=0.0, le=1.0)
+    suggested_text: str | None = None
+
+    @model_validator(mode="after")
+    def validate_memory_action(self) -> Self:
+        allowed = {
+            SuggestedAction.KEEP,
+            SuggestedAction.DELETE,
+            SuggestedAction.REPLACE,
+            SuggestedAction.PROTECT,
+        }
+        if self.suggested_action not in allowed:
+            raise ValueError("memory suggestion action is not allowed")
+        if (
+            self.suggested_action is SuggestedAction.REPLACE
+            and not (self.suggested_text or "").strip()
+        ):
+            raise ValueError("memory replacement suggestion requires suggested_text")
         return self
 
 
@@ -175,6 +320,22 @@ class ContextReviewResult(BaseModel):
     request_id: str
     operation: ReviewOperation
     thread_id: str
+    suggestion_target_ids: tuple[str, ...]
+    request_path: str
+    suggestion_bundle_path: str
+    pending_request_path: str
+    launched: bool = False
+    launch_error: str | None = None
+
+
+class MemoryReviewResult(BaseModel):
+    """Sealed memory request bound to one registered local source."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    request_id: str
+    operation: ReviewOperation
+    source_id: str
     suggestion_target_ids: tuple[str, ...]
     request_path: str
     suggestion_bundle_path: str
@@ -477,6 +638,132 @@ def open_context_review(
         suggestions,
         paths=paths,
         source=source,
+        lifetime=lifetime,
+    )
+    launch = launcher or _launch_installed_desktop
+    try:
+        launch(Path(prepared.request_path))
+    except OSError as exc:
+        return prepared.model_copy(update={"launched": False, "launch_error": str(exc)})
+    return prepared.model_copy(update={"launched": True})
+
+
+def inspect_memory_source(
+    source_id: str,
+    *,
+    paths: AppPaths | None = None,
+    include_content: bool = False,
+) -> dict[str, object]:
+    """Return segments from one explicitly registered memory source.
+
+    Content is omitted unless the caller explicitly requests it. The source
+    must already be registered locally; arbitrary filesystem paths are never
+    accepted through MCP.
+    """
+
+    resolved = paths or get_paths()
+    snapshot = MemoryService(resolved).snapshot(source_id)
+    return {
+        "read_only": True,
+        "source_id": source_id,
+        "relative_path": snapshot.relative_path,
+        "source_fingerprint": snapshot.source_fingerprint,
+        "content_included": include_content,
+        "segment_count": len(snapshot.segments),
+        "segments": tuple(
+            {
+                "target_id": segment.segment_id,
+                "kind": segment.kind.value,
+                "heading_path": segment.heading_path,
+                "content_sha256": segment.content_sha256,
+                "protected": segment.protected,
+                "protection_reason": segment.protection_reason,
+                "text": segment.text if include_content else None,
+            }
+            for segment in snapshot.segments
+        ),
+    }
+
+
+def prepare_memory_review(
+    source_id: str,
+    suggestions: tuple[MemorySuggestionInput, ...],
+    *,
+    paths: AppPaths | None = None,
+    source: ReviewSource = ReviewSource.MCP,
+    lifetime: timedelta = timedelta(minutes=30),
+) -> MemoryReviewResult:
+    """Bind LLM memory suggestions to current registered segment fingerprints."""
+
+    if not suggestions:
+        raise ValueError("memory review requires at least one suggestion")
+    suggestion_ids = [suggestion.target_id for suggestion in suggestions]
+    if len(suggestion_ids) != len(set(suggestion_ids)):
+        raise ValueError("memory suggestions contain duplicate target ids")
+    resolved = paths or get_paths()
+    service = MemoryService(resolved)
+    source_record = service.sources.get(source_id)
+    snapshot = service.snapshot(source_id)
+    segments = {segment.segment_id: segment for segment in snapshot.segments}
+    targets: list[SuggestionTarget] = []
+    for suggestion in suggestions:
+        segment = segments.get(suggestion.target_id)
+        if segment is None:
+            raise ValueError(
+                f"memory suggestion is outside the current registered source: {suggestion.target_id}"
+            )
+        targets.append(
+            SuggestionTarget(
+                target_id=segment.segment_id,
+                source_fingerprint=segment.content_sha256,
+                suggested_action=suggestion.suggested_action,
+                reason=suggestion.reason,
+                confidence=suggestion.confidence,
+                suggested_text=suggestion.suggested_text,
+            )
+        )
+    bundle = SuggestionBundle.create(
+        operation=ReviewOperation.MEMORY_EDIT,
+        source=source,
+        targets=tuple(targets),
+        lifetime=lifetime,
+    )
+    suggestion_path = SuggestionBundleStore(resolved).save(bundle)
+    request = ReviewRequest.create(
+        operation=ReviewOperation.MEMORY_EDIT,
+        source=source,
+        account_root_fingerprint=codex_account_fingerprint(resolved),
+        target_paths=(str(source_record.path),),
+        suggestion_bundle_path=suggestion_path,
+        lifetime=lifetime,
+    )
+    request_path = ReviewRequestStore(resolved).save(request)
+    _queued, pending_path = ReviewRequestQueue(resolved).enqueue(request_path)
+    return MemoryReviewResult(
+        request_id=request.request_id,
+        operation=request.operation,
+        source_id=source_id,
+        suggestion_target_ids=tuple(suggestion_ids),
+        request_path=str(request_path),
+        suggestion_bundle_path=str(suggestion_path),
+        pending_request_path=str(pending_path),
+    )
+
+
+def open_memory_review(
+    source_id: str,
+    suggestions: tuple[MemorySuggestionInput, ...],
+    *,
+    paths: AppPaths | None = None,
+    lifetime: timedelta = timedelta(minutes=30),
+    launcher: ReviewLauncher | None = None,
+) -> MemoryReviewResult:
+    """Prepare a locally bound memory request and open the original GUI."""
+
+    prepared = prepare_memory_review(
+        source_id,
+        suggestions,
+        paths=paths,
         lifetime=lifetime,
     )
     launch = launcher or _launch_installed_desktop

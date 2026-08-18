@@ -23,13 +23,16 @@ from codex_session_manager.config import AppPaths, get_paths
 from codex_session_manager.mcp_bridge import (
     CleanupSuggestionInput,
     ContextSuggestionInput,
+    MemorySuggestionInput,
     ReviewLauncher,
     get_pending_review_status,
     inspect_conversation_inventory,
+    inspect_memory_source,
     open_review_demo,
     open_sealed_review,
     prepare_cleanup_suggestions_from_current,
     prepare_context_suggestions_from_current,
+    prepare_memory_review,
 )
 from codex_session_manager.review_requests import ReviewOperation
 from codex_session_manager.version import __version__
@@ -43,6 +46,10 @@ MAX_REQUEST_BYTES: Final[int] = 1024 * 1024
 
 JsonObject = dict[str, Any]
 ToolHandler = Callable[[JsonObject], Any]
+
+
+class MethodNotFoundError(ValueError):
+    """JSON-RPC method lookup failed without implying invalid parameters."""
 
 
 def _jsonable(value: Any) -> Any:
@@ -117,6 +124,21 @@ class McpApplication:
                 "suggested_action": {
                     "type": "string",
                     "enum": ["keep", "exclude", "summary", "protect"],
+                },
+                "reason": {"type": "string", "minLength": 1},
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "suggested_text": {"type": ["string", "null"]},
+            },
+            "required": ["target_id", "suggested_action", "reason", "confidence"],
+            "additionalProperties": False,
+        }
+        memory_item = {
+            "type": "object",
+            "properties": {
+                "target_id": {"type": "string", "minLength": 1},
+                "suggested_action": {
+                    "type": "string",
+                    "enum": ["keep", "delete", "replace", "protect"],
                 },
                 "reason": {"type": "string", "minLength": 1},
                 "confidence": {"type": "number", "minimum": 0, "maximum": 1},
@@ -223,6 +245,59 @@ class McpApplication:
                 idempotent=True,
             ),
             McpTool(
+                name="inspect_memory_source",
+                title="Inspect a registered memory source",
+                description=(
+                    "Return stable segment IDs, fingerprints, protection metadata, and optionally "
+                    "content for one explicitly registered local memory source. Arbitrary paths "
+                    "are never accepted."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "source_id": {"type": "string", "minLength": 1},
+                        "include_content": {"type": "boolean", "default": False},
+                    },
+                    "required": ["source_id"],
+                    "additionalProperties": False,
+                },
+                handler=self._inspect_memory,
+                read_only=True,
+                idempotent=True,
+            ),
+            McpTool(
+                name="prepare_memory_suggestions",
+                title="Prepare memory review",
+                description=(
+                    "Bind LLM keep/delete/replace/protect suggestions to current local segment "
+                    "fingerprints and persist an immutable human review request. No file is edited."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "source_id": {"type": "string", "minLength": 1},
+                        "suggestions": {"type": "array", "items": memory_item},
+                    },
+                    "required": ["source_id", "suggestions"],
+                    "additionalProperties": False,
+                },
+                handler=self._prepare_memory,
+                read_only=False,
+                idempotent=False,
+            ),
+            McpTool(
+                name="open_memory_review",
+                title="Open memory review",
+                description=(
+                    "Validate a sealed memory request, queue it, and open the original local GUI. "
+                    "No memory file is edited by this tool."
+                ),
+                input_schema=request_id_schema,
+                handler=self._open_memory,
+                read_only=False,
+                idempotent=True,
+            ),
+            McpTool(
                 name="get_pending_review_status",
                 title="Get review status",
                 description="Report whether an immutable review request is queued or accepted.",
@@ -269,6 +344,10 @@ class McpApplication:
         notification = "id" not in message
         try:
             result = self._dispatch(method, params)
+        except MethodNotFoundError as exc:
+            if notification:
+                return None
+            return self._error(request_id, -32601, str(exc))
         except (TypeError, ValueError) as exc:
             if notification:
                 return None
@@ -315,7 +394,7 @@ class McpApplication:
             if not isinstance(name, str) or not isinstance(arguments, dict):
                 raise ValueError("tools/call requires a tool name and object arguments")
             return self._call_tool(name, arguments)
-        raise ValueError(f"method not found: {method}")
+        raise MethodNotFoundError(f"method not found: {method}")
 
     def _call_tool(self, name: str, arguments: JsonObject) -> JsonObject:
         tool = self.tools.get(name)
@@ -368,6 +447,33 @@ class McpApplication:
             llm_suggestions=suggestions,
         )
 
+    def _inspect_memory(self, arguments: JsonObject) -> Any:
+        source_id = arguments.get("source_id")
+        include_content = arguments.get("include_content", False)
+        if not isinstance(source_id, str) or not source_id:
+            raise ValueError("source_id must be a non-empty string")
+        if not isinstance(include_content, bool):
+            raise ValueError("include_content must be a boolean")
+        return inspect_memory_source(
+            source_id,
+            paths=self.paths,
+            include_content=include_content,
+        )
+
+    def _prepare_memory(self, arguments: JsonObject) -> Any:
+        source_id = arguments.get("source_id")
+        raw = arguments.get("suggestions")
+        if not isinstance(source_id, str) or not source_id:
+            raise ValueError("source_id must be a non-empty string")
+        if not isinstance(raw, list):
+            raise ValueError("suggestions must be an array")
+        suggestions = tuple(MemorySuggestionInput.model_validate(item) for item in raw)
+        return prepare_memory_review(
+            source_id,
+            suggestions,
+            paths=self.paths,
+        )
+
     def _open_cleanup(self, arguments: JsonObject) -> Any:
         return open_sealed_review(
             self._request_id(arguments),
@@ -380,6 +486,14 @@ class McpApplication:
         return open_sealed_review(
             self._request_id(arguments),
             expected_operation=ReviewOperation.CONTEXT_TRIM,
+            paths=self.paths,
+            launcher=self.launcher,
+        )
+
+    def _open_memory(self, arguments: JsonObject) -> Any:
+        return open_sealed_review(
+            self._request_id(arguments),
+            expected_operation=ReviewOperation.MEMORY_EDIT,
             paths=self.paths,
             launcher=self.launcher,
         )
@@ -425,7 +539,12 @@ class McpHttpConfig:
             raise ValueError("MCP port must be between 1 and 65535")
         if self.max_request_bytes < 1:
             raise ValueError("MCP request-size limit must be positive")
-        if self.bearer_token:
+        for origin in self.allowed_origins:
+            if origin == "*" or not origin.startswith(("https://", "http://")):
+                raise ValueError("allowed MCP origins must be exact http(s) origins, not wildcards")
+        if self.bearer_token is not None:
+            if not self.bearer_token:
+                raise ValueError("MCP bearer token must not be empty")
             return
         if not self.allow_unauthenticated_local:
             raise ValueError(

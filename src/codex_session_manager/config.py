@@ -49,6 +49,14 @@ class AppPaths:
     def pending_trim_plans_dir(self) -> Path:
         return self.data_dir / "pending-trim-plans"
 
+    @property
+    def memory_sources_file(self) -> Path:
+        return self.config_dir / "memory-sources.json"
+
+    @property
+    def memory_versions_dir(self) -> Path:
+        return self.data_dir / "memory-versions"
+
     def ensure(self) -> None:
         """Create application-owned directories with user-only permissions."""
 
@@ -64,6 +72,7 @@ class AppPaths:
             self.suggestions_dir,
             self.pending_review_requests_dir,
             self.pending_trim_plans_dir,
+            self.memory_versions_dir,
         ):
             path.mkdir(parents=True, exist_ok=True, mode=0o700)
             with contextlib.suppress(OSError):

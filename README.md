@@ -165,7 +165,7 @@ The installer atomically replaces `~/Applications/CodexSessionManager.app`, reta
 
 ### GUI workflow
 
-Launching CodexSessionManager opens the existing Projects & Tasks, Timeline, Context, and Actions review GUI. Context optimization keeps using this complete interface. A cleanup request injects and preselects the LLM/Skill shortlist while also listing locally safe roots from the current inventory that the user may explicitly add. Purge-eligible roots that satisfy trusted 14-day archive history and current backup evidence are shown only in a separate read-only, unselected group and never enter the archive flow. The second button in the left rail switches the same window into Memory Management mode; it currently shows only explicitly requested sources while segmentation and writes remain disabled. Pending Plans and Backup & Restore remain auxiliary entries rather than replacing the primary review GUI.
+Launching CodexSessionManager opens the existing Projects & Tasks, Timeline, Context, and Actions review GUI. Context optimization keeps using this complete interface. A cleanup request injects and preselects the LLM/Skill shortlist while also listing locally safe roots from the current inventory that the user may explicitly add. Purge-eligible roots that satisfy trusted 14-day archive history and current backup evidence are shown only in a separate read-only, unselected group and never enter the archive flow. The second button in the left rail switches the same window into Memory Management mode. It loads only explicitly registered UTF-8 Markdown/text files, segments them structurally, supports Keep/Delete/Replace/Protect, shows the complete diff, creates a private version, rechecks concurrent drift, atomically replaces the file, and rereads it for verification. Pending Plans and Backup & Restore remain auxiliary entries rather than replacing the primary review GUI.
 
 <p align="center">
   <img src="docs/images/context-trimming-demo-en.gif" alt="Twelve-second context-trimming demo using fictional conversation data" width="100%">
@@ -179,7 +179,7 @@ Launching CodexSessionManager opens the existing Projects & Tasks, Timeline, Con
 5. **Cleanup supplementation** distinguishes LLM suggestions from current local safe roots: LLM suggestions are preselected, safe additions are not, and both are rechecked against the complete descendant closure before planning and backup.
 6. **Purge eligibility** is read-only and includes only roots archived for at least 14 days with trusted archive history and a current verified backup. No purge plan is created here; permanent deletion still requires its separate flow and exact confirmation.
 7. **External suggestion injection** only accepts locally rebound conversation, turn, or item IDs with current fingerprints; hard protection and `validate_selections` retain final veto power.
-8. **Memory Management** uses the second left-rail button and the same window shell. It is currently a read-only source review and will later reuse segmented actions, diff, and final confirmation.
+8. **Memory Management** uses the second left-rail button and the same window shell. Only registered sources are visible. LLM suggestions are rebound to current segment IDs and content SHA-256 values; headings, front matter, fenced code, and structural whitespace retain local hard protection. Confirmed writes create a version before atomic replacement and reread verification.
 9. **Backup & archive** in Cleanup mode freezes the root/descendant scope, creates and fully verifies the age backup, then re-reads state and suggestion fingerprints, rebuilds the final plan, and archives it. Drift or verification failure stops the archive step. The ordinary **Backup & verify** action still never archives implicitly.
 
 Saving a plan only persists the reviewed `TrimPlan`; it does not write to Codex. Creating a trimmed task first revalidates the plan, waits for the source to be `idle` or `notLoaded`, and then creates a new derived task.
@@ -193,6 +193,9 @@ csm threads list
 csm threads show CONVERSATION_ID --include-content
 csm gui open --page pending
 csm trim review CONVERSATION_ID
+csm memory sources
+csm memory review SOURCE_ID
+csm acceptance run --output acceptance-first-delivery.json
 csm audit show
 ```
 
@@ -223,7 +226,9 @@ Important command groups:
 | `csm restore plan\|apply` | Logical restore with new conversation IDs |
 | `csm import {chatgpt\|codex} ...` | Plan and apply imports from official ChatGPT exports or Codex rollout data |
 | `csm trim review\|suggest\|apply` | GUI/manual review, local suggestions, and derived trimming |
+| `csm memory ...` | Register, segment, review, diff, version, atomically edit, and restore local memory files |
 | `csm gui open` | Open an original-GUI review mode or sealed request; pending/backup use auxiliary entries |
+| `csm acceptance run\|release` | Run isolated first-delivery checks; release also requires age and the stable installed app |
 | `csm hook install\|status\|uninstall` | Optional PreCompact/PostCompact integration |
 | `csm audit show\|verify` | Inspect and verify the CSM audit chain |
 
@@ -260,11 +265,14 @@ prepare_cleanup_suggestions
 open_cleanup_review
 prepare_context_suggestions
 open_context_review
+inspect_memory_source
+prepare_memory_suggestions
+open_memory_review
 get_pending_review_status
 open_review_demo
 ```
 
-Every suggestion and review request still requires final confirmation in the original GUI. Real ChatGPT connector, tunnel authentication, and installed-app end-to-end testing remain separate acceptance steps.
+Every suggestion and review request still requires final confirmation in the original GUI. Memory tools accept only registered source IDs, never arbitrary filesystem paths, and expose no write executor. Real ChatGPT connector, tunnel authentication, and installed-app end-to-end testing remain separate acceptance steps.
 
 ### Optional Hooks
 
@@ -441,13 +449,8 @@ CodexSessionManager is released under the [MIT License](LICENSE). Bundled depend
 
 ⭐ If this project is useful to you, consider giving it a Star. Continued maintenance and iteration are planned.
 
-## 🗺️ Planned: memory file management
+## 🗺️ Memory-file management status
 
-The next planned capability is guarded management of memory files used to preserve durable project or agent context. The initial roadmap is intentionally safety-first and should reuse CSM's existing review, planning, backup, and audit model.
+The first-delivery implementation now includes explicit source registration, path/symlink boundaries, UTF-8 Markdown/text segmentation, stable segment IDs, `KEEP/DELETE/REPLACE/PROTECT`, LLM suggestion fingerprint binding, final confirmation in the original GUI, unified diff, private versions, concurrent-drift detection, atomic writes, reread verification, audit, and plan-based restore. It does not manage ChatGPT account-side Memory.
 
-- [ ] Define supported memory-file locations, formats, ownership rules, and project/account boundaries.
-- [ ] Add read-only discovery, indexing, search, preview, metadata, and sensitive-data review for memory files.
-- [ ] Add reviewed change plans with before/after diff, validation, explicit confirmation, and protection against out-of-scope writes.
-- [ ] Add backup, version history, restore, and rollback so memory edits remain recoverable and auditable.
-- [ ] Expose memory management through consistent GUI, CLI, and Skill workflows, with clear links between memories, projects, and conversations.
-- [ ] Add focused tests and documentation for permission boundaries, concurrent changes, malformed files, recovery, and cross-platform behavior.
+Future enhancements include full-text search, richer Markdown semantics, optionally encrypted memory versions, multi-file plans, and focused UI acceptance in a real Windows bundle.

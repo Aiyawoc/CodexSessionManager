@@ -44,7 +44,20 @@ EXPECTED_COMMAND_PATHS = {
     ("schema", "audit"),
     ("acceptance", "report"),
     ("acceptance", "run"),
+    ("acceptance", "release"),
     ("gui", "open"),
+    ("memory", "register"),
+    ("memory", "unregister"),
+    ("memory", "sources"),
+    ("memory", "list"),
+    ("memory", "show"),
+    ("memory", "suggest"),
+    ("memory", "review"),
+    ("memory", "plan"),
+    ("memory", "apply"),
+    ("memory", "history"),
+    ("memory", "restore", "plan"),
+    ("memory", "restore", "apply"),
 }
 
 
@@ -55,7 +68,9 @@ def _documented_command_paths() -> set[tuple[str, ...]]:
         if not stripped.startswith("csm "):
             continue
         tokens = shlex.split(stripped)[1:]
-        if tokens[0] == "import":
+        if tokens[0] == "import" or (
+            tokens[0] == "memory" and len(tokens) >= 2 and tokens[1] == "restore"
+        ):
             paths.add(tuple(tokens[:3]))
         elif tokens[0] in {
             "threads",
@@ -70,6 +85,7 @@ def _documented_command_paths() -> set[tuple[str, ...]]:
             "schema",
             "acceptance",
             "gui",
+            "memory",
         }:
             paths.add(tuple(tokens[:2]))
         else:

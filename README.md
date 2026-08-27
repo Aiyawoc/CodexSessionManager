@@ -244,18 +244,39 @@ $manage-codex-sessions open context trimming for this conversation
 
 The Skill does not run automatically during ordinary coding work. It resolves the stable `csm` launcher or bundled executable and follows the same plan and safety gates as the GUI and CLI.
 
-### MCP Streamable HTTP service
+### Codex desktop local MCP
 
-CSM includes an MCP HTTP service that is intentionally limited to orchestration. It can inspect bounded candidate metadata, prepare structured suggestions, open the local human-review GUI, and query review status. It does not expose archive, purge, trim-application, or memory-write executors.
+CSM provides a read-only orchestration MCP server over stdio for Codex desktop/CLI. Add
+it to the Codex `config.toml` so Codex starts the stable launcher itself:
 
-Before placing the service behind a public tunnel, keep a long random Bearer token in the local environment. Do not put the token in command arguments, the repository, or model context:
+```toml
+[mcp_servers.codex_session_manager]
+command = "/Users/test-user/.local/bin/csm"
+args = ["mcp", "stdio"]
+```
+
+The test kit's `configure-codex-mcp.sh` adds the actual absolute paths and binds
+`CODEX_HOME` plus the CSM private directories to the same isolated test environment.
+After configuring, restart Codex desktop and check Settings → MCP servers or `/mcp` in
+the composer. The stdio path does not require HTTPS, a public endpoint, a Bearer token,
+or an OpenAI Secure MCP Tunnel.
+
+The server only inspects bounded metadata, prepares structured suggestions, opens the
+local human-review GUI, and reports review status. It never exposes archive, purge,
+trim-application, or memory-write executors.
+
+For a separate HTTP compatibility diagnostic, keep a long random Bearer token in the
+local environment and bind only to loopback:
 
 ```bash
 export CSM_MCP_BEARER_TOKEN='a-long-random-value-generated-locally'
 csm mcp serve --host 127.0.0.1 --port 8765 --path /mcp
 ```
 
-The health endpoint is `/healthz` and the MCP endpoint is `/mcp`. A Cloudflare Tunnel should forward the HTTPS hostname to this loopback listener and may add a separate access policy. `--allow-unauthenticated-local` is only for explicit loopback testing and must not be used behind a public tunnel.
+The health endpoint is `/healthz` and the MCP endpoint is `/mcp`. `--allow-unauthenticated-local`
+is only for explicit loopback testing and must not be used for a public service. The
+desktop app's `CSM_MCP_AUTO_START=1` is an optional HTTP diagnostic switch; Codex desktop
+starts `csm mcp stdio` itself for the local MCP path.
 
 Registered tools:
 
@@ -272,7 +293,7 @@ get_pending_review_status
 open_review_demo
 ```
 
-Every suggestion and review request still requires final confirmation in the original GUI. Memory tools accept only registered source IDs, never arbitrary filesystem paths, and expose no write executor. Real ChatGPT connector, tunnel authentication, and installed-app end-to-end testing remain separate acceptance steps.
+Every suggestion and review request still requires final confirmation in the original GUI. Memory tools accept only registered source IDs, never arbitrary filesystem paths, and expose no write executor. Codex desktop local MCP, real Cocoa GUI behavior, account integration, and installed-app testing remain separate target-machine acceptance steps.
 
 ### Optional Hooks
 
@@ -293,6 +314,7 @@ Installation does not silently enable Hooks. After installation, review and trus
 - [Architecture decision records](docs/adr/)
 - [Human App Server schema approval process](docs/acceptance/app-server-schema-approval.md)
 - [`v1.1.0` first-delivery acceptance runbook](docs/acceptance/first-delivery-v1.1.0.md)
+- [`v1.1.0` local two-step controlled acceptance plan](docs/acceptance/local-controlled-v1.1.0.md)
 - [`v1.1.0` pre-release manual acceptance runbook](docs/acceptance/formal-release-manual-v1.1.0.md)
 - [`v1.1.0` first-delivery candidate notes](docs/releases/v1.1.0-first-delivery.md)
 - [`v1.0.1` macOS real-account acceptance runbook](docs/acceptance/macos-real-account-v1.0.1.md)
@@ -363,9 +385,14 @@ macOS arm64, on real Apple Silicon hardware:
 ```bash
 scripts/build_macos_app.sh
 scripts/accept_macos_bundle.sh dist/CodexSessionManager.app
-scripts/accept_first_delivery.sh \
+TEST_HOME=/private/tmp/csm-first-delivery-home
+mkdir -m 700 -p "$TEST_HOME"
+HOME="$TEST_HOME" CSM_INSTALL_SKIP_APP_SERVER=1 \
+  scripts/install_user.sh "$PWD/dist/CodexSessionManager.app"
+HOME="$TEST_HOME" scripts/accept_first_delivery.sh \
   --evidence-dir build/first-delivery-bundle-$(date +%Y%m%d-%H%M%S) \
-  --app dist/CodexSessionManager.app
+  --app dist/CodexSessionManager.app \
+  --stable-app "$TEST_HOME/Applications/CodexSessionManager.app"
 scripts/package_macos_release.sh --app dist/CodexSessionManager.app
 ```
 

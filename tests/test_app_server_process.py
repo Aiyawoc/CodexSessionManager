@@ -397,6 +397,7 @@ import json
 from typer.testing import CliRunner
 
 import codex_session_manager.app_server as app_server
+import codex_session_manager.protocol_profiles as protocol_profiles
 
 probe = app_server.probe_capabilities()
 if not probe.schema_sha256 or not probe.codex_version:
@@ -404,6 +405,9 @@ if not probe.schema_sha256 or not probe.codex_version:
 # Test-process-only approval: production has no environment or CLI switch that
 # can expand the bundled human-reviewed protocol allowlist.
 app_server.TRUSTED_WRITE_SCHEMAS = frozenset(
+    {(probe.codex_version, probe.schema_sha256)}
+)
+protocol_profiles.TRUSTED_WRITE_SCHEMAS = frozenset(
     {(probe.codex_version, probe.schema_sha256)}
 )
 

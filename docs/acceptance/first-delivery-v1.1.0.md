@@ -2,6 +2,11 @@
 
 本 Runbook 用于把源码候选推进到**可交给首批用户受控测试**的状态。它不会授权永久删除、真实生产数据批量操作、公开发布、签名或公证。
 
+维护者在本机执行真实账号、真实归档或真实文件修改时，必须另外遵循
+[v1.1.0 本机两步受控验收计划](local-controlled-v1.1.0.md)。该计划先做只读基线，
+再创建本机排除认证文件的 .codex 数据加密回滚快照；该快照不等于按对话逻辑备份，也不进入
+测试包或共享证据。
+
 ## 1. 准备独立验收环境
 
 在真实 Apple Silicon macOS 上使用与候选提交一致的 fresh checkout：
@@ -64,22 +69,29 @@ scripts/build_macos_app.sh
 
 ## 4. 安装包首次交付门禁
 
-对 fresh bundle 运行：
+先在专用 macOS 测试用户或临时 `HOME` 中安装 fresh bundle，避免修改真实用户的稳定安装路径：
 
 ```bash
+CSM_TEST_HOME=/private/tmp/csm-first-delivery-home
+HOME="$CSM_TEST_HOME" \
+CSM_INSTALL_SKIP_APP_SERVER=1 \
+scripts/install_user.sh "$PWD/dist/CodexSessionManager.app"
+
+HOME="$CSM_TEST_HOME" \
 scripts/accept_first_delivery.sh \
   --evidence-dir build/first-delivery-bundle-$(date +%Y%m%d-%H%M%S) \
-  --app dist/CodexSessionManager.app
+  --app dist/CodexSessionManager.app \
+  --stable-app "$CSM_TEST_HOME/Applications/CodexSessionManager.app"
 ```
 
 除源码门禁外，此步骤还要求：
 
 - bundle 验收脚本通过；
 - bundle 内 age 可执行；
-- 稳定应用可执行路径可解析；
+- 独立稳定应用可执行路径可解析，且版本、channel 和 executable SHA-256 与候选 bundle 一致；
 - `acceptance release` 的全部必需检查为 `passed`。
 
-随后使用稳定用户安装器安装，并验证回退副本：
+安装后验证版本、doctor 和回退副本：
 
 ```bash
 scripts/install_user.sh "$PWD/dist/CodexSessionManager.app"
@@ -166,35 +178,27 @@ csm memory review SOURCE_ID
 - 修改源文件后旧 plan 因并发漂移被拒绝；
 - 未登记路径、路径逃逸和符号链接被拒绝。
 
-## 8. 固定 Tunnel 与真实 ChatGPT MCP 验收
+## 8. Codex 桌面端本机 MCP 验收
 
-ChatGPT 不能直接连接只在本机监听的 MCP 服务。使用固定的远程入口或受支持的安全隧道。当前 ChatGPT 自定义 MCP app 的可用计划、开发者模式入口和权限仍可能变化，操作前核对 [OpenAI 官方开发者模式与 MCP app 说明](https://help.openai.com/en/articles/12584461-developer-mode-and-full-mcp-connectors-in-chatgpt-beta)。
+本次真实测试使用 Codex desktop app，而不是 ChatGPT 网页端。Codex desktop 支持
+本机 MCP，并可按 `~/.codex/config.toml` 启动 stdio 子进程，因此不需要 HTTPS、
+固定 Tunnel、OpenAI Secure MCP Tunnel 或 Bearer token。
 
-本机启动时只把 token 放在环境变量：
+测试包的 `configure-codex-mcp.sh` 应配置：
 
-```bash
-export CSM_MCP_BEARER_TOKEN='本地生成的长随机值'
-csm mcp serve \
-  --host 127.0.0.1 \
-  --port 8765 \
-  --path /mcp \
-  --allowed-origin https://chatgpt.com
+```toml
+[mcp_servers.codex_session_manager]
+command = "/Users/测试用户/.local/bin/csm"
+args = ["mcp", "stdio"]
 ```
 
-Cloudflare Tunnel 把固定域名（例如当前项目使用的 `openai-mcp.aiyawoc.com`）转发到：
+配置中的 `CODEX_HOME`、`CSM_CODEX_HOME`、`CSM_DATA_DIR`、`CSM_CONFIG_DIR`、
+`CSM_CACHE_DIR` 和 `CSM_LOG_DIR` 必须指向同一个测试机数据根。完全退出并重启
+Codex desktop，在 Settings → MCP servers 或 composer 的 `/mcp` 中确认服务已发现。
+官方配置和传输说明以 [Codex MCP 文档](https://learn.chatgpt.com/docs/extend/mcp)
+为准。
 
-```text
-http://127.0.0.1:8765
-```
-
-先在本机和公网端分别验证：
-
-```bash
-curl --fail http://127.0.0.1:8765/healthz
-curl --fail https://openai-mcp.aiyawoc.com/healthz
-```
-
-在 ChatGPT 开发者模式中创建或刷新自定义 MCP app 后，核对工具快照只包含：
+核对工具快照只包含 CSM 的以下十个工具：
 
 ```text
 inspect_conversation_inventory
@@ -218,11 +222,15 @@ open_review_demo
 3. 上下文建议准备并唤起原 GUI；
 4. 已登记测试记忆来源的分段读取、建议准备和 GUI 唤起；
 5. 应用已运行时窗口置前；
-6. 服务暂时断开时请求保留在私有队列，恢复后可复核；
-7. 错误 Bearer token、错误 Origin 和过大请求被拒绝；
-8. 工具定义变化后在 ChatGPT 中重新刷新并审查动作。
+6. 关闭/重启 Codex desktop 后 MCP 子进程可以重新启动，私有队列中的请求仍可复核；
+7. 修改工具定义或配置后，Codex desktop 重新启动并重新发现服务；
+8. MCP 子进程退出时只影响 MCP 请求，不绕过 CSM GUI 的计划和确认门禁。
 
-记录：ChatGPT 计划类型、开发者模式入口、MCP URL、工具清单哈希、测试 request ID、窗口行为、断线恢复结果和日期。不要记录 token 或真实内容。
+记录：Codex desktop 版本、MCP 配置名称、工具清单哈希、测试 request ID、窗口行为、
+重启恢复结果和日期。不要记录 token、认证信息、对话正文或记忆正文。
+
+`csm mcp serve` 的 Bearer/Origin/请求大小检查仍可作为独立 HTTP 诊断，但不是本次
+Codex desktop 本机 stdio 验收门禁；不得把 HTTP 诊断服务暴露到公网。
 
 ## 9. 发布判定
 
@@ -231,7 +239,7 @@ open_review_demo
 - 源码和 bundle evidence 均为 `delivery_ready: true`；
 - fresh bundle、稳定安装和回退路径通过；
 - 一个真实测试对话和一个测试记忆文件闭环通过；
-- 固定 Tunnel 与真实 ChatGPT MCP 工具发现和窗口唤起通过；
+- Codex desktop 本机 MCP 工具发现、stdio 启动和 GUI 唤起通过；
 - README、Skill、版本和 checksum 与候选提交一致；
 - 已明确标注未签名/未公证/未生产验收的限制。
 

@@ -15,6 +15,7 @@ from codex_session_manager.models import (
     RiskLevel,
 )
 from codex_session_manager.plans import PlanStore
+from codex_session_manager.protocol_profiles import AUDITED_PROTOCOL_PROFILES
 
 
 def test_canonical_hash_is_order_independent() -> None:
@@ -52,10 +53,14 @@ def test_action_plan_tamper_and_immutable_store(app_paths, capabilities) -> None
 
 
 def test_capability_matrix_requires_explicit_experimental_negotiation() -> None:
+    profile = next(iter(AUDITED_PROTOCOL_PROFILES.values()))
     base = CapabilityMatrix(
+        codex_version=profile.codex_version,
+        codex_binary_sha256="a" * 64,
+        schema_sha256=profile.schema_sha256,
         initialize_fingerprint="init",
-        stable_methods=("thread/read",),
-        experimental_methods=("thread/backgroundTerminals/list",),
+        stable_methods=tuple(sorted(profile.stable_methods)),
+        experimental_methods=tuple(sorted(profile.experimental_methods)),
         schema_complete=True,
     )
     base.require_write("thread/read")
@@ -63,6 +68,23 @@ def test_capability_matrix_requires_explicit_experimental_negotiation() -> None:
         base.require_write("thread/backgroundTerminals/list")
     enabled = base.model_copy(update={"experimental_api": True})
     enabled.require_write("thread/backgroundTerminals/list")
+
+
+def test_capability_matrix_rejects_unknown_version_even_with_known_schema() -> None:
+    profile = next(iter(AUDITED_PROTOCOL_PROFILES.values()))
+    unknown = CapabilityMatrix(
+        codex_version="0.149.1",
+        codex_binary_sha256="a" * 64,
+        schema_sha256=profile.schema_sha256,
+        initialize_fingerprint="init",
+        stable_methods=tuple(sorted(profile.stable_methods)),
+        experimental_methods=tuple(sorted(profile.experimental_methods)),
+        schema_complete=True,
+    )
+
+    assert not unknown.write_enabled
+    with pytest.raises(ValueError, match="write capability disabled"):
+        unknown.require_write("thread/archive")
 
 
 def test_plan_store_rejects_changed_bytes_for_same_identity(app_paths, capabilities) -> None:

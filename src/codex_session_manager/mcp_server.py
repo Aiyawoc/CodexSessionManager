@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import secrets
+import sys
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Any, BinaryIO, Final, cast
 
 from pydantic import BaseModel
 
@@ -557,6 +560,115 @@ class McpHttpConfig:
             raise ValueError(
                 "unauthenticated MCP mode requires an explicit loopback IP such as 127.0.0.1"
             ) from exc
+
+
+def mcp_http_config_from_environment() -> McpHttpConfig:
+    """Build the opt-in desktop auto-start MCP configuration from the environment."""
+
+    raw_origins = os.environ.get("CSM_MCP_ALLOWED_ORIGINS", "https://chatgpt.com")
+    allowed_origins = tuple(origin.strip() for origin in raw_origins.split(",") if origin.strip())
+    return McpHttpConfig(
+        host="127.0.0.1",
+        port=int(os.environ.get("CSM_MCP_PORT", "8765")),
+        endpoint_path=os.environ.get("CSM_MCP_PATH", "/mcp"),
+        bearer_token=os.environ.get("CSM_MCP_BEARER_TOKEN"),
+        allowed_origins=allowed_origins,
+        allow_unauthenticated_local=os.environ.get("CSM_MCP_ALLOW_UNAUTHENTICATED_LOCAL") == "1",
+    )
+
+
+class McpServerLifecycle:
+    """Own one opt-in in-process MCP HTTP server for the desktop lifetime."""
+
+    def __init__(
+        self,
+        *,
+        config: McpHttpConfig,
+        application: McpApplication | None = None,
+    ) -> None:
+        self._config = config
+        self._application = application
+        self._server: ThreadingHTTPServer | None = None
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._server is not None:
+            raise RuntimeError("MCP server lifecycle is already running")
+        server = create_mcp_http_server(config=self._config, application=self._application)
+        thread = threading.Thread(
+            target=server.serve_forever,
+            name="CodexSessionManager-MCP",
+            daemon=True,
+        )
+        try:
+            thread.start()
+        except BaseException:
+            server.server_close()
+            raise
+        self._server = server
+        self._thread = thread
+
+    def close(self) -> None:
+        server = self._server
+        thread = self._thread
+        if server is None or thread is None:
+            return
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+        self._server = None
+        self._thread = None
+
+
+def start_mcp_from_environment(*, paths: AppPaths) -> McpServerLifecycle | None:
+    """Start MCP only when the desktop launcher explicitly opts in."""
+
+    if os.environ.get("CSM_MCP_AUTO_START") != "1":
+        return None
+    lifecycle = McpServerLifecycle(
+        config=mcp_http_config_from_environment(),
+        application=McpApplication(paths=paths),
+    )
+    lifecycle.start()
+    return lifecycle
+
+
+def serve_mcp_stdio(
+    *,
+    application: McpApplication | None = None,
+    input_stream: BinaryIO | None = None,
+    output_stream: BinaryIO | None = None,
+) -> None:
+    """Serve MCP over newline-delimited JSON for a local Codex client.
+
+    Codex starts and owns this process from its local MCP configuration.  The
+    transport deliberately writes only JSON-RPC responses to stdout; any
+    diagnostics must be emitted by the caller to stderr.
+    """
+
+    app = application or McpApplication()
+    input_buffer = input_stream or sys.stdin.buffer
+    output_buffer = output_stream or sys.stdout.buffer
+    for raw_line in input_buffer:
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            response: Any = McpApplication._error(None, -32700, "Parse error")
+        else:
+            response = app.handle_payload(payload)
+        if response is None:
+            continue
+        data = json.dumps(
+            response,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        output_buffer.write(data + b"\n")
+        output_buffer.flush()
 
 
 class _McpHttpServer(ThreadingHTTPServer):

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import http.client
+import io
 import json
+import socket
 from pathlib import Path
 
 import pytest
@@ -9,6 +12,9 @@ from codex_session_manager.mcp_server import (
     DEFAULT_PROTOCOL_VERSION,
     McpApplication,
     McpHttpConfig,
+    McpServerLifecycle,
+    mcp_http_config_from_environment,
+    serve_mcp_stdio,
 )
 from codex_session_manager.memory import MemorySourceRegistry
 from codex_session_manager.review_requests import ReviewRequestQueue, ReviewRequestStore
@@ -248,3 +254,163 @@ def test_mcp_http_config_requires_explicit_auth_boundary() -> None:
         allowed_origins=("https://chatgpt.com",),
     )
     protected.validate()
+
+
+def test_mcp_http_config_from_environment_is_loopback_and_chatgpt_scoped(monkeypatch) -> None:
+    monkeypatch.setenv("CSM_MCP_PORT", "9876")
+    monkeypatch.setenv("CSM_MCP_PATH", "/test-mcp")
+    monkeypatch.setenv(
+        "CSM_MCP_ALLOWED_ORIGINS",
+        "https://chatgpt.com, https://chat.openai.com",
+    )
+    monkeypatch.setenv("CSM_MCP_BEARER_TOKEN", "test-only-token")
+
+    config = mcp_http_config_from_environment()
+
+    assert config.host == "127.0.0.1"
+    assert config.port == 9876
+    assert config.endpoint_path == "/test-mcp"
+    assert config.allowed_origins == (
+        "https://chatgpt.com",
+        "https://chat.openai.com",
+    )
+    assert config.bearer_token == "test-only-token"
+    assert config.allow_unauthenticated_local is False
+
+
+def test_mcp_server_lifecycle_starts_and_stops_with_desktop(app_paths) -> None:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = int(probe.getsockname()[1])
+    lifecycle = McpServerLifecycle(
+        config=McpHttpConfig(
+            port=port,
+            bearer_token="test-only-token",
+            allowed_origins=("https://chatgpt.com",),
+        ),
+        application=McpApplication(paths=app_paths, launcher=lambda _path: None),
+    )
+    lifecycle.start()
+    try:
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        connection.request("GET", "/healthz")
+        response = connection.getresponse()
+        assert response.status == 200
+        connection.close()
+    finally:
+        lifecycle.close()
+
+
+def test_mcp_http_transport_enforces_auth_origin_size_and_tool_surface(app_paths) -> None:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = int(probe.getsockname()[1])
+    lifecycle = McpServerLifecycle(
+        config=McpHttpConfig(
+            port=port,
+            bearer_token="test-only-token",
+            allowed_origins=("https://chatgpt.com",),
+            max_request_bytes=128,
+        ),
+        application=McpApplication(paths=app_paths, launcher=lambda _path: None),
+    )
+    lifecycle.start()
+
+    def request(
+        path: str,
+        *,
+        body: bytes = b"{}",
+        token: str | None = "test-only-token",
+        origin: str | None = "https://chatgpt.com",
+        content_type: str = "application/json",
+    ) -> tuple[int, bytes]:
+        headers = {"Content-Type": content_type, "Content-Length": str(len(body))}
+        if token is not None:
+            headers["Authorization"] = f"Bearer {token}"
+        if origin is not None:
+            headers["Origin"] = origin
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        connection.request("POST", path, body=body, headers=headers)
+        response = connection.getresponse()
+        result = (response.status, response.read())
+        connection.close()
+        return result
+
+    try:
+        assert request("/mcp", token=None)[0] == 401
+        assert request("/mcp", origin="https://not-chatgpt.example")[0] == 403
+        assert request("/mcp", content_type="text/plain")[0] == 415
+        assert request("/mcp", body=b"x" * 129)[0] == 413
+        assert request("/not-mcp")[0] == 404
+
+        status, body = request(
+            "/mcp",
+            body=json.dumps(
+                {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+            ).encode(),
+        )
+        assert status == 200
+        names = {item["name"] for item in json.loads(body)["result"]["tools"]}
+        assert names == {
+            "inspect_conversation_inventory",
+            "prepare_cleanup_suggestions",
+            "open_cleanup_review",
+            "prepare_context_suggestions",
+            "open_context_review",
+            "inspect_memory_source",
+            "prepare_memory_suggestions",
+            "open_memory_review",
+            "get_pending_review_status",
+            "open_review_demo",
+        }
+    finally:
+        lifecycle.close()
+
+
+def test_mcp_stdio_transport_returns_json_rpc_and_skips_notifications(app_paths) -> None:
+    input_stream = io.BytesIO(
+        b"\n".join(
+            [
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {"protocolVersion": DEFAULT_PROTOCOL_VERSION},
+                    }
+                ).encode(),
+                json.dumps(
+                    {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}
+                ).encode(),
+                json.dumps(
+                    {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
+                ).encode(),
+                b"not-json",
+            ]
+        )
+        + b"\n"
+    )
+    output_stream = io.BytesIO()
+
+    serve_mcp_stdio(
+        application=McpApplication(paths=app_paths, launcher=lambda _path: None),
+        input_stream=input_stream,
+        output_stream=output_stream,
+    )
+
+    responses = [json.loads(line) for line in output_stream.getvalue().splitlines()]
+    assert [response["id"] for response in responses] == [1, 2, None]
+    assert responses[0]["result"]["serverInfo"]["version"] == "1.1.0"
+    assert {tool["name"] for tool in responses[1]["result"]["tools"]} == {
+        "inspect_conversation_inventory",
+        "prepare_cleanup_suggestions",
+        "open_cleanup_review",
+        "prepare_context_suggestions",
+        "open_context_review",
+        "inspect_memory_source",
+        "prepare_memory_suggestions",
+        "open_memory_review",
+        "get_pending_review_status",
+        "open_review_demo",
+    }
+    assert responses[2]["error"]["code"] == -32700

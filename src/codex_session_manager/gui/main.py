@@ -20,6 +20,7 @@ from codex_session_manager.gui.single_instance import (
     InstanceRole,
     SingleInstanceBroker,
 )
+from codex_session_manager.mcp_server import McpServerLifecycle, start_mcp_from_environment
 from codex_session_manager.pending_service import PendingCheckResult
 from codex_session_manager.review_requests import ReviewOperation, ReviewRequestQueue
 from codex_session_manager.workflows import ApplicationWorkflows
@@ -274,15 +275,18 @@ def run_gui(
             raise ValueError(forwarded_response.message or "桌面主进程拒绝了请求")
         return 0
 
-    initial_response = windows.handle_command(command)
-    if not initial_response.accepted:
-        broker.close()
-        raise ValueError(initial_response.message or "无法打开桌面窗口")
-    QTimer.singleShot(0, windows.open_pending_requests)
-    smoke_exit = os.environ.get("CSM_GUI_SMOKE_EXIT_MS")
-    if smoke_exit:
-        QTimer.singleShot(max(0, int(smoke_exit)), app.quit)
+    mcp_lifecycle: McpServerLifecycle | None = None
     try:
+        mcp_lifecycle = start_mcp_from_environment(paths=paths)
+        initial_response = windows.handle_command(command)
+        if not initial_response.accepted:
+            raise ValueError(initial_response.message or "无法打开桌面窗口")
+        QTimer.singleShot(0, windows.open_pending_requests)
+        smoke_exit = os.environ.get("CSM_GUI_SMOKE_EXIT_MS")
+        if smoke_exit:
+            QTimer.singleShot(max(0, int(smoke_exit)), app.quit)
         return app.exec()
     finally:
+        if mcp_lifecycle is not None:
+            mcp_lifecycle.close()
         broker.close()

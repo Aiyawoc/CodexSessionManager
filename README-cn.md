@@ -244,18 +244,39 @@ $manage-codex-sessions 打开当前对话的上下文裁剪
 
 Skill 不会在普通编码任务中自动运行。它会解析稳定的 `csm` 启动器或 App 内可执行文件，并与 GUI、CLI 共用同一套计划和安全门禁。
 
-### MCP Streamable HTTP 服务
+### Codex 桌面端本机 MCP
 
-CSM 内置一个只读编排边界的 MCP HTTP 服务。它只提供候选盘点、结构化建议准备、打开本地审查 GUI 和查询请求状态；不会暴露归档、永久删除、上下文应用或记忆写入执行工具。
+CSM 内置一个只读编排边界的 MCP stdio 服务，供 Codex desktop/CLI 从本机
+`config.toml` 启动：
 
-公网 Tunnel 前应设置本地环境变量中的 Bearer token，不要把 token 写入命令行、配置仓库或模型上下文：
+```toml
+[mcp_servers.codex_session_manager]
+command = "/Users/测试用户/.local/bin/csm"
+args = ["mcp", "stdio"]
+```
+
+`csm mcp stdio` 只提供候选盘点、结构化建议准备、打开本地审查 GUI 和查询请求状态；
+不会暴露归档、永久删除、上下文应用或记忆写入执行工具。测试包的
+`configure-codex-mcp.sh` 会使用测试机实际路径，并把 `CODEX_HOME` 与 CSM 私有目录
+固定到同一个隔离测试环境。配置后重启 Codex desktop，在 Settings → MCP servers
+或 composer 的 `/mcp` 中检查服务。
+
+如果必须与其他客户端做 HTTP 兼容性诊断，仍可使用 Bearer token 保护的回环服务；
+这不是 Codex desktop 本机测试的前置条件，也不需要 HTTPS 或 Tunnel：
 
 ```bash
 export CSM_MCP_BEARER_TOKEN='在本地安全生成的长随机值'
-csm mcp serve --host 127.0.0.1 --port 8765 --path /mcp
+csm mcp serve \
+  --host 127.0.0.1 \
+  --port 8765 \
+  --path /mcp \
+  --allowed-origin https://chatgpt.com
 ```
 
-健康检查位于 `/healthz`，MCP 端点为 `/mcp`。Cloudflare Tunnel 应把 HTTPS 域名转发到该回环地址，并保留或增加独立访问策略。`--allow-unauthenticated-local` 只用于显式回环地址上的本机测试，不能用于公网 Tunnel。
+健康检查位于 `/healthz`，MCP 端点为 `/mcp`。`--allow-unauthenticated-local` 只用于
+显式回环地址上的本机 HTTP 测试，不能用于公网服务。CSM App 的
+`CSM_MCP_AUTO_START=1` 也是可选的 HTTP 诊断开关；Codex desktop 的 stdio 方式由
+Codex 自己按配置启动 `csm mcp stdio`，不需要 CSM App 先监听端口。
 
 当前注册工具：
 
@@ -272,7 +293,7 @@ get_pending_review_status
 open_review_demo
 ```
 
-这些工具生成的建议和请求仍需由原 GUI 中的用户最终确认。记忆工具只接受已登记的 source ID，不接受任意文件路径，也不暴露写入执行器。真实 ChatGPT 连接器、Tunnel 认证和已安装应用端到端联调属于独立验收项。
+这些工具生成的建议和请求仍需由原 GUI 中的用户最终确认。记忆工具只接受已登记的 source ID，不接受任意文件路径，也不暴露写入执行器。Codex desktop 的本机 MCP、真实 Cocoa GUI、账号联调和已安装应用端到端联调属于独立验收项。
 
 ### 可选 Hook
 
@@ -293,6 +314,7 @@ csm hook uninstall --yes
 - [架构决策记录](docs/adr/)
 - [App Server schema 人工批准流程](docs/acceptance/app-server-schema-approval.md)
 - [`v1.1.0` 首次交付验收 Runbook](docs/acceptance/first-delivery-v1.1.0.md)
+- [`v1.1.0` 本机两步受控验收计划](docs/acceptance/local-controlled-v1.1.0.md)
 - [`v1.1.0` 正式发布前人工验收 Runbook](docs/acceptance/formal-release-manual-v1.1.0.md)
 - [`v1.1.0` 首次交付候选说明](docs/releases/v1.1.0-first-delivery.md)
 - [`v1.0.1` macOS 真实账号验收 Runbook](docs/acceptance/macos-real-account-v1.0.1.md)
@@ -364,9 +386,14 @@ scripts/launch_test_app.sh /absolute/path/printed/as/TEST_ROOT
 ```bash
 scripts/build_macos_app.sh
 scripts/accept_macos_bundle.sh dist/CodexSessionManager.app
-scripts/accept_first_delivery.sh \
+TEST_HOME=/private/tmp/csm-first-delivery-home
+mkdir -m 700 -p "$TEST_HOME"
+HOME="$TEST_HOME" CSM_INSTALL_SKIP_APP_SERVER=1 \
+  scripts/install_user.sh "$PWD/dist/CodexSessionManager.app"
+HOME="$TEST_HOME" scripts/accept_first_delivery.sh \
   --evidence-dir build/first-delivery-bundle-$(date +%Y%m%d-%H%M%S) \
-  --app dist/CodexSessionManager.app
+  --app dist/CodexSessionManager.app \
+  --stable-app "$TEST_HOME/Applications/CodexSessionManager.app"
 scripts/package_macos_release.sh --app dist/CodexSessionManager.app
 ```
 

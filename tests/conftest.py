@@ -16,6 +16,7 @@ from codex_session_manager.models import (
     ThreadStatus,
     TurnSnapshot,
 )
+from codex_session_manager.protocol_profiles import AUDITED_PROTOCOL_PROFILES
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -38,27 +39,15 @@ def app_paths(tmp_path: Path) -> AppPaths:
 
 @pytest.fixture
 def capabilities() -> CapabilityMatrix:
+    profile = next(iter(AUDITED_PROTOCOL_PROFILES.values()))
     return CapabilityMatrix(
-        codex_version="test",
+        codex_version=profile.codex_version,
         codex_binary_path="/test/codex",
         codex_binary_sha256="a" * 64,
         initialize_fingerprint="init",
-        schema_sha256="b" * 64,
-        stable_methods=(
-            "initialize",
-            "thread/list",
-            "thread/read",
-            "thread/start",
-            "thread/fork",
-            "thread/rollback",
-            "thread/archive",
-            "thread/unarchive",
-            "thread/delete",
-            "thread/inject_items",
-            "thread/name/set",
-            "thread/loaded/list",
-        ),
-        experimental_methods=("thread/backgroundTerminals/list",),
+        schema_sha256=profile.schema_sha256,
+        stable_methods=tuple(sorted(profile.stable_methods)),
+        experimental_methods=tuple(sorted(profile.experimental_methods)),
         experimental_api=True,
         schema_complete=True,
     )

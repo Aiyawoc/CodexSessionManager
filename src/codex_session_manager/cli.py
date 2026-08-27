@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
@@ -102,12 +103,45 @@ memory_app.add_typer(memory_restore_app, name="restore")
 def mcp_serve(
     host: Annotated[str, typer.Option("--host")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port")] = 8765,
+    endpoint_path: Annotated[str, typer.Option("--path")] = "/mcp",
+    allowed_origin: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--allowed-origin",
+            help="允许的精确 HTTP Origin；可重复传入，禁止使用通配符。",
+        ),
+    ] = None,
+    allow_unauthenticated_local: Annotated[
+        bool,
+        typer.Option(
+            "--allow-unauthenticated-local",
+            help="仅允许回环地址上的本机无认证测试；公网服务禁止使用。",
+        ),
+    ] = False,
 ) -> None:
-    """启动只读 MCP HTTP 服务。"""
+    """启动只读 MCP HTTP 服务。Bearer token 只从环境变量读取。"""
 
     from codex_session_manager.mcp_server import McpHttpConfig, serve_mcp_http
 
-    serve_mcp_http(config=McpHttpConfig(host=host, port=port))
+    serve_mcp_http(
+        config=McpHttpConfig(
+            host=host,
+            port=port,
+            endpoint_path=endpoint_path,
+            bearer_token=os.environ.get("CSM_MCP_BEARER_TOKEN"),
+            allowed_origins=tuple(allowed_origin or ()),
+            allow_unauthenticated_local=allow_unauthenticated_local,
+        )
+    )
+
+
+@mcp_app.command("stdio")
+def mcp_stdio() -> None:
+    """Serve the local MCP protocol over stdio for Codex desktop/CLI."""
+
+    from codex_session_manager.mcp_server import serve_mcp_stdio
+
+    serve_mcp_stdio()
 
 
 @acceptance_app.command("run")
@@ -124,6 +158,8 @@ def acceptance_run(
     except (FileExistsError, OSError, ValueError) as exc:
         raise typer.BadParameter(f"无法运行自动验收：{exc}") from exc
     _emit(result)
+    if not result["delivery_ready"]:
+        raise typer.Exit(code=1)
 
 
 @acceptance_app.command("release")

@@ -48,6 +48,11 @@ def test_cli_exposes_planned_command_surface() -> None:
     assert "--page" in gui.stdout
     assert "--thread" in gui.stdout
 
+    mcp = runner.invoke(app, ["mcp", "--help"])
+    assert mcp.exit_code == 0
+    assert "serve" in mcp.stdout
+    assert "stdio" in mcp.stdout
+
     cleanup = runner.invoke(app, ["cleanup", "--help"])
     assert cleanup.exit_code == 0
     assert "review" in cleanup.stdout
@@ -87,6 +92,85 @@ def test_cli_version_does_not_contact_app_server() -> None:
     result = CliRunner().invoke(app, ["version"])
     assert result.exit_code == 0
     assert result.stdout.strip() == "1.1.0"
+
+
+def test_mcp_serve_builds_secure_http_config(monkeypatch) -> None:
+    captured = {}
+
+    def fake_serve(*, config) -> None:
+        captured["config"] = config
+
+    monkeypatch.setattr("codex_session_manager.mcp_server.serve_mcp_http", fake_serve)
+    monkeypatch.setenv("CSM_MCP_BEARER_TOKEN", "test-only-token")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "mcp",
+            "serve",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8765",
+            "--path",
+            "/mcp",
+            "--allowed-origin",
+            "https://chatgpt.com",
+            "--allowed-origin",
+            "https://chat.openai.com",
+        ],
+    )
+
+    assert result.exit_code == 0
+    config = captured["config"]
+    assert config.host == "127.0.0.1"
+    assert config.port == 8765
+    assert config.endpoint_path == "/mcp"
+    assert config.bearer_token == "test-only-token"
+    assert config.allowed_origins == (
+        "https://chatgpt.com",
+        "https://chat.openai.com",
+    )
+    assert config.allow_unauthenticated_local is False
+
+
+def test_mcp_serve_supports_explicit_local_unauthenticated_mode(monkeypatch) -> None:
+    captured = {}
+
+    def fake_serve(*, config) -> None:
+        captured["config"] = config
+
+    monkeypatch.setattr("codex_session_manager.mcp_server.serve_mcp_http", fake_serve)
+    monkeypatch.delenv("CSM_MCP_BEARER_TOKEN", raising=False)
+
+    result = CliRunner().invoke(
+        app,
+        ["mcp", "serve", "--allow-unauthenticated-local"],
+    )
+
+    assert result.exit_code == 0
+    config = captured["config"]
+    assert config.bearer_token is None
+    assert config.allow_unauthenticated_local is True
+
+
+def test_acceptance_run_fails_when_required_check_fails(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "codex_session_manager.acceptance_runner.run_automated_acceptance",
+        lambda *_args, **_kwargs: {
+            "delivery_ready": False,
+            "production_ready": False,
+            "failed_required_checks": ("mcp_security_boundary",),
+        },
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["acceptance", "run", "--output", str(tmp_path / "acceptance.json")],
+    )
+
+    assert result.exit_code != 0
+    assert "delivery_ready" in result.stdout
 
 
 def test_inventory_time_filter_requires_explicit_timezone() -> None:

@@ -234,7 +234,18 @@ class CapabilityMatrix(FrozenModel):
 
     @property
     def write_enabled(self) -> bool:
-        return self.schema_complete and self.read_only_reason is None
+        if not self.schema_complete or self.read_only_reason is not None:
+            return False
+        if (
+            self.codex_binary_sha256 is None
+            or self.codex_version is None
+            or self.schema_sha256 is None
+        ):
+            return False
+
+        from codex_session_manager.protocol_profiles import TRUSTED_WRITE_SCHEMAS
+
+        return (self.codex_version, self.schema_sha256) in TRUSTED_WRITE_SCHEMAS
 
     def supports(self, method: str) -> bool:
         return method in self.stable_methods or method in self.experimental_methods

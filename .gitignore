@@ -23,3 +23,8 @@ nuitka-crash-report.xml
 artifacts/
 vendor/age/
 agent_team/handoffs/
+
+# Local agent/planning state; canonical project plans under docs/ remain tracked.
+agent_team/
+docs/superpowers/plans/
+docs/_drafts/

@@ -312,6 +312,7 @@ Installation does not silently enable Hooks. After installation, review and trus
 - [Skill safety invariants](skills/manage-codex-sessions/references/safety.md)
 - [Domain language and relationships](CONTEXT.md)
 - [Architecture decision records](docs/adr/)
+- [Final phase-two implementation plan (v1.2.0—v1.5.0)](docs/CodexSessionManager%20二期最终实施计划.md)
 - [Human App Server schema approval process](docs/acceptance/app-server-schema-approval.md)
 - [`v1.1.0` first-delivery acceptance runbook](docs/acceptance/first-delivery-v1.1.0.md)
 - [`v1.1.0` local two-step controlled acceptance plan](docs/acceptance/local-controlled-v1.1.0.md)

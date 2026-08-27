@@ -312,6 +312,7 @@ csm hook uninstall --yes
 - [Skill 安全不变量](skills/manage-codex-sessions/references/safety.md)
 - [领域语言与关系](CONTEXT.md)
 - [架构决策记录](docs/adr/)
+- [二期最终实施计划（v1.2.0—v1.5.0）](docs/CodexSessionManager%20二期最终实施计划.md)
 - [App Server schema 人工批准流程](docs/acceptance/app-server-schema-approval.md)
 - [`v1.1.0` 首次交付验收 Runbook](docs/acceptance/first-delivery-v1.1.0.md)
 - [`v1.1.0` 本机两步受控验收计划](docs/acceptance/local-controlled-v1.1.0.md)

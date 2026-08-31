@@ -1,15 +1,15 @@
 # CodexSessionManager
 
 <p align="center">
-  <img src="docs/images/gui-overview-cn.png" alt="CodexSessionManager 项目、对话、时间线、上下文与裁剪界面" width="100%">
+  <img src="docs/images/gui-overview-cn.png" alt="CodexSessionManager 项目、对话、时间线、上下文审查与投影计划界面" width="100%">
 </p>
 
 <p align="center">
-  <strong>面向 Codex 对话盘点、备份、清理、导入和上下文裁剪的安全优先 GUI 与 CLI。</strong><br>
+  <strong>面向 Codex 对话盘点、备份、清理、导入和上下文审查与投影计划的安全优先 GUI 与 CLI。</strong><br>
   <a href="README.md">English</a> · 简体中文 · <a href="docs/CodexSessionManager-GUI-Guide-bilingual.pptx">双语 GUI 操作指南</a>
 </p>
 
-长期使用 Codex 后，对话会分散在多个项目中，上下文也会持续膨胀。CodexSessionManager 将审查、加密备份、安全清理与无损上下文裁剪集中到一个可审计的桌面工具中。
+长期使用 Codex 后，对话会分散在多个项目中，上下文也会持续膨胀。CodexSessionManager 将审查、加密备份、安全清理与上下文投影计划集中到一个可审计的桌面工具中。
 
 <a id="features"></a>
 ## ✨ 功能特性
@@ -17,9 +17,9 @@
 - 按项目、活跃时间、来源和父子关系分组、搜索 Codex 对话。
 - 以流式方式创建 age 加密 `.csmbackup`，并执行完整性复验。
 - GUI 首次备份时自动生成一个本机托管 age identity，后续自动复用同一密钥覆盖选中任务及其完整派生后代。
-- 所有归档、恢复、导入、裁剪和清除写操作均先生成不可变计划。
+- 所有归档、恢复、导入、清理和永久清除写操作均先生成不可变计划；上下文投影当前只生成不可变计划。
 - 生成脱敏 App Server schema 审计报告；未知画像保持只读，不能自动加入写入信任列表。
-- 通过派生任务精简上下文，原对话内容始终保持不变。
+- 生成并审查 Keep/Exclude/Summary/Protect 上下文投影计划；当前不把计划应用到原任务或派生任务。
 - 审查模型可见内容、Markdown、隐藏标签、依赖关系和预计 Token 节省量。
 - 使用有界后台多线程在本地筛查疑似凭据和个人信息，通过可取消的模态进度窗口反馈进度，并对命中内容进行醒目标记。
 - 支持 GUI、CLI、显式调用 Codex Skill，以及可选的 fail-open PreCompact/PostCompact Hook。
@@ -31,7 +31,7 @@
 | --- | --- | --- |
 | 审查大量对话 | 分别搜索项目和原始历史 | 按项目分组盘点并统一查看时间线 |
 | 清理旧对话 | 缺少可复现依据便直接删除或归档 | dry-run 计划、指纹校验、后代展开，再通过 App Server 写入 |
-| 精简上下文 | 改写原历史或接受一次性整体压缩 | 在新派生任务中保留、排除、摘要或保护内容 |
+| 审查与投影上下文 | 改写原历史或接受一次性整体压缩 | 生成绑定指纹的投影计划；当前不执行到 Codex |
 | 备份与迁移 | 复制内部文件并依赖版本恰好兼容 | 加密逻辑记录、校验清单、来源信息、完整复验和新 ID 恢复 |
 
 <a id="quick-start"></a>
@@ -92,7 +92,7 @@ uv run CodexSessionManager
 
 1. 搜索项目或对话，也可以输入完整对话 ID。
 2. 选择 turn 或 item，然后设置为**保留、排除、摘要或保护**。
-3. 使用**保存方案**只保存已审查计划；使用**派生精简任务**创建新的精简对话。
+3. 使用**保存方案**只保存已审查的上下文投影计划；当前不应用到原任务或创建可交付的派生精简任务。
 4. 在对话清理模式中调整最终候选后使用**备份并归档**。首次只需确认创建本机托管密钥；以后只选择输出文件。程序完整复验备份后才重建最终计划并归档。
 
 ### 构建与发布状态
@@ -127,7 +127,7 @@ uv run CodexSessionManager
 | 场景 | CSM 提供的能力 |
 | --- | --- |
 | 长期维护多个 Codex 项目 | 按项目分组的对话列表、搜索、距今时间、多选和关系追踪 |
-| 上下文即将触发压缩 | 用户手动审查，或在原生压缩前使用可选 PreCompact 轻提示 |
+| 上下文即将触发压缩 | 先人工审查并保存投影计划，或在原生压缩前使用可选 PreCompact 轻提示 |
 | 清理较旧或长期未活动对话 | 本地规则候选、dry-run 归档计划、批次上限和人工确认 |
 | 对话备份或跨账号迁移 | CSM 加密备份、逻辑恢复、Codex rollout 导入和 ChatGPT 导出分支展开 |
 | 敏感内容排查 | 不上传对话内容的有界后台并行筛查、可取消进度和红色高亮 |
@@ -145,7 +145,7 @@ uv run CodexSessionManager
 - 协议审计比较稳定/实验方法、方法新增/移除/稳定性变化和关键字段；只有版本与 schema 哈希精确命中人工批准画像才开放写入。
 - 每个写操作都消费绑定 SHA-256 的计划，并重新校验状态、内容指纹、协议能力、有效期和 spawned descendants。
 - 自动操作最多归档。永久清除必须使用单根独立计划、已验证备份证据、可信归档历史和明确人工确认。
-- 上下文裁剪只创建新任务；原任务保持不变，系统/开发者指令从当前项目重新加载。
+- 上下文审查与投影计划不修改 Codex；原任务应用当前不可用，派生投影在完整真实 round-trip probe 通过前保持阻塞。
 - 工具调用与结果、文件变更与验证按组保留或摘要，不拆成不安全的片段。
 - Hook 采用 fail-open：超时、关闭、崩溃或启动失败时继续 Codex 原生压缩。
 
@@ -165,24 +165,32 @@ scripts/install_user.sh /absolute/path/to/CodexSessionManager.app
 
 ### GUI 操作流程
 
-直接启动 CodexSessionManager 会打开原有的项目/任务、时间线、上下文和动作审查 GUI。上下文优化继续使用这套完整界面；对话清理请求会把 LLM/Skill 初筛候选按项目灌入原任务列表并预选，同时列出当前真实盘点中可由用户主动补选的安全根目标。满足 14 天可信归档和当前备份证据门禁的永久删除候选只在独立只读分组中展示，默认不选中，也不会进入归档流程。左侧工具栏第二个按钮切换到记忆管理模式，继续复用相同窗口布局；它只加载用户明确登记的 UTF-8 Markdown/文本文件，按结构拆分后支持保留、删除、替换和保护，并在写入前展示完整 diff、创建私有版本备份、复核并发漂移、原子替换和重读验证。待处理计划与备份/恢复继续作为辅助入口，不替代主审查 GUI。
+直接启动 CodexSessionManager 会打开原有的项目/任务、时间线、上下文和动作审查 GUI。上下文审查与投影计划继续使用这套完整界面；对话清理请求会把 LLM/Skill 初筛候选按项目灌入原任务列表并预选，同时列出当前真实盘点中可由用户主动补选的安全根目标。满足 14 天可信归档和当前备份证据门禁的永久删除候选只在独立只读分组中展示，默认不选中，也不会进入归档流程。左侧工具栏第二个按钮切换到记忆管理模式，继续复用相同窗口布局；它只加载用户明确登记的 UTF-8 Markdown/文本文件，按结构拆分后支持保留、删除、替换和保护，并在写入前展示完整 diff、创建私有版本备份、复核并发漂移、原子替换和重读验证。待处理计划与备份/恢复继续作为辅助入口，不替代主审查 GUI。
 
 <p align="center">
-  <img src="docs/images/context-trimming-demo-cn.gif" alt="使用虚构对话数据演示十二秒上下文裁剪流程" width="100%">
+  <img src="docs/images/context-trimming-demo-cn.gif" alt="使用虚构对话数据演示十二秒上下文审查与投影计划流程" width="100%">
 </p>
 <p align="center"><sub>12 秒可复现演示 · 对话 ID、路径、仓库与对话内容均为虚构数据</sub></p>
 
 1. **项目与任务**按项目 cwd 或 Git remote 对话分组。搜索和完整 ID 加载共用一个输入框，多选操作仍受安全门禁约束。
 2. **时间线**显示模型可见的 turn/item，并默认过滤空内部事件；Token 数量使用紧凑单位。
 3. **上下文**内容可编辑，支持显示隐藏标签、分段渲染、Markdown 预览和本地敏感命中高亮。
-4. **裁剪动作**支持 `keep`、`exclude`、`summary` 和 `protect`。当前请求、进行中 turn、有效目标、未解决错误和未知 item 等硬保护内容不能被静默删除。
+4. **投影动作**支持 `keep`、`exclude`、`summary` 和 `protect`。当前请求、进行中 turn、有效目标、未解决错误和未知 item 等硬保护内容不能被静默删除；这些动作当前只生成投影计划。
 5. **清理候选补选**把 LLM 建议与本地当前安全候选清晰区分：LLM 建议默认预选，本地补选默认不选；两者在最终计划和备份前都重新检查完整后代闭包。
 6. **永久删除资格**只读展示已归档至少 14 天、具有可信归档历史和当前有效备份的根候选；这里不生成删除计划，永久删除仍要求独立流程和精确确认。
 7. **外部建议灌入**只接受本地重新绑定的对话、turn 或 item ID 与当前指纹；硬保护和 `validate_selections` 始终拥有最终否决权。
 8. **记忆管理**通过左侧第二按钮进入同一窗口壳。只有已登记来源可见；LLM 建议会先绑定当前 segment ID 与内容 SHA-256，标题、front matter、代码块和结构空白仍受本地硬保护。用户确认后先创建版本，再原子写入并重读验证。
 9. **备份并归档**的 GUI 首次生成一个本机托管的原生 age identity，以后自动从同一私钥派生 recipient 用于加密和完整解密复验。私钥不写入备份或日志；已有私钥丢失、损坏或权限异常时拒绝继续，不会静默替换。备份后再重读状态、建议指纹和后代闭包；任一门禁失败都停止归档。CLI 仍保留显式 `--recipient`/`--identity` 分步路径。
 
-“保存方案”只将已审查的 `TrimPlan` 写入 CSM 数据目录，不修改 Codex。“派生精简任务”会先重新校验计划、等待原任务处于 `idle` 或 `notLoaded`，再创建新的派生任务。
+“保存方案”只将已审查的 `TrimPlan` 写入 CSM 数据目录，不修改 Codex。当前不把“派生精简任务”视为可用能力；`thread/inject_items` 只有在完整真实 round-trip probe 通过后才能重新开放。
+
+当前上下文能力边界：
+
+- 上下文审查/投影计划：可用；
+- 应用到原任务：不可用；
+- 派生投影：当前真实 round-trip 失败，保持阻塞；
+- 敏感信息确定性修改：后续优先开发；
+- 2.5 永久删除：继续按独立门禁验收。
 
 ### CLI 工作流
 
@@ -225,12 +233,14 @@ csm cleanup apply PLAN.json --confirm PLAN_ID
 | `csm purge plan\|apply` | 独立门禁的永久删除工作流 |
 | `csm restore plan\|apply` | 使用新对话 ID 进行逻辑恢复 |
 | `csm import {chatgpt\|codex} ...` | 规划并应用官方 ChatGPT 导出或 Codex rollout 数据导入 |
-| `csm trim review\|suggest\|apply` | GUI/人工审查、本地建议与派生裁剪 |
+| `csm trim review\|suggest` | GUI/人工审查与本地投影建议 |
 | `csm memory ...` | 登记、分段审查、diff、版本备份、原子写入与恢复本地记忆文件 |
 | `csm gui open` | 打开原审查 GUI 的指定模式或密封请求；pending/backup 使用辅助入口 |
 | `csm acceptance run\|release` | 运行隔离的首次交付检查；release 额外要求 age 与稳定安装包 |
 | `csm hook install\|status\|uninstall` | 可选 PreCompact/PostCompact 集成 |
 | `csm audit show\|verify` | 查看并验证 CSM 审计链 |
+
+当前基线不运行或接受 `csm trim apply` 作为可用写流程；请求返回 `{}`、目标已创建或方法存在，都不等于投影已经持久化。
 
 口令模式由 age 直接从终端读取口令。不要把备份口令写入命令参数、环境变量、日志、Issue 或模型上下文。GUI 和无人值守工作流应使用 age recipient。
 
@@ -239,7 +249,7 @@ csm cleanup apply PLAN.json --confirm PLAN_ID
 稳定安装器会把 `manage-codex-sessions` 安装到 `~/.agents/skills`。重启 Codex 后显式调用：
 
 ```text
-$manage-codex-sessions 打开当前对话的上下文裁剪
+$manage-codex-sessions 打开当前对话的上下文审查与投影计划
 ```
 
 Skill 不会在普通编码任务中自动运行。它会解析稳定的 `csm` 启动器或 App 内可执行文件，并与 GUI、CLI 共用同一套计划和安全门禁。
@@ -303,7 +313,7 @@ csm hook install --yes
 csm hook uninstall --yes
 ```
 
-安装 App 不会静默启用 Hook。安装 Hook 后仍需在 Codex `/hooks` 中审查并信任具体命令。PreCompact 会先显示轻提示；只有方案成功持久化后才返回 `continue: false`，也不会在进行中的 turn 内创建派生任务。
+安装 App 不会静默启用 Hook。安装 Hook 后仍需在 Codex `/hooks` 中审查并信任具体命令。PreCompact 会先显示轻提示；默认 fail-open，只有计划已成功持久化、用户明确选择严格审查且当前能力/指纹门禁全部通过时才返回 `continue: false`，也不会在进行中的 turn 内创建派生任务。
 
 ### 延伸文档
 
@@ -312,6 +322,9 @@ csm hook uninstall --yes
 - [Skill 安全不变量](skills/manage-codex-sessions/references/safety.md)
 - [领域语言与关系](CONTEXT.md)
 - [架构决策记录](docs/adr/)
+- [v1.1 上下文投影与敏感信息计划](docs/CodexSessionManager-v1.1-context-projection-and-sensitive-data-plan.md)
+- [ADR 0009：延期上下文投影应用](docs/adr/0009-defer-context-projection-application.md)
+- [v1.1 验收文档索引](docs/acceptance/README.md)
 - [二期最终实施计划（v1.2.0—v1.5.0）](docs/CodexSessionManager%20二期最终实施计划.md)
 - [App Server schema 人工批准流程](docs/acceptance/app-server-schema-approval.md)
 - [`v1.1.0` 首次交付验收 Runbook](docs/acceptance/first-delivery-v1.1.0.md)
@@ -438,9 +451,9 @@ scripts/package_macos_release.sh --app dist/CodexSessionManager.app
 </details>
 
 <details>
-<summary><strong>“保存方案”和“派生精简任务”有什么区别？</strong></summary>
+<summary><strong>当前能把投影应用到 Codex 任务吗？</strong></summary>
 
-**保存方案**只把已审查的不可变方案写入 CSM 数据目录。**派生精简任务**会重新校验该方案并创建新的 Codex 任务，原任务保持不变。
+**保存方案**只把已审查的不可变投影计划写入 CSM 数据目录。当前不能把它应用到原任务；派生投影的真实 round-trip 尚未通过，因此也不能把“派生精简任务”作为可用结果。
 </details>
 
 <details>

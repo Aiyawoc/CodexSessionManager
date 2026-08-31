@@ -1,15 +1,15 @@
 # CodexSessionManager
 
 <p align="center">
-  <img src="docs/images/gui-overview-en.png" alt="CodexSessionManager project, conversation, timeline, context, and trimming interface" width="100%">
+  <img src="docs/images/gui-overview-en.png" alt="CodexSessionManager project, conversation, timeline, context review, and projection planning interface" width="100%">
 </p>
 
 <p align="center">
-  <strong>A safety-first GUI and CLI for auditing, backing up, cleaning, importing, and trimming Codex conversations.</strong><br>
+  <strong>A safety-first GUI and CLI for auditing, backing up, cleaning, importing, and planning Codex context projections.</strong><br>
   English · <a href="README-cn.md">简体中文</a> · <a href="docs/CodexSessionManager-GUI-Guide-bilingual.pptx">Bilingual GUI guide</a>
 </p>
 
-Long-running Codex work spreads conversations across projects and lets context grow unchecked. CodexSessionManager brings review, encrypted backup, guarded cleanup, and non-destructive context trimming into one auditable desktop tool.
+Long-running Codex work spreads conversations across projects and lets context grow unchecked. CodexSessionManager brings review, encrypted backup, guarded cleanup, and context projection planning into one auditable desktop tool.
 
 <a id="features"></a>
 ## ✨ Key features
@@ -17,9 +17,9 @@ Long-running Codex work spreads conversations across projects and lets context g
 - Group and search Codex conversations by project, activity, source, and relationship.
 - Create streaming, age-encrypted `.csmbackup` archives with full integrity verification.
 - On the first GUI backup, generate one locally managed age identity and automatically reuse it for selected tasks and their complete derived closures.
-- Plan archive, restore, import, trim, and purge operations before any write occurs.
+- Plan archive, restore, import, cleanup, and purge writes before execution; context projection currently remains plan-only.
 - Generate redacted App Server schema audits; unknown profiles stay read-only and are never trusted automatically.
-- Reduce context through a derived task while keeping the original conversation unchanged.
+- Create and review Keep/Exclude/Summary/Protect context projection plans; current plans are not applied to source or derived tasks.
 - Review model-visible content, Markdown, hidden tags, dependencies, and estimated token savings.
 - Scan locally for likely credentials and personal data with bounded background workers, cancellable modal progress, and highlighted matches.
 - Use the GUI, CLI, explicit Codex Skill, or optional fail-open PreCompact/PostCompact Hooks.
@@ -31,7 +31,7 @@ Long-running Codex work spreads conversations across projects and lets context g
 | --- | --- | --- |
 | Review many conversations | Search projects and raw history separately | Project-grouped inventory and timeline review |
 | Clean old work | Delete or archive without a reproducible decision record | Dry-run plan, fingerprint checks, descendant expansion, then App Server write |
-| Reduce context | Rewrite history or accept all-or-nothing compaction | Keep, exclude, summarize, or protect content in a new derived task |
+| Review and project context | Rewrite history or accept all-or-nothing compaction | Create a fingerprint-bound projection plan; current execution is unavailable |
 | Back up and migrate | Copy internal files and hope versions match | Encrypted logical records, checksums, provenance, verification, and new IDs on restore |
 
 <a id="quick-start"></a>
@@ -92,7 +92,7 @@ Backup verification and a complete `doctor` check require both `age` and `age-ke
 
 1. Search for a project/conversation, or enter a complete conversation ID.
 2. Select a turn or item, then choose **Keep**, **Exclude**, **Summary**, or **Protect**.
-3. Use **Save plan** to store the reviewed plan without changing Codex, or **Create trimmed task** to create a new derived conversation.
+3. Use **Save plan** to store the reviewed context projection plan without changing Codex; current execution against the source or a derived task is unavailable.
 4. In Cleanup mode, adjust the final candidates and use **Backup & archive**. On first use, confirm creation of the locally managed key; later runs only ask for the output file. The app fully verifies the backup before rebuilding the final plan and archiving.
 
 ### Build and release status
@@ -127,7 +127,7 @@ Backup verification and a complete `doctor` check require both `age` and `age-ke
 | Scenario | What CSM provides |
 | --- | --- |
 | Many long-running Codex projects | One project-grouped list with conversation search, relative activity, multi-selection, and relationship tracking |
-| Context approaching compaction | Manual review or an optional PreCompact prompt before native compaction proceeds |
+| Context approaching compaction | Review and save a projection plan, or use an optional PreCompact prompt before native compaction proceeds |
 | Old or inactive conversations | Rule-based candidates, dry-run archive plans, batch limits, and human confirmation |
 | Backup or account migration | Encrypted CSM backups, logical restore, Codex rollout import, and ChatGPT export branch expansion |
 | Sensitive-data review | Bounded background scanning, cancellable progress, and red highlighting without uploading conversation content |
@@ -145,7 +145,7 @@ The primary audience is developers and maintainers who use Codex across multiple
 - Schema audits classify stable/experimental additions, removals, stability changes, and critical fields. Writes require an exact version and schema-hash match to a human-approved profile.
 - Every write consumes a SHA-256-bound plan and re-checks state, content fingerprints, capabilities, expiry, and spawned descendants.
 - Automatic operations stop at archive. Permanent purge requires a separate single-root plan, verified backup evidence, trusted archive history, and explicit confirmation.
-- Context trimming creates a new task. The source task remains unchanged and system/developer instructions are reloaded from the current project.
+- Context review and projection planning do not modify Codex. Source-task application is unavailable, and derived projection remains blocked until a complete real round-trip probe passes.
 - Tool calls/results and file changes/verifications are retained or summarized as groups, not split into unsafe fragments.
 - Hook failures are fail-open: timeout, close, crash, or launch failure continues native compaction.
 
@@ -165,24 +165,32 @@ The installer atomically replaces `~/Applications/CodexSessionManager.app`, reta
 
 ### GUI workflow
 
-Launching CodexSessionManager opens the existing Projects & Tasks, Timeline, Context, and Actions review GUI. Context optimization keeps using this complete interface. A cleanup request injects and preselects the LLM/Skill shortlist while also listing locally safe roots from the current inventory that the user may explicitly add. Purge-eligible roots that satisfy trusted 14-day archive history and current backup evidence are shown only in a separate read-only, unselected group and never enter the archive flow. The second button in the left rail switches the same window into Memory Management mode. It loads only explicitly registered UTF-8 Markdown/text files, segments them structurally, supports Keep/Delete/Replace/Protect, shows the complete diff, creates a private version, rechecks concurrent drift, atomically replaces the file, and rereads it for verification. Pending Plans and Backup & Restore remain auxiliary entries rather than replacing the primary review GUI.
+Launching CodexSessionManager opens the existing Projects & Tasks, Timeline, Context, and Actions review GUI. Context review and projection planning keep using this complete interface. A cleanup request injects and preselects the LLM/Skill shortlist while also listing locally safe roots from the current inventory that the user may explicitly add. Purge-eligible roots that satisfy trusted 14-day archive history and current backup evidence are shown only in a separate read-only, unselected group and never enter the archive flow. The second button in the left rail switches the same window into Memory Management mode. It loads only explicitly registered UTF-8 Markdown/text files, segments them structurally, supports Keep/Delete/Replace/Protect, shows the complete diff, creates a private version, rechecks concurrent drift, atomically replaces the file, and rereads it for verification. Pending Plans and Backup & Restore remain auxiliary entries rather than replacing the primary review GUI.
 
 <p align="center">
-  <img src="docs/images/context-trimming-demo-en.gif" alt="Twelve-second context-trimming demo using fictional conversation data" width="100%">
+  <img src="docs/images/context-trimming-demo-en.gif" alt="Twelve-second context review and projection-planning demo using fictional conversation data" width="100%">
 </p>
 <p align="center"><sub>12-second deterministic demo · fictional IDs, paths, repository, and conversation content</sub></p>
 
 1. **Projects & Tasks** groups conversations by project cwd or Git remote. Search and complete-ID loading share one field; multi-selection supports guarded batch actions.
 2. **Timeline** shows model-visible turns/items and hides empty internal events by default. Token totals use compact units.
 3. **Context** is editable and supports hidden-tag display, segmented source rendering, Markdown preview, and local sensitive-range highlighting.
-4. **Trim actions** apply `keep`, `exclude`, `summary`, or `protect`. Hard-protected requests, active turns, goals, unresolved errors, and unknown items cannot be silently removed.
+4. **Projection actions** support `keep`, `exclude`, `summary`, or `protect`. Hard-protected requests, active turns, goals, unresolved errors, and unknown items cannot be silently removed; these actions currently produce plans only.
 5. **Cleanup supplementation** distinguishes LLM suggestions from current local safe roots: LLM suggestions are preselected, safe additions are not, and both are rechecked against the complete descendant closure before planning and backup.
 6. **Purge eligibility** is read-only and includes only roots archived for at least 14 days with trusted archive history and a current verified backup. No purge plan is created here; permanent deletion still requires its separate flow and exact confirmation.
 7. **External suggestion injection** only accepts locally rebound conversation, turn, or item IDs with current fingerprints; hard protection and `validate_selections` retain final veto power.
 8. **Memory Management** uses the second left-rail button and the same window shell. Only registered sources are visible. LLM suggestions are rebound to current segment IDs and content SHA-256 values; headings, front matter, fenced code, and structural whitespace retain local hard protection. Confirmed writes create a version before atomic replacement and reread verification.
 9. **Backup & archive** uses one native age identity generated on first use in the app's private data directory. The GUI derives its recipient automatically and reuses the same identity for full decryption verification. The private key is never written to backups or logs; a missing, corrupt, or weakly permissioned existing key fails closed and is never silently replaced. State, suggestion fingerprints, and the descendant closure are then re-read before archiving. The CLI retains its explicit `--recipient`/`--identity` workflow.
 
-Saving a plan only persists the reviewed `TrimPlan`; it does not write to Codex. Creating a trimmed task first revalidates the plan, waits for the source to be `idle` or `notLoaded`, and then creates a new derived task.
+Saving a plan only persists the reviewed `TrimPlan`; it does not write to Codex. The current baseline does not treat “create trimmed task” as an available capability; `thread/inject_items` can be reconsidered only after a complete real round-trip probe passes.
+
+Current context capability boundary:
+
+- Context review/projection planning: available.
+- Apply to the source task: unavailable.
+- Derived projection: current real round-trip failed; blocked.
+- Deterministic sensitive-data edits: next priority.
+- 2.5 permanent purge: continues under its separate acceptance gates.
 
 ### CLI workflows
 
@@ -225,12 +233,14 @@ Important command groups:
 | `csm purge plan\|apply` | Separately gated permanent deletion workflow |
 | `csm restore plan\|apply` | Logical restore with new conversation IDs |
 | `csm import {chatgpt\|codex} ...` | Plan and apply imports from official ChatGPT exports or Codex rollout data |
-| `csm trim review\|suggest\|apply` | GUI/manual review, local suggestions, and derived trimming |
+| `csm trim review\|suggest` | GUI/manual review and local projection suggestions |
 | `csm memory ...` | Register, segment, review, diff, version, atomically edit, and restore local memory files |
 | `csm gui open` | Open an original-GUI review mode or sealed request; pending/backup use auxiliary entries |
 | `csm acceptance run\|release` | Run isolated first-delivery checks; release also requires age and the stable installed app |
 | `csm hook install\|status\|uninstall` | Optional PreCompact/PostCompact integration |
 | `csm audit show\|verify` | Inspect and verify the CSM audit chain |
+
+The current baseline does not run or accept `csm trim apply` as an available write workflow; an `{}` response, a created target, or method presence does not prove projection persistence.
 
 Passphrase mode reads the secret directly from the terminal. Do not place backup passphrases in command arguments, environment variables, logs, issues, or model context. GUI and unattended workflows use age recipients instead.
 
@@ -239,7 +249,7 @@ Passphrase mode reads the secret directly from the terminal. Do not place backup
 The stable installers place `manage-codex-sessions` under `~/.agents/skills`. Restart Codex, then invoke it explicitly:
 
 ```text
-$manage-codex-sessions open context trimming for this conversation
+$manage-codex-sessions open context review and projection planning for this conversation
 ```
 
 The Skill does not run automatically during ordinary coding work. It resolves the stable `csm` launcher or bundled executable and follows the same plan and safety gates as the GUI and CLI.
@@ -303,7 +313,7 @@ csm hook install --yes
 csm hook uninstall --yes
 ```
 
-Installation does not silently enable Hooks. After installation, review and trust the exact command in Codex `/hooks`. PreCompact shows a lightweight prompt; it returns `continue: false` only after a plan is safely persisted, and never creates a derived task inside the active turn.
+Installation does not silently enable Hooks. After installation, review and trust the exact command in Codex `/hooks`. PreCompact shows a lightweight prompt; it is fail-open by default and returns `continue: false` only after a plan is safely persisted, the user explicitly chooses strict review, and all current capability/fingerprint gates pass. It never creates a derived task inside the active turn.
 
 ### Further reading
 
@@ -312,6 +322,9 @@ Installation does not silently enable Hooks. After installation, review and trus
 - [Skill safety invariants](skills/manage-codex-sessions/references/safety.md)
 - [Domain language and relationships](CONTEXT.md)
 - [Architecture decision records](docs/adr/)
+- [v1.1 context projection and sensitive-data plan](docs/CodexSessionManager-v1.1-context-projection-and-sensitive-data-plan.md)
+- [ADR 0009: defer context projection application](docs/adr/0009-defer-context-projection-application.md)
+- [v1.1 acceptance index](docs/acceptance/README.md)
 - [Final phase-two implementation plan (v1.2.0—v1.5.0)](docs/CodexSessionManager%20二期最终实施计划.md)
 - [Human App Server schema approval process](docs/acceptance/app-server-schema-approval.md)
 - [`v1.1.0` first-delivery acceptance runbook](docs/acceptance/first-delivery-v1.1.0.md)
@@ -437,9 +450,9 @@ Run `csm doctor`. Confirm the Codex CLI is installed and reachable, or set `CSM_
 </details>
 
 <details>
-<summary><strong>What is the difference between “Save plan” and “Create trimmed task”?</strong></summary>
+<summary><strong>Can the current baseline apply a projection to a Codex task?</strong></summary>
 
-**Save plan** only writes a reviewed immutable plan to CSM's data directory. **Create trimmed task** revalidates that plan and creates a new Codex task; the original remains unchanged.
+**Save plan** only writes a reviewed immutable projection plan to CSM's data directory. It cannot currently be applied to the source task; derived projection failed its real round-trip, so a “created trimmed task” is not an accepted result.
 </details>
 
 <details>

@@ -130,20 +130,21 @@ csm cleanup review --older-than-days 1 --project /absolute/test/project
 
 不得执行永久删除。
 
-## 6. 上下文优化与待处理计划人工验收
+## 6. 上下文审查与投影计划及待处理计划人工验收
 
 在一个无重要内容的测试对话中：
 
 1. 运行 `csm trim review THREAD_ID`；
 2. 修改 Keep/Exclude/Summary/Protect；
-3. 保存计划并确认原对话未变化；
-4. 创建派生任务，确认新 ID 和投影内容；
-5. 使用 Hook 测试生成 PendingTrimPlan；
-6. 在“待处理计划”中点击“检查状态”；
-7. active 时保持 WAITING，idle/notLoaded 且指纹一致时进入 READY；
-8. 打开复核，确认加载的是原密封计划；
-9. 创建派生任务后状态变为 APPLIED；
-10. 修改源内容或能力画像后旧计划进入 INVALIDATED。
+3. 保存投影计划并确认原对话未变化；
+4. 使用 Hook 测试生成 PendingTrimPlan；
+5. 在“待处理计划”中点击“检查状态”；
+6. active 时保持 WAITING，idle/notLoaded 且指纹一致时进入 READY；
+7. 打开复核，确认加载的是原密封计划；
+8. 修改源内容或能力画像后旧计划进入 INVALIDATED；
+9. 记录 `thread/inject_items` 派生投影 round-trip 失败为 `blocked_upstream`，不运行 `trim apply`、不盲目重试、不把目标创建或 `{}` 响应标记为成功。
+
+2.4 的上下文应用执行层已按 [`2.4 收口记录`](v1.1.0-phase-2.4-context-projection-closure.md) 关闭。本节只验收审查、投影计划、Pending 状态和源任务保护；不得要求或声称派生任务 `APPLIED`。
 
 ## 7. 记忆管理人工验收
 
@@ -243,6 +244,6 @@ Codex desktop 本机 stdio 验收门禁；不得把 HTTP 诊断服务暴露到�
 - README、Skill、版本和 checksum 与候选提交一致；
 - 已明确标注未签名/未公证/未生产验收的限制。
 
-正式公开发布还需要单独完成 Developer ID、公证、Windows 原生验收和发布资产检查。
+正式公开发布还需要单独完成 Developer ID、公证、Windows 原生验收和发布资产检查；2.4 上下文应用保持上游阻塞，不能作为已完成能力对外宣称。
 
 正式公开发布使用更严格的人工门禁，见 [`v1.1.0 正式发布前人工验收 Runbook`](formal-release-manual-v1.1.0.md)。

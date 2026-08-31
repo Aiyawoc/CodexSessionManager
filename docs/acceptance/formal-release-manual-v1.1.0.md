@@ -43,7 +43,7 @@
 | --- | --- | --- | --- |
 | FR-01 | 候选冻结与自动证据 | fresh checkout | 工作区干净、版本一致、源码与 bundle 门禁通过 |
 | FR-02 | macOS 签名、公证与 Gatekeeper | 干净 Apple Silicon macOS | Developer ID、Hardened Runtime、时间戳、公证、staple、Gatekeeper 全部通过 |
-| FR-03 | macOS 真实账号与 Cocoa GUI | 真实 Codex 账号、实体窗口 | 清理、上下文、PendingPlan、记忆、审计闭环通过且原数据符合预期 |
+| FR-03 | macOS 真实账号与 Cocoa GUI | 真实 Codex 账号、实体窗口 | 清理、上下文审查/投影计划、PendingPlan、记忆、审计闭环通过且原数据符合预期；2.4 应用执行保持上游阻塞 |
 | FR-04 | Windows x64 签名与原生运行 | 干净 Windows 11 x64 | Authenticode 有效、安装/升级/GUI/回退通过，无未知发布者或签名错误 |
 | FR-05 | ChatGPT MCP app 与固定 Tunnel | 支持完整 MCP 的真实工作区 | 远程连接、认证、工具快照、GUI 唤起、断线恢复和权限隔离通过 |
 | FR-06 | 安装、升级、回退与卸载说明 | macOS + Windows | 旧版本升级不丢数据，失败自动回退，手动回退和卸载路径可执行 |
@@ -233,7 +233,7 @@ csm threads list
 csm audit verify
 ```
 
-只有 Codex App Server 版本、schema 哈希和能力画像精确命中已审核画像，且写能力明确开启时，才允许进入写入阶段。未知协议、能力缺失或账号根冲突均为 **NO-GO**。
+只有 Codex App Server 版本、schema 哈希和能力画像精确命中已审核画像，且写能力明确开启时，才允许进入受支持的写入阶段。未知协议、能力缺失或账号根冲突均为 **NO-GO**。通用 `write_enabled` 不会开放上下文应用；2.4 的原任务应用不可用，派生投影须另有完整真实 round-trip 证据。
 
 ### 5.2 实体 GUI 与输入法
 
@@ -243,6 +243,7 @@ csm audit verify
 - Retina/100%、125% 或系统可用缩放；
 - 左侧项目/任务与记忆按钮切换；
 - 多选、按钮启用状态、风险提示、确认对话框；
+- 上下文应用入口显示为禁用并说明上游阻塞，不把通用 App Server 写能力显示为投影执行能力；
 - Splitter 拖动、任务面板收起/展开；
 - 写入进行时关闭窗口不会遗留无归属 Worker 或产生重复写入。
 
@@ -272,23 +273,22 @@ csm cleanup review \
 
 **通过标准：**备份失败或任何漂移均不会归档；成功路径中根与完整后代范围精确一致；永久删除没有被调用；审计链可验证。
 
-### 5.4 上下文优化与待处理计划
+### 5.4 上下文审查与投影计划及待处理计划
 
 使用无重要内容的测试对话：
 
 1. 在原 GUI 设置 `KEEP/EXCLUDE/SUMMARY/PROTECT`；
 2. 验证工具调用/结果、文件变更/验证按组处理；
 3. 保存 TrimPlan，重新读取并确认来源对话不变；
-4. 创建派生任务，核对新 ID、投影顺序、投影哈希和来源指纹；
-5. 用 Hook 生成 PendingTrimPlan；
-6. 源任务 active 时检查结果保持 `WAITING`；
-7. 源任务 idle/notLoaded 且指纹一致时进入 `READY`；
-8. 打开复核后确认加载原密封计划，而不是重新生成的默认建议；
-9. 创建派生任务成功后状态才变为 `APPLIED`；
-10. 修改源内容、能力画像或计划文件后，旧计划进入 `INVALIDATED`；
-11. 过期计划进入 `EXPIRED`，取消计划进入 `CANCELLED`。
+4. 用 Hook 生成 PendingTrimPlan；
+5. 源任务 active 时检查结果保持 `WAITING`；
+6. 源任务 idle/notLoaded 且指纹一致时进入 `READY`；
+7. 打开复核后确认加载原密封计划，而不是重新生成的默认建议；
+8. 修改源内容、能力画像或计划文件后，旧计划进入 `INVALIDATED`；
+9. 过期计划进入 `EXPIRED`，取消计划进入 `CANCELLED`；
+10. 将 `thread/inject_items` 的既有真实 round-trip 失败记录为 `blocked_upstream`，不运行 `trim apply`、不盲目重试，也不把目标创建或 `{}` 响应标记为成功。
 
-**通过标准：**原对话保持不变；硬保护无法被 LLM 或用户误操作绕过；只有 `READY` 可继续；派生任务与计划一致；状态机无非法回退。
+**通过标准：**原对话保持不变；硬保护无法被 LLM 或用户误操作绕过；只有 `READY` 可继续；上下文应用不作为当前交付能力；2.4 的计划层通过、派生 round-trip 阻塞和 `production_ready: false` 均被准确记录；状态机无非法回退。
 
 ### 5.5 记忆管理
 
@@ -331,7 +331,7 @@ csm memory review SOURCE_ID
 - 脱敏后的测试对话 ID 哈希和测试记忆 source ID 哈希；
 - schema report SHA-256；
 - TrimPlan、MemoryPlan、备份 manifest 和 audit chain tail SHA-256；
-- 来源不变、派生投影、归档状态和恢复结果的核对记录；
+- 来源不变、投影计划、派生 round-trip 的阻塞结论、归档状态和恢复结果的核对记录；
 - GUI 尺寸、系统缩放、macOS 版本和测试日期。
 
 不得在证据中记录对话正文、记忆正文、identity 内容、Bearer token 或用户私有绝对路径。

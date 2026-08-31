@@ -5,7 +5,7 @@
 
 1. 只读盘点、协议审计和 MCP/GUI 请求链检查；
 2. 在停止 Codex、完成并复验排除认证文件的 .codex 数据加密回滚快照后，只对已经确认属于本项目的
-   少量任务执行真实归档、对话标题修改、派生裁剪和记忆文件修改。
+   少量任务执行真实归档、对话标题修改和记忆文件修改；上下文只验收审查、投影计划和源任务保护，跳过应用执行。
 
 本计划不是生产发布，也不是把 .codex 打包给其他机器。.codex 快照仍可能包含真实对话
 和其他敏感数据，但脚本会排除根目录认证文件（`auth.json`、`credentials*.json`、
@@ -294,9 +294,9 @@ exact_profile_match 为 true、differences 为空时，才可继续真实 Codex 
 最终计划和归档结果。任何备份复验失败、状态/内容/能力/闭包漂移都必须拒绝归档。
 本节的 GUI 托管密钥与 2.2 用于整体 `.codex` 回滚快照的 `age-test-identity` 相互独立；不删除、覆盖或迁移后者。
 
-### 2.4 真实修改：对话标题、上下文派生和本地记忆文件
+### 2.4 真实修改：对话标题、上下文审查与投影计划和本地记忆文件
 
-对话本身不能通过编辑原始 JSONL/SQLite 直接修改。可验收的真实修改分为以下三类：
+对话本身不能通过编辑原始 JSONL/SQLite 直接修改。当前可验收的真实写入是标题修改和本地记忆文件修改；上下文只验收计划层。
 
 #### 对话标题修改（可逆 App Server 写入）
 
@@ -309,7 +309,7 @@ CSM v1.1.0 controlled test title，确认精确 plan_id 后应用。用 threads 
 标题已改变；再用同一界面把标题改回原值，验证第二次计划和写入也通过。active、
 pinned、ephemeral 或闭包不完整时不得更名。
 
-#### 上下文优化（只创建派生任务，原任务不变）
+#### 上下文审查与投影计划（不应用到 Codex）
 
 ~~~bash
 "$CSM_CLI" trim review "$TRIM_THREAD_ID"
@@ -320,11 +320,12 @@ pinned、ephemeral 或闭包不完整时不得更名。
 1. 只选择一个可以丢弃的 turn/item；
 2. 分别设置 Keep、Exclude、Summary、Protect 至少各一项；
 3. 点击“保存方案”，记录 plan_id、plan SHA-256 和 projection SHA-256；
-4. 对比 trim 前后的原任务摘要，确认原任务未变化；
-5. 点击“派生精简任务”，确认产生新的 task ID；
-6. 读取新任务摘要，核对投影内容和方案一致；
-7. 若通过 Hook 生成 PendingTrimPlan，验证 WAITING → READY → APPLIED；
-8. 改变源内容或能力画像后，确认旧计划变成 INVALIDATED，不能回退到 READY。
+4. 对比计划保存前后的原任务摘要，确认原任务未变化；
+5. 若通过 Hook 生成 PendingTrimPlan，验证 WAITING → READY → CANCELLED；
+6. 改变源内容或能力画像后，确认旧计划变成 INVALIDATED，不能回退到 READY；
+7. 将 `thread/inject_items` 派生投影的既有真实 round-trip 失败记录为 `blocked_upstream`，不运行 `trim apply`、不盲目重试、不把目标创建或 `{}` 响应标记为成功。
+
+本步骤不创建派生任务。2.4 已按 [`2.4 收口记录`](v1.1.0-phase-2.4-context-projection-closure.md) 关闭：上下文审查与投影计划可用，原任务应用不可用，派生投影当前真实 round-trip 失败。
 
 Codex desktop 中可使用以下请求准备审查，但 MCP 不执行应用：
 
@@ -400,7 +401,7 @@ Codex desktop 只能准备建议：
   PERMANENTLY DELETE CODEX TASKS。
 
 因此，本计划当天可以真实验证“记忆 list item 删除”，也可以真实验证对话归档、
-标题修改和派生任务；对话永久删除要在 14 天后才执行。届时从同一个精确根 ID 打开：
+标题修改和上下文投影计划；派生投影应用保持上游阻塞，对话永久删除要在 14 天后才执行。届时从同一个精确根 ID 打开：
 
 ~~~bash
 "$CSM_CLI" gui open --thread "$ARCHIVE_THREAD_ID"

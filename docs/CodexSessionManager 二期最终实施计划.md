@@ -2,20 +2,23 @@
 
 > **For agentic workers:** 本计划须按开发节点逐项执行；每个节点先完成自动化测试和人工验收，再进入下一节点。不得绕过现有计划、指纹、备份、审计和 App Server 写入边界。
 
-**Goal:** 在 v1.1.0 本机受控验收完成后，先把一期功能完整迁入 Codex 桌面端内嵌 UI，并通过本机个人插件安全执行；随后完成原二期计划中的会话工作区、只读地图、恢复现场摘要、上下文分叉和来源追踪。
+**Goal:** 先完成 v1.1 其它验收；随后优先实现并验收敏感信息确定性 `Replace/Redact/Protect` 计划层和受支持目标。只有收到明确启动要求且官方能力/真实 round-trip 门禁满足后，才继续 Codex 桌面端 UI、app-only 执行、会话工作区、只读地图、恢复现场摘要、上下文分叉和来源追踪。
 
-**Architecture:** 保留 PySide6 作为本机维护、兼容和退化前端；新增基于 MCP Apps 的 TypeScript/React UI，通过标准 MCP 适配层复用 `ApplicationWorkflows`、计划、指纹、备份、审计和执行器。Codex 内 UI 的直接写入只允许本机个人插件的 app-only surface，所有执行都由一次性授权和可恢复执行账本保护。
+**Architecture:** 保留 PySide6 作为本机维护、兼容和退化前端；未来新增基于 MCP Apps 的 TypeScript/React UI，通过标准 MCP 适配层复用 `ApplicationWorkflows`、计划、指纹、备份、审计和执行器。Codex 内 UI 的直接写入只允许未来通过全部门禁的本机个人插件 app-only surface，所有执行都由一次性授权和可恢复执行账本保护。
 
 **Tech Stack:** CPython 3.13.14、uv、现有 PySide6、官方 MCP SDK/MCP Apps 适配层、TypeScript、React、Vite；Node.js 仅用于开发构建，最终安装包不携带 Node 运行时依赖。
 
 **Spec:** 本文件是 `CodexSessionManager` 二期唯一现行计划；旧可行性报告和旧二期计划仅作为 `docs/archive/2026-08-27-phase2/` 中的历史材料保留。
 
+**Current gate (2026-08-31):** v1.1 继续完成除 2.4 上下文应用以外的剩余验收；2.4 已按 `CLOSED_WITH_UPSTREAM_BLOCKER` 关闭。当前只交付上下文审查与投影计划，原任务应用不可用，派生投影真实 round-trip 失败。二期 D1+ 未启动；未经明确要求不得开始。
+
 ## 全局约束
 
-- D1 及之后的二期代码、插件写入能力和协议画像变更，必须等 `docs/acceptance/local-controlled-v1.1.0.md` 的本机受控验收正式关闭后才能执行。本次文档整理不启动二期功能开发。
+- D1 及之后的二期代码、插件写入能力和协议画像变更，必须等 v1.1 其它验收完成、敏感信息确定性修改优先方向完成必要规划，并收到明确启动要求后才能执行。本次文档整理不启动二期功能开发。
 - `main` 是唯一事实来源；未明确要求时不创建、推送或合并分支。
 - Codex 任务读取和写入只能经过官方 App Server；禁止直接修改 Codex JSONL、SQLite、认证文件或配置。
-- 远程 HTTP、普通 stdio、CLI、Skill、Hook 和模型可见 MCP profile 继续保持只读/准备计划能力；直接执行仅存在于本机个人插件的 app-only profile。
+- 远程 HTTP、普通 stdio、CLI、Skill、Hook 和模型可见 MCP profile 继续保持只读/准备计划能力；直接执行仅作为未来本机个人插件 app-only profile 的研究方向，当前不开放。
+- 上下文审查与投影计划可用；应用到原任务不可用；派生投影必须在精确版本完成持久化、重启、后续模型可见和 reconcile 的完整 round-trip probe 后才能重新评估。
 - 所有写入必须绑定不可变计划、完整后代闭包、能力指纹、内容指纹、备份证据、审计事件和明确人工确认。
 - 口令、token、age identity、本地绝对路径和不必要的对话正文不得进入模型上下文、`structuredContent`、日志或 Git。
 - 未知协议、未知字段、超时和状态不确定均退化为只读或 `reconcile`，禁止盲目重试。
@@ -29,7 +32,7 @@ Codex Desktop 内的本机个人插件必须覆盖以下用户流程：
 
 - 项目、任务清单、搜索、筛选、多选、时间线和原文审查。
 - 对话清理：盘点、建议、计划预览、归档、取消归档、重命名、备份并归档。
-- 上下文优化：Keep/Exclude/Summary/Protect、完整差异、创建派生任务、待处理续办；原任务保持不变。
+- 上下文审查与投影计划：Keep/Exclude/Summary/Protect、完整差异和待处理续办；原任务应用不可用，派生任务只有在未来执行器通过全部门禁后才可创建。
 - 记忆管理：已登记来源、Keep/Delete/Replace/Protect、完整 diff、版本备份、应用和恢复。
 - Pending 中心：检查计划 SHA、账号根、内容/能力指纹、任务状态，继续、取消、失效和异常核对。
 - 备份与恢复：age 加密、清单和完整性复验、逻辑恢复、隔离导入。
@@ -43,7 +46,7 @@ Hook 安装/卸载、doctor、App Server schema 人工批准、签名、公证�
 - 项目/任务卡片、Board、位置、颜色、手工关系线和来源类型。
 - 只读会话地图和 Map/List 双视图；地图卡片操作不改变 Codex 任务。
 - 本地 Resume Digest、输入哈希去重、旧版本保留和来源显示。
-- 经计划和人工确认的上下文分叉、派生任务落图、provenance edge 和崩溃恢复。
+- 经计划和人工确认、且执行器通过全部门禁的上下文分叉、派生任务落图、provenance edge 和崩溃恢复。
 - Pending、备份/恢复、审计和 workspace sidecar 的统一视图。
 - 在同一 MCP Apps UI 壳中提供只读地图视图；模型默认只收到 ID、关系、状态和摘要存在性。
 
@@ -69,7 +72,7 @@ OpenAI 当前插件文档支持由同一插件组合 MCP server 与可选 UI；M
 - 数据工具只返回最小化结构化摘要；渲染工具负责挂载 UI，正文、差异和大列表由组件按需分页取得。
 - UI 不支持时，客户端仍获得结构化结果和打开本地 GUI 的退化入口；UI 不得成为唯一业务事实来源。
 
-### 2.2 MCP 工具和领域接口
+### 2.2 MCP 工具和领域接口（未来范围，当前不实现）
 
 模型可见工具继续使用现有盘点、建议准备、请求打开和状态查询工具；新增渲染工具：
 
@@ -79,7 +82,7 @@ OpenAI 当前插件文档支持由同一插件组合 MCP server 与可选 UI；M
 - `render_pending_review`
 - `render_backup_review`
 
-新增 app-only 工具：
+以下 app-only 工具只是未来候选接口，当前不注册、不实现，也不改变 v1.1 的能力边界：
 
 - `issue_execution_grant`
 - `execute_cleanup_plan`
@@ -105,7 +108,7 @@ OpenAI 当前插件文档支持由同一插件组合 MCP server 与可选 UI；M
 
 执行账本扩展现有 `audit.sqlite3.operations`，使用 operation UUID 和唯一幂等键，记录批量操作逐目标状态。Tool Result 的 `_meta` 仅向组件传递 capability；任何 capability、token、口令或 identity 内容不得进入模型可见结果。
 
-执行统一遵循：
+执行统一遵循（仅适用于未来通过硬门禁的受支持目标；当前上下文执行器为 unsupported）：
 
 ```text
 盘点 → 选择 → 不可变计划 → 影响/差异预览 → 人工确认
@@ -131,13 +134,15 @@ OpenAI 当前插件文档支持由同一插件组合 MCP server 与可选 UI；M
 
 - 将旧可行性报告、旧二期计划和已过期的 next-development 计划移至 `docs/archive/2026-08-27-phase2/`，正文语义保持不变；仅允许不影响语义的行尾空白规范化。
 - 在归档目录增加 `README.md`，标记 `SUPERSEDED`、原始基线、归档原因和现行计划链接。
-- 更新中英文 README、文档索引、Skill safety 和现行 acceptance 文档，所有二期链接只指向本文件。
+- 更新中英文 README、文档索引、Skill safety 和现行 acceptance 文档，明确 2.4 的 `CLOSED_WITH_UPSTREAM_BLOCKER`、当前上下文计划层边界和敏感信息优先级；所有二期链接只指向本文件。
 - 增加 ADR 0006/0007/0008，分别记录 MCP Apps 双前端、UI direct execution 安全模型和 surface profile 隔离。
 - 二期执行闸门引用 v1.1 本机受控验收报告；未关闭前不得新增 UI 写入工具、协议画像或 schema 例外。
 
-**D0 验收：**仓库只存在一份现行二期计划；历史文档可从归档目录打开；没有 README、AGENTS、Skill safety 和 acceptance 文档之间的冲突表述。
+**D0 验收：**仓库只存在一份现行二期计划；历史文档可从归档目录打开；没有 README、AGENTS、Skill safety 和 acceptance 文档之间的冲突表述。2.4 的应用执行保持上游阻塞，不作为 D0 或 v1.1 的成功能力。
 
 ### D1：v1.2.0 Codex Desktop 最小兼容 Spike
+
+D1 及之后的节点在本轮不启动。开始条件是 v1.1 其它验收完成、敏感信息确定性 `Replace/Redact/Protect` 计划层已优先实现并验收，并收到明确的二期启动要求；2.4 的上游阻塞不得通过文档或测试改写为已通过。
 
 只用合成数据和无副作用测试工具验证：
 
@@ -153,7 +158,7 @@ OpenAI 当前插件文档支持由同一插件组合 MCP server 与可选 UI；M
 
 - 完成 MCP Apps 适配层、统一 React 审查壳、主题、风险提示、键盘焦点、响应式布局和分页。
 - 完成 surface profile、UI session、grant、执行账本、幂等、异常状态和 reconcile。
-- 仅在临时数据根和假 App Server 中启用真实执行器回环。
+- 仅在临时数据根和假 App Server 中启用未来执行器的回环；上下文应用仍须额外通过真实 round-trip 门禁。
 - 将静态资源加入 wheel、macOS 和 Windows bundle；构建产物不得依赖 Node。
 - 在 ADR 通过和安全测试完成后，把现行 MCP 写入禁令改为“远程/headless 禁止，本机个人插件 app-only 固定执行器例外”。
 
@@ -165,14 +170,14 @@ OpenAI 当前插件文档支持由同一插件组合 MCP server 与可选 UI；M
 
 1. 项目/任务/时间线、搜索、多选和 Pending 中心。
 2. 清理预览、归档、取消归档、重命名、备份并归档。
-3. 上下文优化、差异预览、派生任务和 Pending 续办。
+3. 上下文审查与投影计划、差异预览和 Pending 续办；派生任务仅在未来执行器通过硬门禁后加入。
 4. 记忆编辑、版本备份、原子应用、并发漂移拒绝和恢复。
 5. 备份、验证、逻辑恢复和隔离导入。
 6. 永久删除独立流程。
 
 每一项都必须复用 D2 的 grant/账本/reconcile，不允许页面自行调用 App Server 或直接访问文件。
 
-**D3 验收：**真实 Codex Desktop、本机批准的 App Server schema 和隔离测试账号中，一期所有页面都能完成“盘点—计划—确认—执行—回读—审计”闭环；重启/超时/部分成功不会重复写入；原任务、后代闭包、备份证据和记忆版本符合现有 CLI/PySide 结果。
+**D3 验收：**真实 Codex Desktop、本机批准的 App Server schema 和隔离测试账号中，一期可执行页面完成“盘点—计划—确认—执行—回读—审计”闭环；上下文页面在执行器未通过前只完成“审查—计划—源任务保护”闭环。重启/超时/部分成功不会重复写入；原任务、后代闭包、备份证据和记忆版本符合现有 CLI/PySide 结果。
 
 ### D4：v1.4.0 原二期只读会话地图
 
@@ -187,7 +192,7 @@ OpenAI 当前插件文档支持由同一插件组合 MCP server 与可选 UI；M
 ### D5：v1.5.0 摘要、上下文分叉与统一备份
 
 - 增加本地 Resume Digest、输入哈希去重、失败保留旧摘要和来源显示；LLM 摘要默认关闭。
-- 增加经计划确认的上下文分叉、派生任务落图、provenance edge 和 `PendingMapPlacement` 崩溃恢复。
+- 仅在上下文执行器通过完整官方能力和真实 round-trip 门禁后，增加经计划确认的上下文分叉、派生任务落图、provenance edge 和 `PendingMapPlacement` 崩溃恢复。
 - 将 workspace sidecar 纳入 age 加密备份、隔离恢复、Pending 和审计中心。
 - 在 MCP Apps 统一壳中增加只读地图视图，默认只提供卡片 ID、关系、状态和摘要存在性。
 
@@ -234,7 +239,7 @@ OpenAI 当前插件文档支持由同一插件组合 MCP server 与可选 UI；M
 ### 4.4 v1.3 一期功能通过条件
 
 - 清理：最终选择、完整后代闭包、备份并归档、取消归档、重命名和批量部分失败均可从回读与审计核对。
-- 上下文：源任务不变；工具调用与结果整体保留或整体摘要；未知 item 被保留并标记；派生任务和 Pending 状态可恢复。
+- 上下文：计划层保持源任务不变；工具调用与结果整体保留或整体摘要；未知 item 被保留并标记；当前派生投影为 `blocked_upstream`，执行器通过后才验收派生任务和 Pending 应用状态。
 - 记忆：来源登记、结构保护、完整 diff、版本备份、原子写入、回读验证、恢复和并发漂移拒绝全部通过。
 - 备份恢复：age、清单、散列、错误 identity、损坏包和隔离恢复全部通过；不覆盖现有数据。
 - 永久删除：独立计划、可信归档至少 14 天、当前已验证备份、进程门禁、精确挑战和单根闭包全部满足才允许执行。

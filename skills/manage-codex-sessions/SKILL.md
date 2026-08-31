@@ -1,6 +1,6 @@
 ---
 name: manage-codex-sessions
-description: 安全管理 Codex App 中的任务，包括按项目与时间盘点、计划式归档或清理、age 加密备份和验证、逻辑恢复、跨账号 ChatGPT/Codex 导入去重，以及创建派生任务的上下文裁剪。仅在用户显式调用 $manage-codex-sessions，或明确要求使用本 Skill 时使用；涉及永久删除、Hook 安装、恢复、导入或任务裁剪时必须使用本 Skill 的计划、确认和审计流程。
+description: 安全管理 Codex App 中的任务，包括按项目与时间盘点、计划式归档或清理、age 加密备份和验证、逻辑恢复、跨账号 ChatGPT/Codex 导入去重，以及上下文审查与投影计划。仅在用户显式调用 $manage-codex-sessions，或明确要求使用本 Skill 时使用；涉及永久删除、Hook 安装、恢复、导入或上下文计划时必须使用本 Skill 的计划、确认和审计流程。
 ---
 
 # Manage Codex Sessions
@@ -12,7 +12,7 @@ description: 安全管理 Codex App 中的任务，包括按项目与时间盘�
 1. 先从当前 shell 解析 `csm`（POSIX 使用 `command -v csm`，PowerShell 使用 `Get-Command csm`）。若存在，后续命令直接使用 `csm ...`。
 2. 若 `csm` 不在 `PATH`，则检查平台稳定入口：macOS 为 `~/Applications/CodexSessionManager.app/Contents/MacOS/CodexSessionManager`，Windows 为 `%LOCALAPPDATA%\CodexSessionManager\CodexSessionManager.exe`。使用稳定入口时，在所有 CLI 子命令前加 `cli`。
 3. 两类入口都不存在时停止操作，并提示用户先安装当前平台 standalone 应用。除非用户明确处于源码开发模式，否则不要回退到 `uv`、`.venv` 或系统 Python。
-4. 用户要求从 Codex 打开裁剪界面时，使用上述入口执行 `trim review TASK_ID`；该进程会打开独立 PySide6 GUI，并保持原任务只读。
+4. 用户要求从 Codex 打开上下文审查界面时，使用上述入口执行 `trim review TASK_ID`；该进程会打开独立 PySide6 GUI，并保持原任务只读。
 
 ## 先建立安全状态
 
@@ -43,18 +43,20 @@ description: 安全管理 Codex App 中的任务，包括按项目与时间盘�
 - ChatGPT 导出按根到叶分支创建候选。完全相同跳过，前缀选择较完整版本，分叉并存。
 - 未经用户确认项目映射时导入隔离区。不得猜测 cwd 或 Git remote。
 
-## 上下文裁剪
+## 上下文审查与投影计划
 
 1. 用 `csm trim review TASK_ID` 或 `csm gui open --page context` 打开原有时间线/上下文/动作 GUI；也可用 `csm trim suggest TASK_ID` 生成本地规则建议。
 2. 默认在 turn 级处理；只有用户需要时进入 item 级。将 `keep`、`exclude`、`summary`、`protect` 的含义和预计节省量展示给用户。
 3. 硬保护当前请求、进行中 turn、有效目标、审批决定、未解决错误和未知 item。工具调用/结果以及文件变更/验证必须整体保留或整体摘要。
 4. 内容 AI 默认关闭。只有用户显式同意并已配置清晰的数据边界时才启用；外部建议必须先由本地绑定当前 turn/item 指纹，再灌入原 GUI，且不得覆盖硬保护。
-5. 保存不可变 TrimPlan 后，等待源任务 idle，再运行 `csm trim apply PLAN --confirm PLAN_ID`。
-6. 裁剪只创建派生任务，不改写原任务，不自动启动模型 turn。非连续裁剪注入带来源 manifest 的 ContextProjection；连续前缀可用官方 fork。
+5. 保存不可变 TrimPlan 只保存上下文投影计划，不写入 Codex；当前不要运行 `csm trim apply`，也不要把它作为可用结果。
+6. 当前上下文应用执行层保持关闭：原任务不可应用，派生投影的真实 round-trip 尚未通过。`thread/inject_items` 的方法存在、返回 `{}` 或目标 ID 已创建，都不能证明持久化或后续模型可见；只有完整 probe 通过并重新批准能力后才可研究执行。
 
-PreCompact Hook 只保存计划。在 GUI 关闭、崩溃、启动失败或超时后继续原生压缩；只有当前 App Server 写能力、协议 fingerprint、源内容 fingerprint 和选择语义均通过复核，且 TrimPlan 已原子持久化时，才允许 `continue:false`。
+PreCompact Hook 只保存计划。在 GUI 关闭、崩溃、启动失败或超时后继续原生压缩；默认 fail-open。只有用户明确选择严格审查、计划已原子持久化且当前能力、协议 fingerprint、源内容 fingerprint 和选择语义均通过复核时，才允许 `continue:false`。即使原生 compact 完成，补充说明也只能是语义纠正，不能称为确定性删除或硬脱敏。
 
 已保存的 TrimPlan 和未被桌面接收的 ReviewRequest 可在 `csm gui open --page pending` 中只读查看。当前待处理页只负责索引和打开复核，不表示计划仍然可执行；真正应用前必须重新探测源任务状态、能力与内容指纹。
+
+当前边界：上下文审查与投影计划可用；应用到原任务不可用；派生投影当前真实 round-trip 失败并保持阻塞。敏感信息的确定性 `Replace/Redact/Protect` 是后续优先方向，2.5 永久删除继续按独立计划、等待期、备份和确认门禁验收。
 
 ## 记忆管理
 

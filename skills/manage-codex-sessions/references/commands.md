@@ -38,7 +38,7 @@ csm purge apply PLAN.json --confirm PLAN_ID --permanent-phrase "PERMANENTLY DELE
 
 选择根任务创建备份时，CSM 会自动展开其完整派生后代；输出中的 `covered_thread_ids` 必须与随后归档计划的 affected IDs 对齐。
 `cleanup review` 只生成结构化建议和桌面审查请求，不创建归档 ActionPlan，也不满足备份或执行授权。
-清理请求会把候选灌入原有项目/任务列表并预选；用户在同一 GUI 中调整最终选择。“备份并归档”只要求选择输出路径；首次确认创建本机托管的 age identity，后续自动复用。程序先完整复验备份，再重读状态和建议指纹、重建最终 ActionPlan 并执行；失败时不会继续归档。CLI 命令仍提供显式 recipient/identity 的分步路径。上下文请求会把本地绑定指纹后的 turn/item 建议灌入原时间线与动作面板。
+清理请求会把候选灌入原有项目/任务列表并预选；用户在同一 GUI 中调整最终选择。“备份并归档”只要求选择输出路径；首次确认创建本机托管的 age identity，后续自动复用。程序先完整复验备份，再重读状态和建议指纹、重建最终 ActionPlan 并执行；失败时不会继续归档。CLI 命令仍提供显式 recipient/identity 的分步路径。上下文请求会把本地绑定指纹后的 turn/item 建议灌入原时间线与动作面板；它只准备审查和投影计划，不执行 Codex 上下文应用。
 
 ## 备份、恢复与导入
 
@@ -54,12 +54,11 @@ csm import codex apply PLAN.json /path/to/other/.codex/sessions --confirm PLAN_I
 
 口令模式把 `--identity` 替换成布尔 `--passphrase`，并让用户在终端直接操作。
 
-## 裁剪与 Hook
+## 上下文审查与投影计划及 Hook
 
 ```text
 csm trim review TASK_ID
 csm trim suggest TASK_ID
-csm trim apply PLAN.json --confirm PLAN_ID
 csm gui open --page cleanup
 csm gui open --page context
 csm gui open --page memory
@@ -74,6 +73,14 @@ csm audit show
 ```
 
 `cleanup`、`context` 和 `memory` 三种 `--page` 值复用原有审查 GUI；记忆模式由左侧第二按钮切换。`pending` 与 `backup_restore` 使用辅助入口。
+
+当前基线不运行 `csm trim apply`：原任务应用不可用，派生投影的真实 round-trip 失败。`thread/inject_items` 返回 `{}`、目标 ID 已创建或方法存在，都不能视为投影写入成功；只有完整 probe 通过并重新批准能力后才可恢复研究。
+
+CLI 仍保留以下兼容命令路径供版本契约检查，但它不是当前可交付写能力，禁止在本基线上运行：
+
+```text
+csm trim apply PLAN.json --confirm PLAN_ID
+```
 
 ## 记忆文件管理
 

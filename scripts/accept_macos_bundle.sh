@@ -49,6 +49,7 @@ fi
 if [ -d "$CSM_BUILD_ENV" ]; then
   mv "$CSM_BUILD_ENV" "$CSM_HOLD_BUILD_ENV"
 fi
+test -x "$CSM_ACCEPT_APP/Contents/Resources/bin/age-keygen"
 
 env HOME="$CSM_ACCEPT_HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
   CODEX_HOME="$CSM_ACCEPT_CODEX_HOME" CSM_CODEX_HOME="$CSM_ACCEPT_CODEX_HOME" \
@@ -56,6 +57,13 @@ env HOME="$CSM_ACCEPT_HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
   CSM_CONFIG_DIR="$CSM_ACCEPT_ROOT/config" CSM_CACHE_DIR="$CSM_ACCEPT_ROOT/cache" \
   CSM_LOG_DIR="$CSM_ACCEPT_ROOT/log" \
   "$CSM_ACCEPT_APP/Contents/MacOS/CodexSessionManager" cli doctor --skip-app-server
+CSM_ACCEPT_IDENTITY="$CSM_ACCEPT_ROOT/managed-backup.agekey"
+"$CSM_ACCEPT_APP/Contents/Resources/bin/age-keygen" \
+  --output "$CSM_ACCEPT_IDENTITY" >/dev/null 2>&1
+test "$(stat -f '%Lp' "$CSM_ACCEPT_IDENTITY")" = "600"
+CSM_ACCEPT_RECIPIENT=$("$CSM_ACCEPT_APP/Contents/Resources/bin/age-keygen" \
+  -y "$CSM_ACCEPT_IDENTITY")
+printf '%s\n' "$CSM_ACCEPT_RECIPIENT" | /usr/bin/grep -Eq '^age1[0-9a-z]+$'
 printf '%s\n' '{"session_id":"acceptance","transcript_path":null,"cwd":"/tmp","hook_event_name":"PostCompact","model":"test","turn_id":"turn","trigger":"manual"}' | \
   env HOME="$CSM_ACCEPT_HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
   CODEX_HOME="$CSM_ACCEPT_CODEX_HOME" CSM_CODEX_HOME="$CSM_ACCEPT_CODEX_HOME" \

@@ -5,6 +5,7 @@
   "archive_url": "https://github.com/FiloSottile/age/releases/download/v1.3.1/age-v1.3.1-windows-amd64.zip",
   "archive_sha256": "c56e8ce22f7e80cb85ad946cc82d198767b056366201d3e1a2b93d865be38154",
   "binary_sha256": "90f5cc37249c06e0b302e476a8a63bcefeecd9437c192b8af33e6ff2d69558dd",
+  "keygen_binary_sha256": "8b9c27ef2ab6f215f689bf1e609bf82c8faf4c041f32452fa80396b3f8c4f687",
   "proof_url": "https://github.com/FiloSottile/age/releases/download/v1.3.1/age-v1.3.1-windows-amd64.zip.proof",
   "proof_sha256": "223a4bf46d6bae52b13cee6c7e384c2d3228e9055aecfe77c5d2b59413cefabc",
   "sigsum_verify": "sigsum.org/sigsum-go/cmd/sigsum-verify@v0.13.1",

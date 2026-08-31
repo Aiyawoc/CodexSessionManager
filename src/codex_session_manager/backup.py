@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import tarfile
+import tempfile
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -19,7 +20,12 @@ import ijson
 
 from codex_session_manager.app_server import SubprocessAppServer
 from codex_session_manager.audit import AuditStore
-from codex_session_manager.config import AppPaths, bundled_age_path, bundled_resources_root
+from codex_session_manager.config import (
+    AppPaths,
+    bundled_age_keygen_path,
+    bundled_age_path,
+    bundled_resources_root,
+)
 from codex_session_manager.hashing import canonical_json_bytes, hash_file, hash_stream, utc_now
 from codex_session_manager.inventory import normalize_thread
 from codex_session_manager.models import (
@@ -38,6 +44,7 @@ MAX_BACKUP_ENTRIES = 10_000
 MAX_LOGICAL_MEMBER_BYTES = 512 * 1024 * 1024
 MAX_BACKUP_MEMBER_BYTES = 16 * 1024 * 1024 * 1024
 MAX_BACKUP_TOTAL_BYTES = 256 * 1024 * 1024 * 1024
+MAX_MANAGED_IDENTITY_BYTES = 1024 * 1024
 
 
 class BackupError(RuntimeError):
@@ -82,6 +89,18 @@ class CipherBackend(Protocol):
     ) -> contextlib.AbstractContextManager[IO[bytes]]: ...
 
 
+class KeygenBackend(Protocol):
+    def generate(self, destination: Path) -> None: ...
+
+    def recipient(self, identity_file: Path) -> str: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedAgeIdentity:
+    identity_file: Path
+    recipient: str
+
+
 class _AgeEncryptionSession:
     def __init__(self, process: subprocess.Popen[bytes]) -> None:
         self.process = process
@@ -94,9 +113,19 @@ class _AgeEncryptionSession:
         if self._finished:
             return
         self._finished = True
-        self.stream.close()
+        with contextlib.suppress(BrokenPipeError):
+            self.stream.close()
+        error_output = b""
+        if self.process.stderr is not None:
+            error_output = self.process.stderr.read()
+            self.process.stderr.close()
         status = self.process.wait()
         if status != 0:
+            if b"recipient" in error_output.lower():
+                raise BackupError(
+                    "age encryption failed: recipient was rejected; "
+                    "provide a complete age or SSH public key"
+                )
             raise BackupError(f"age encryption failed with exit status {status}")
 
     def abort(self) -> None:
@@ -111,6 +140,8 @@ class _AgeEncryptionSession:
         except subprocess.TimeoutExpired:
             self.process.kill()
             self.process.wait(timeout=3)
+        if self.process.stderr is not None:
+            self.process.stderr.close()
 
 
 class AgeBackend:
@@ -166,7 +197,7 @@ class AgeBackend:
             # CSM never receives it and therefore cannot log or expose it.
             command.append("--passphrase")
         command.extend(["--output", str(destination)])
-        process = subprocess.Popen(command, stdin=subprocess.PIPE)
+        process = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
         return _AgeEncryptionSession(process)
 
     @contextlib.contextmanager
@@ -192,6 +223,129 @@ class AgeBackend:
                 process.kill()
                 process.wait(timeout=3)
             raise
+
+
+class AgeKeygenBackend:
+    """Generate and inspect one bundle-managed native age identity."""
+
+    def __init__(self, executable: Path | None = None) -> None:
+        self.executable = executable or bundled_age_keygen_path()
+        if self.executable is None:
+            raise BackupError("age-keygen is unavailable; run csm doctor or install the .app")
+        if not self.executable.is_file() or not os.access(self.executable, os.X_OK):
+            raise BackupError(f"age-keygen is not runnable: {self.executable}")
+        try:
+            version = self.version()
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise BackupError(f"cannot verify age-keygen: {self.executable}") from exc
+        if version not in {EXPECTED_AGE_VERSION, f"v{EXPECTED_AGE_VERSION}"}:
+            raise BackupError(
+                f"unsupported age-keygen version {version!r}; expected v{EXPECTED_AGE_VERSION}"
+            )
+        resources = bundled_resources_root()
+        if resources is not None:
+            expected_path = (
+                resources / "bin" / ("age-keygen.exe" if os.name == "nt" else "age-keygen")
+            ).resolve(strict=False)
+            if self.executable.resolve(strict=False) != expected_path:
+                raise BackupError("packaged runtime must use bundle-local age-keygen")
+            verification_path = resources / "licenses" / "age-verification.json"
+            try:
+                verification = json.loads(verification_path.read_text(encoding="utf-8"))
+                expected_digest = verification["keygen_binary_sha256"]
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise BackupError("bundle-local age-keygen metadata is invalid") from exc
+            digest, _size = hash_file(self.executable)
+            if not isinstance(expected_digest, str) or digest != expected_digest:
+                raise BackupError("bundle-local age-keygen SHA-256 mismatch")
+
+    def version(self) -> str:
+        completed = subprocess.run(
+            [str(self.executable), "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return completed.stdout.strip()
+
+    def generate(self, destination: Path) -> None:
+        if destination.exists():
+            raise FileExistsError(destination)
+        try:
+            completed = subprocess.run(
+                [str(self.executable), "--output", str(destination)],
+                check=False,
+                capture_output=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise BackupError("age-keygen failed to create the managed identity") from exc
+        if completed.returncode != 0 or not destination.is_file():
+            raise BackupError("age-keygen failed to create the managed identity")
+
+    def recipient(self, identity_file: Path) -> str:
+        try:
+            completed = subprocess.run(
+                [str(self.executable), "-y", str(identity_file)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise BackupError("managed age identity is invalid") from exc
+        recipients = tuple(line.strip() for line in completed.stdout.splitlines() if line.strip())
+        if completed.returncode != 0 or len(recipients) != 1:
+            raise BackupError("managed age identity is invalid")
+        return recipients[0]
+
+
+def ensure_managed_age_identity(
+    paths: AppPaths,
+    *,
+    keygen: KeygenBackend | None = None,
+) -> ManagedAgeIdentity:
+    """Create once, then validate and reuse the application-owned backup identity."""
+
+    backend = keygen or AgeKeygenBackend()
+    paths.ensure()
+    identity_file = paths.managed_backup_identity_file
+
+    def load(path: Path) -> ManagedAgeIdentity:
+        if path.is_symlink() or not path.is_file():
+            raise BackupError("managed age identity must be a regular file")
+        if path.stat().st_size > MAX_MANAGED_IDENTITY_BYTES:
+            raise BackupError("managed age identity exceeds the size limit")
+        if os.name != "nt" and path.stat().st_mode & 0o077:
+            raise BackupError("managed age identity permissions must be 0600")
+        recipient = backend.recipient(path).strip()
+        if not recipient.startswith("age1") or any(character.isspace() for character in recipient):
+            raise BackupError("managed age identity produced an invalid recipient")
+        return ManagedAgeIdentity(identity_file=path, recipient=recipient)
+
+    if identity_file.exists() or identity_file.is_symlink():
+        return load(identity_file)
+
+    with tempfile.TemporaryDirectory(prefix=".backup-key-", dir=paths.keys_dir) as temporary:
+        temporary_identity = Path(temporary) / identity_file.name
+        backend.generate(temporary_identity)
+        with contextlib.suppress(OSError):
+            temporary_identity.chmod(0o600)
+        generated = load(temporary_identity)
+        with temporary_identity.open("rb") as stream:
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary_identity, identity_file)
+        except FileExistsError:
+            return load(identity_file)
+        with contextlib.suppress(OSError):
+            directory_fd = os.open(paths.keys_dir, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        return ManagedAgeIdentity(identity_file=identity_file, recipient=generated.recipient)
 
 
 class _IteratorReader(io.RawIOBase):
@@ -491,6 +645,15 @@ class BackupWriter:
                 finally:
                     os.close(directory_fd)
             return manifest
+        except BrokenPipeError as exc:
+            try:
+                session.finish()
+            except BackupError as age_error:
+                raise age_error from exc
+            finally:
+                if temporary.exists() and not published:
+                    temporary.unlink()
+            raise BackupError("age encryption stopped before backup completed") from exc
         except BaseException:
             session.abort()
             if temporary.exists() and not published:

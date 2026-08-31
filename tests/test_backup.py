@@ -3,6 +3,8 @@ from __future__ import annotations
 import contextlib
 import io
 import os
+import subprocess
+import sys
 import tarfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -10,6 +12,7 @@ from typing import IO
 
 import pytest
 
+import codex_session_manager.backup as backup_module
 from codex_session_manager.backup import (
     BackupError,
     BackupReader,
@@ -63,6 +66,37 @@ class _MutatingCipher(_TestCipher):
         with source.open("rb") as stream:
             yield stream
         source.write_bytes(source.read_bytes() + b"changed-after-decryption")
+
+
+class _ManagedKeygen:
+    def __init__(self) -> None:
+        self.generations = 0
+
+    def generate(self, destination: Path) -> None:
+        self.generations += 1
+        destination.write_text("managed identity", encoding="utf-8")
+
+    def recipient(self, identity_file: Path) -> str:
+        if identity_file.read_text(encoding="utf-8") != "managed identity":
+            raise BackupError("managed age identity is invalid")
+        return "age1managedrecipient"
+
+
+class _RejectedAgeCipher:
+    def open_encrypt(self, _destination: Path, _spec: EncryptionSpec):
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import sys; "
+                "sys.stderr.write('age: error: unknown recipient type\\n'); "
+                "raise SystemExit(1)",
+            ],
+            stdin=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        process.wait()
+        return backup_module._AgeEncryptionSession(process)
 
 
 def _create_backup(path: Path):
@@ -125,6 +159,40 @@ def test_streaming_backup_manifest_is_final_and_round_trips(tmp_path: Path) -> N
         assert archive.getnames()[-1] == "manifest.json"
 
 
+def test_managed_age_identity_is_generated_once_and_reused(app_paths) -> None:
+    ensure = getattr(backup_module, "ensure_managed_age_identity", None)
+    assert callable(ensure)
+    keygen = _ManagedKeygen()
+    expected_path = app_paths.data_dir / "keys" / "backup.agekey"
+
+    first = ensure(app_paths, keygen=keygen)
+    second = ensure(app_paths, keygen=keygen)
+
+    assert first.identity_file == expected_path
+    assert first.recipient == "age1managedrecipient"
+    assert second == first
+    assert keygen.generations == 1
+    assert expected_path.is_file()
+    if os.name != "nt":
+        assert expected_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_managed_age_identity_is_not_replaced_when_invalid(app_paths) -> None:
+    ensure = getattr(backup_module, "ensure_managed_age_identity", None)
+    assert callable(ensure)
+    keygen = _ManagedKeygen()
+    identity_file = app_paths.data_dir / "keys" / "backup.agekey"
+    identity_file.parent.mkdir(parents=True)
+    identity_file.write_text("corrupt identity", encoding="utf-8")
+    identity_file.chmod(0o600)
+
+    with pytest.raises(BackupError, match="managed age identity is invalid"):
+        ensure(app_paths, keygen=keygen)
+
+    assert identity_file.read_text(encoding="utf-8") == "corrupt identity"
+    assert keygen.generations == 0
+
+
 def test_backup_refuses_to_replace_existing_destination(tmp_path: Path) -> None:
     path = tmp_path / "existing.csmbackup"
     original = b"existing encrypted evidence"
@@ -133,6 +201,27 @@ def test_backup_refuses_to_replace_existing_destination(tmp_path: Path) -> None:
     with pytest.raises(FileExistsError):
         _create_backup(path)
     assert path.read_bytes() == original
+
+
+def test_age_subprocess_failure_is_reported_instead_of_broken_pipe(tmp_path: Path) -> None:
+    destination = tmp_path / "rejected.csmbackup"
+    source = BundleSource.from_json(
+        "logical/threads/thread.json",
+        {"payload": "x" * 1_000_000},
+        kind="logical",
+        thread_id="thread",
+    )
+
+    with pytest.raises(BackupError, match="recipient was rejected"):
+        BackupWriter(_RejectedAgeCipher()).create(
+            destination,
+            sources=(source,),
+            source_fingerprints={"thread": "f" * 64},
+            encryption=EncryptionSpec(mode="age-recipient", recipient="age1invalid"),
+        )
+
+    assert not destination.exists()
+    assert not tuple(tmp_path.glob(".*.encrypted.tmp"))
 
 
 def test_backup_detects_payload_tampering(tmp_path: Path) -> None:

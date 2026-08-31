@@ -38,7 +38,7 @@ csm purge apply PLAN.json --confirm PLAN_ID --permanent-phrase "PERMANENTLY DELE
 
 选择根任务创建备份时，CSM 会自动展开其完整派生后代；输出中的 `covered_thread_ids` 必须与随后归档计划的 affected IDs 对齐。
 `cleanup review` 只生成结构化建议和桌面审查请求，不创建归档 ActionPlan，也不满足备份或执行授权。
-清理请求会把候选灌入原有项目/任务列表并预选；用户在同一 GUI 中调整最终选择。“备份并归档”会先完整复验备份，再重读状态和建议指纹、重建最终 ActionPlan 并执行；失败时不会继续归档。CLI 命令仍提供分步路径。上下文请求会把本地绑定指纹后的 turn/item 建议灌入原时间线与动作面板。
+清理请求会把候选灌入原有项目/任务列表并预选；用户在同一 GUI 中调整最终选择。“备份并归档”只要求选择输出路径；首次确认创建本机托管的 age identity，后续自动复用。程序先完整复验备份，再重读状态和建议指纹、重建最终 ActionPlan 并执行；失败时不会继续归档。CLI 命令仍提供显式 recipient/identity 的分步路径。上下文请求会把本地绑定指纹后的 turn/item 建议灌入原时间线与动作面板。
 
 ## 备份、恢复与导入
 

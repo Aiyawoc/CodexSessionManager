@@ -5,6 +5,7 @@
   "archive_url": "https://github.com/FiloSottile/age/releases/download/v1.3.1/age-v1.3.1-darwin-arm64.tar.gz",
   "archive_sha256": "01120ea2cbf0463d4c6bd767f99f3271bbed1cdc8a9aa718a76ba1fe4f01998b",
   "binary_sha256": "0e3ea0b1bed2b30aa2dc46eef4e1723864d626c80f37319c20d9b73ca045f56f",
+  "keygen_binary_sha256": "37c4b509d86f233d8dd065f5a905e11d2e1d5549d59445a9bc52da9235a622ad",
   "proof_url": "https://github.com/FiloSottile/age/releases/download/v1.3.1/age-v1.3.1-darwin-arm64.tar.gz.proof",
   "proof_sha256": "e53545de98acd8fb17aca18ab4940e46edd032418df352b7387be4bc5379a0ac",
   "sigsum_verify": "sigsum.org/sigsum-go/cmd/sigsum-verify@v0.13.1",

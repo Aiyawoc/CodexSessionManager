@@ -21,6 +21,8 @@ from codex_session_manager.backup import (
     CipherBackend,
     DecryptionSpec,
     EncryptionSpec,
+    ManagedAgeIdentity,
+    ensure_managed_age_identity,
 )
 from codex_session_manager.cleanup import CleanupExecutor, CleanupPlanner, CleanupPolicy
 from codex_session_manager.cleanup_review import build_cleanup_action_plan
@@ -206,11 +208,15 @@ class ApplicationWorkflows:
         request_timeout: float = 45.0,
         connection_factory: ConnectionFactory = connect_and_probe,
         backup_backend_factory: Callable[[], CipherBackend] = AgeBackend,
+        managed_identity_factory: Callable[[AppPaths], ManagedAgeIdentity] = (
+            ensure_managed_age_identity
+        ),
     ) -> None:
         self.paths = paths or get_paths()
         self.request_timeout = request_timeout
         self.connection_factory = connection_factory
         self.backup_backend_factory = backup_backend_factory
+        self.managed_identity_factory = managed_identity_factory
 
     def session(
         self,
@@ -515,6 +521,42 @@ class ApplicationWorkflows:
                 include_raw=include_raw,
             )
             return BackupCreationResult(manifest, covered_ids)
+
+    def create_managed_backup(
+        self,
+        destination: Path,
+        *,
+        thread_ids: tuple[str, ...],
+        include_raw: bool = True,
+        expand_descendants: bool = True,
+    ) -> BackupCreationResult:
+        identity = self.managed_identity_factory(self.paths)
+        return self.create_backup(
+            destination,
+            thread_ids=thread_ids,
+            encryption=EncryptionSpec(mode="age-recipient", recipient=identity.recipient),
+            verification_decryption=DecryptionSpec(identity_file=identity.identity_file),
+            include_raw=include_raw,
+            expand_descendants=expand_descendants,
+        )
+
+    def backup_and_archive_managed(
+        self,
+        destination: Path,
+        *,
+        selected_ids: tuple[str, ...],
+        review_request: ReviewRequest | None = None,
+        include_raw: bool = True,
+    ) -> BackupArchiveResult:
+        identity = self.managed_identity_factory(self.paths)
+        return self.backup_and_archive(
+            destination,
+            selected_ids=selected_ids,
+            encryption=EncryptionSpec(mode="age-recipient", recipient=identity.recipient),
+            verification_decryption=DecryptionSpec(identity_file=identity.identity_file),
+            review_request=review_request,
+            include_raw=include_raw,
+        )
 
     def backup_and_archive(
         self,

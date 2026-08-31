@@ -40,14 +40,20 @@ def test_automated_acceptance_runs_real_isolated_first_delivery_checks(
         run_automated_acceptance(output)
 
 
-def test_release_acceptance_requires_age_and_stable_app(tmp_path: Path, monkeypatch) -> None:
+def test_release_acceptance_requires_age_tools_and_stable_app(tmp_path: Path, monkeypatch) -> None:
     age = tmp_path / "age"
+    age_keygen = tmp_path / "age-keygen"
     app = tmp_path / "CodexSessionManager"
     age.write_bytes(b"age")
+    age_keygen.write_bytes(b"age-keygen")
     app.write_bytes(b"app")
     monkeypatch.setattr(
         "codex_session_manager.acceptance_runner.bundled_age_path",
         lambda **_kwargs: age,
+    )
+    monkeypatch.setattr(
+        "codex_session_manager.acceptance_runner.bundled_age_keygen_path",
+        lambda **_kwargs: age_keygen,
     )
     monkeypatch.setattr(
         "codex_session_manager.acceptance_runner.stable_app_executable",

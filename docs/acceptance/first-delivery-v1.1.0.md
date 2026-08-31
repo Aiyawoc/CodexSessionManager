@@ -63,7 +63,7 @@ scripts/build_macos_app.sh
 构建必须来自当前 checkout，并通过：
 
 - Nuitka completion report；
-- bundle 内主程序、age、Skill、许可证和 build channel 检查；
+- bundle 内主程序、age、age-keygen、Skill、许可证和 build channel 检查；
 - `codesign --verify --deep --strict`；
 - bundle 自带 CLI `doctor --skip-app-server`。
 
@@ -87,7 +87,7 @@ scripts/accept_first_delivery.sh \
 除源码门禁外，此步骤还要求：
 
 - bundle 验收脚本通过；
-- bundle 内 age 可执行；
+- bundle 内 age 与 age-keygen 可执行且完整性校验通过；
 - 独立稳定应用可执行路径可解析，且版本、channel 和 executable SHA-256 与候选 bundle 一致；
 - `acceptance release` 的全部必需检查为 `passed`。
 
@@ -123,7 +123,7 @@ csm cleanup review --older-than-days 1 --project /absolute/test/project
 - 用户取消的根不进入最终范围；
 - 安全补选默认不选中；
 - 永久删除资格只读且不可混入归档；
-- “备份并归档”要求 age recipient 与 identity；
+- “备份并归档”首次确认生成本机托管的单一 age identity，后续只选择输出路径，不再输入 recipient 或手工选择 identity；
 - 备份完整复验后才归档；
 - 备份后人为制造状态或内容漂移时归档被拒绝；
 - 审计链包含备份、最终计划和归档结果。

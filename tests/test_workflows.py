@@ -5,6 +5,7 @@ import threading
 from collections.abc import Iterator
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import IO
 
 import pytest
@@ -296,6 +297,35 @@ def test_backup_workflow_expands_closure_verifies_and_records_audit(
         audit.verify_chain()
         for thread_id, source_fingerprint in result.manifest.source_fingerprints.items():
             assert audit.verified_backup(thread_id, source_fingerprint) is not None
+
+
+def test_managed_backup_workflow_uses_one_identity_for_encrypt_and_verify(
+    tmp_path, app_paths, capabilities
+) -> None:
+    client = _WorkflowClient()
+
+    def connect(**_kwargs):
+        return client, capabilities
+
+    identity_file = tmp_path / "backup.agekey"
+    identity_file.write_text("managed identity", encoding="utf-8")
+    workflows = ApplicationWorkflows(
+        paths=app_paths,
+        connection_factory=connect,  # type: ignore[arg-type]
+        backup_backend_factory=_PlainCipher,
+        managed_identity_factory=lambda _paths: SimpleNamespace(
+            identity_file=identity_file,
+            recipient="age1managedrecipient",
+        ),
+    )
+
+    result = workflows.create_managed_backup(
+        tmp_path / "managed.csmbackup",
+        thread_ids=("root",),
+        include_raw=False,
+    )
+
+    assert result.covered_thread_ids == ("child", "root")
 
 
 def test_backup_and_archive_rebuilds_review_plan_and_links_audit(

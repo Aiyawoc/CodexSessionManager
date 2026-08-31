@@ -31,7 +31,7 @@
 
 - 专门创建、无重要内容的 Codex 测试项目和测试对话；
 - 专用测试 `MEMORY.md`，不得使用真实长期记忆文件；
-- 独立 age recipient 和 identity；
+- 独立的干净 CSM 数据目录，用于首次生成并复用本机托管 age identity；
 - 独立的 CSM evidence 目录；
 - 不包含生产凭据、真实客户数据或敏感对话内容的测试输入。
 
@@ -210,7 +210,7 @@ scripts/package_macos_release.sh \
 - `stapler validate` 成功；
 - `spctl` 显示接受且来源为 notarized Developer ID；
 - 浏览器下载后的 ZIP 在干净机器上可直接启动，不出现“已损坏”“无法验证开发者”或要求绕过安全策略；
-- 解压后 bundle 的版本、签名、age、Skill、许可证和 checksum 与发布记录一致。
+- 解压后 bundle 的版本、签名、age、age-keygen、Skill、许可证和 checksum 与发布记录一致。
 
 ### 4.4 必留证据
 
@@ -264,7 +264,7 @@ csm cleanup review \
 2. 用户取消的根不进入最终范围；
 3. 本地安全补选默认不选中；
 4. 永久删除资格只读且不能混入归档；
-5. “备份并归档”先创建并完整复验 age 备份；
+5. “备份并归档”首次只确认创建本机托管 age identity，后续不再输入 recipient 或选择 identity，并且始终先创建、完整复验备份；
 6. 备份后重新读取状态、能力、建议指纹和后代闭包；
 7. 人为制造状态或内容漂移时，归档必须停止；
 8. 无漂移时只归档最终确认范围；
@@ -605,7 +605,7 @@ OpenAI 当前会保存经管理员审核的工具快照。工具名称、参数�
 | Hook 超时、崩溃、GUI 取消 | fail-open，继续原生压缩 |
 | 写请求超时 | 不自动重试，先复读实际状态 |
 | 日志与报告扫描 | 不含 token、identity、正文或私有绝对路径 |
-| 备份 identity 错误或备份损坏 | 完整复验失败，后续动作停止 |
+| 托管 identity 缺失/损坏/权限异常，或备份损坏 | 不静默替换已有密钥；完整复验失败，后续动作停止 |
 | 永久删除入口误触 | 仍要求独立计划、等待期、备份和精确确认 |
 
 ### 9.2 通过标准
@@ -627,7 +627,7 @@ OpenAI 当前会保存经管理员审核的工具快照。工具名称、参数�
 - 对应 source archive 或 Git tag；
 - 中英文 release notes；
 - `THIRD_PARTY_NOTICES.md`；
-- bundle 内 age license 与 `age-verification.json`；
+- bundle 内 age license，以及同时绑定 age/age-keygen SHA-256 的 `age-verification.json`；
 - 自动验收报告哈希和人工验收摘要；
 - 已知限制、升级、回退和卸载说明。
 

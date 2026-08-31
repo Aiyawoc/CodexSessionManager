@@ -16,7 +16,7 @@
 
 - 按项目、活跃时间、来源和父子关系分组、搜索 Codex 对话。
 - 以流式方式创建 age 加密 `.csmbackup`，并执行完整性复验。
-- 从 GUI 对选中任务及其完整派生后代创建 recipient 加密备份，复验成功后再单独进入归档计划。
+- GUI 首次备份时自动生成一个本机托管 age identity，后续自动复用同一密钥覆盖选中任务及其完整派生后代。
 - 所有归档、恢复、导入、裁剪和清除写操作均先生成不可变计划。
 - 生成脱敏 App Server schema 审计报告；未知画像保持只读，不能自动加入写入信任列表。
 - 通过派生任务精简上下文，原对话内容始终保持不变。
@@ -86,14 +86,14 @@ uv run csm --help
 uv run CodexSessionManager
 ```
 
-备份复验和完整 `doctor` 检查还需要 `age` 可执行文件。平台构建脚本会获取并验证固定版本；开发环境也可以通过 `CSM_AGE_BIN` 指定已有 age。
+备份复验和完整 `doctor` 检查需要 `age` 与 `age-keygen`。平台构建脚本会从同一个固定版本发布包中获取并验证它们；开发环境也可通过 `CSM_AGE_BIN` 和 `CSM_AGE_KEYGEN_BIN` 覆盖。
 
 ### 3. 完成最小 GUI 操作
 
 1. 搜索项目或对话，也可以输入完整对话 ID。
 2. 选择 turn 或 item，然后设置为**保留、排除、摘要或保护**。
 3. 使用**保存方案**只保存已审查计划；使用**派生精简任务**创建新的精简对话。
-4. 在对话清理模式中调整最终候选后使用**备份并归档**；程序会先完整复验 age 备份，再重建最终计划并归档。普通任务管理仍可分开执行备份与归档。
+4. 在对话清理模式中调整最终候选后使用**备份并归档**。首次只需确认创建本机托管密钥；以后只选择输出文件。程序完整复验备份后才重建最终计划并归档。
 
 ### 构建与发布状态
 
@@ -180,7 +180,7 @@ scripts/install_user.sh /absolute/path/to/CodexSessionManager.app
 6. **永久删除资格**只读展示已归档至少 14 天、具有可信归档历史和当前有效备份的根候选；这里不生成删除计划，永久删除仍要求独立流程和精确确认。
 7. **外部建议灌入**只接受本地重新绑定的对话、turn 或 item ID 与当前指纹；硬保护和 `validate_selections` 始终拥有最终否决权。
 8. **记忆管理**通过左侧第二按钮进入同一窗口壳。只有已登记来源可见；LLM 建议会先绑定当前 segment ID 与内容 SHA-256，标题、front matter、代码块和结构空白仍受本地硬保护。用户确认后先创建版本，再原子写入并重读验证。
-9. **备份并归档**在清理模式中先冻结根及全部后代范围、创建并完整复验 age 备份，再重读状态和建议指纹、重建最终计划并归档；漂移或验证失败会停止归档。普通任务管理中的“备份并复验”仍不会隐式归档。
+9. **备份并归档**的 GUI 首次生成一个本机托管的原生 age identity，以后自动从同一私钥派生 recipient 用于加密和完整解密复验。私钥不写入备份或日志；已有私钥丢失、损坏或权限异常时拒绝继续，不会静默替换。备份后再重读状态、建议指纹和后代闭包；任一门禁失败都停止归档。CLI 仍保留显式 `--recipient`/`--identity` 分步路径。
 
 “保存方案”只将已审查的 `TrimPlan` 写入 CSM 数据目录，不修改 Codex。“派生精简任务”会先重新校验计划、等待原任务处于 `idle` 或 `notLoaded`，再创建新的派生任务。
 
@@ -339,6 +339,7 @@ CSM 默认使用各平台的用户级标准目录。环境变量主要用于明�
 | `CSM_CACHE_DIR` | 缓存目录 |
 | `CSM_LOG_DIR` | 应用与 Hook 日志目录 |
 | `CSM_AGE_BIN` | 仅用于开发环境的 age 路径覆盖；standalone 使用已验证的内置二进制 |
+| `CSM_AGE_KEYGEN_BIN` | 仅用于开发环境的 age-keygen 路径覆盖；standalone 使用已验证的内置二进制 |
 
 如果 `CSM_CODEX_HOME` 与 `CODEX_HOME` 指向不同目录，所有入口都会拒绝继续，避免把一个账号的任务状态与另一个账号的计划或审计证据混用。
 
@@ -407,7 +408,7 @@ scripts/package_macos_release.sh --app dist/CodexSessionManager.app
 .\scripts\build_windows_app.ps1 -Version 1.1.0
 ```
 
-两个平台均使用 `pyside6-deploy` / Nuitka standalone，并携带固定版本的 Python、Qt、插件、应用依赖和已验证 age 二进制。正式公开分发仍要求 macOS Developer ID 签名、公证与 staple，以及适当的 Windows Authenticode 签名。
+两个平台均使用 `pyside6-deploy` / Nuitka standalone，并携带固定版本的 Python、Qt、插件、应用依赖和已验证的 `age`/`age-keygen`。正式公开分发仍要求 macOS Developer ID 签名、公证与 staple，以及适当的 Windows Authenticode 签名。
 
 <a id="faq"></a>
 ## ❓ 常见问题 FAQ
@@ -421,7 +422,7 @@ scripts/package_macos_release.sh --app dist/CodexSessionManager.app
 <details>
 <summary><strong>最终用户需要安装 Python、uv、Qt 或 age 吗？</strong></summary>
 
-使用 standalone 包时不需要。macOS 和 Windows 包已携带独立运行时与已验证 age。源码开发需要 uv；uv 会获取固定 Python 版本，不修改系统 Python。
+使用 standalone 包时不需要。macOS 和 Windows 包已携带独立运行时与已验证的 `age`/`age-keygen`。源码开发需要 uv；uv 会获取固定 Python 版本，不修改系统 Python。
 </details>
 
 <details>

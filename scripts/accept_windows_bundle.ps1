@@ -29,6 +29,10 @@ try {
     if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
         throw "standalone executable is missing: $Executable"
     }
+    $AgeKeygen = Join-Path $AcceptBundle "Resources\bin\age-keygen.exe"
+    if (-not (Test-Path -LiteralPath $AgeKeygen -PathType Leaf)) {
+        throw "standalone age-keygen is missing: $AgeKeygen"
+    }
     $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
     $env:CSM_DATA_DIR = Join-Path $AcceptRoot "data"
     $env:CSM_CONFIG_DIR = Join-Path $AcceptRoot "config"
@@ -52,6 +56,16 @@ try {
     $RequiredFailures = @($Doctor.checks | Where-Object { $_.required -and -not $_.ok })
     if ($RequiredFailures.Count -ne 0) {
         throw "packaged doctor reported required failures"
+    }
+
+    $ManagedIdentity = Join-Path $AcceptRoot "managed-backup.agekey"
+    & $AgeKeygen --output $ManagedIdentity 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $ManagedIdentity -PathType Leaf)) {
+        throw "packaged age-keygen failed to generate an identity"
+    }
+    $Recipient = (& $AgeKeygen -y $ManagedIdentity | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $Recipient -notmatch '^age1[0-9a-z]+$') {
+        throw "packaged age-keygen failed to derive a recipient"
     }
 
     $HookInput = '{"session_id":"acceptance","transcript_path":null,"cwd":"C:\\","hook_event_name":"PostCompact","model":"test","turn_id":"turn","trigger":"manual"}'

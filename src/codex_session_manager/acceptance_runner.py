@@ -14,6 +14,7 @@ from pydantic import AwareDatetime
 
 from codex_session_manager.config import (
     AppPaths,
+    bundled_age_keygen_path,
     bundled_age_path,
     private_atomic_create,
     stable_app_executable,
@@ -291,9 +292,10 @@ def _gui_memory_check(paths: AppPaths) -> str:
 
 def _age_check(_paths: AppPaths) -> str:
     age = bundled_age_path(allow_development_path=True)
-    if age is None or not age.is_file():
-        raise FileNotFoundError("age executable is unavailable")
-    return "age executable is available for encrypted conversation backups"
+    age_keygen = bundled_age_keygen_path(allow_development_path=True)
+    if age is None or not age.is_file() or age_keygen is None or not age_keygen.is_file():
+        raise FileNotFoundError("age or age-keygen executable is unavailable")
+    return "age and age-keygen are available for managed encrypted conversation backups"
 
 
 def _installed_app_check(_paths: AppPaths) -> str:

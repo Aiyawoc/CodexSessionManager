@@ -16,7 +16,7 @@ Long-running Codex work spreads conversations across projects and lets context g
 
 - Group and search Codex conversations by project, activity, source, and relationship.
 - Create streaming, age-encrypted `.csmbackup` archives with full integrity verification.
-- Back up selected tasks and complete derived closures from the GUI, then enter archive planning as a separate step.
+- On the first GUI backup, generate one locally managed age identity and automatically reuse it for selected tasks and their complete derived closures.
 - Plan archive, restore, import, trim, and purge operations before any write occurs.
 - Generate redacted App Server schema audits; unknown profiles stay read-only and are never trusted automatically.
 - Reduce context through a derived task while keeping the original conversation unchanged.
@@ -86,14 +86,14 @@ uv run csm --help
 uv run CodexSessionManager
 ```
 
-Backup verification and a complete `doctor` check also require an `age` executable. The platform build scripts fetch and verify the pinned binary; development environments may instead provide `CSM_AGE_BIN`.
+Backup verification and a complete `doctor` check require both `age` and `age-keygen`. Platform builds fetch and verify both from the same pinned release; development environments may override them with `CSM_AGE_BIN` and `CSM_AGE_KEYGEN_BIN`.
 
 ### 3. Try the minimum GUI workflow
 
 1. Search for a project/conversation, or enter a complete conversation ID.
 2. Select a turn or item, then choose **Keep**, **Exclude**, **Summary**, or **Protect**.
 3. Use **Save plan** to store the reviewed plan without changing Codex, or **Create trimmed task** to create a new derived conversation.
-4. In Cleanup mode, adjust the final candidates and use **Backup & archive**. The app fully verifies the age backup before rebuilding the final plan and archiving. Ordinary task management still supports separate backup and archive operations.
+4. In Cleanup mode, adjust the final candidates and use **Backup & archive**. On first use, confirm creation of the locally managed key; later runs only ask for the output file. The app fully verifies the backup before rebuilding the final plan and archiving.
 
 ### Build and release status
 
@@ -180,7 +180,7 @@ Launching CodexSessionManager opens the existing Projects & Tasks, Timeline, Con
 6. **Purge eligibility** is read-only and includes only roots archived for at least 14 days with trusted archive history and a current verified backup. No purge plan is created here; permanent deletion still requires its separate flow and exact confirmation.
 7. **External suggestion injection** only accepts locally rebound conversation, turn, or item IDs with current fingerprints; hard protection and `validate_selections` retain final veto power.
 8. **Memory Management** uses the second left-rail button and the same window shell. Only registered sources are visible. LLM suggestions are rebound to current segment IDs and content SHA-256 values; headings, front matter, fenced code, and structural whitespace retain local hard protection. Confirmed writes create a version before atomic replacement and reread verification.
-9. **Backup & archive** in Cleanup mode freezes the root/descendant scope, creates and fully verifies the age backup, then re-reads state and suggestion fingerprints, rebuilds the final plan, and archives it. Drift or verification failure stops the archive step. The ordinary **Backup & verify** action still never archives implicitly.
+9. **Backup & archive** uses one native age identity generated on first use in the app's private data directory. The GUI derives its recipient automatically and reuses the same identity for full decryption verification. The private key is never written to backups or logs; a missing, corrupt, or weakly permissioned existing key fails closed and is never silently replaced. State, suggestion fingerprints, and the descendant closure are then re-read before archiving. The CLI retains its explicit `--recipient`/`--identity` workflow.
 
 Saving a plan only persists the reviewed `TrimPlan`; it does not write to Codex. Creating a trimmed task first revalidates the plan, waits for the source to be `idle` or `notLoaded`, and then creates a new derived task.
 
@@ -339,6 +339,7 @@ CSM uses platform-native user directories by default. Environment variables are 
 | `CSM_CACHE_DIR` | Cache root |
 | `CSM_LOG_DIR` | Application and Hook log root |
 | `CSM_AGE_BIN` | Development-only age executable override; standalone builds use their verified bundled binary |
+| `CSM_AGE_KEYGEN_BIN` | Development-only age-keygen executable override; standalone builds use their verified bundled binary |
 
 If `CSM_CODEX_HOME` and `CODEX_HOME` point to different roots, every entry point refuses to continue. This prevents one account's task state from being combined with another account's plans or audit evidence.
 
@@ -406,7 +407,7 @@ Windows x64, on Windows AMD64 or the manual GitHub Actions workflow:
 .\scripts\build_windows_app.ps1 -Version 1.1.0
 ```
 
-Both builds use `pyside6-deploy` / Nuitka standalone mode and include pinned Python, Qt, plugins, application dependencies, and a verified age binary. Formal public distribution still requires Developer ID signing/notarization/stapling on macOS and an appropriate Authenticode signature on Windows.
+Both builds use `pyside6-deploy` / Nuitka standalone mode and include pinned Python, Qt, plugins, application dependencies, and verified `age`/`age-keygen` executables. Formal public distribution still requires Developer ID signing/notarization/stapling on macOS and an appropriate Authenticode signature on Windows.
 
 <a id="faq"></a>
 ## ❓ FAQ
@@ -420,7 +421,7 @@ No. Online reads and writes use the App Server. Raw rollout data may be retained
 <details>
 <summary><strong>Do end users need Python, uv, Qt, or age?</strong></summary>
 
-No for standalone builds. The macOS and Windows bundles carry their own runtime and verified age executable. Source development requires uv; uv obtains the pinned Python version without changing the system Python.
+No for standalone builds. The macOS and Windows bundles carry their own runtime and verified `age`/`age-keygen` executables. Source development requires uv; uv obtains the pinned Python version without changing the system Python.
 </details>
 
 <details>

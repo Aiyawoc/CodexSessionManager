@@ -50,6 +50,7 @@ cleanup_build_operation() {
 }
 trap cleanup_build_operation EXIT INT TERM
 
+"$CSM_REPO_ROOT/scripts/fetch_age_macos_arm64.sh"
 "$CSM_REPO_ROOT/scripts/check.sh"
 UV_PROJECT_ENVIRONMENT="$CSM_BUILD_ENV" uv sync --locked --no-default-groups \
   --group runtime --group gui --group build --compile-bytecode
@@ -65,7 +66,6 @@ CSM_PYSIDE_DEPLOY_BACKUP=$(mktemp "${TMPDIR:-/tmp}/csm-pyside-deploy.XXXXXX")
 cp "$CSM_PYSIDE_DEPLOY_SOURCE" "$CSM_PYSIDE_DEPLOY_BACKUP"
 patch -s -p1 -d "$CSM_BUILD_ENV/lib/python3.13/site-packages/PySide6" \
   < "$CSM_REPO_ROOT/packaging/patches/pyside6-6.11.1-deploy-ignore-virtualenvs.patch"
-"$CSM_REPO_ROOT/scripts/fetch_age_macos_arm64.sh"
 "$CSM_REPO_ROOT/scripts/build_icon_macos.sh"
 rm -rf "$CSM_REPO_ROOT/deployment" "$CSM_REPO_ROOT/dist/CodexSessionManager.app"
 rm -f "$CSM_NUITKA_CRASH_REPORT" "$CSM_NUITKA_REPORT"
@@ -93,6 +93,8 @@ test -x "$CSM_APP/Contents/MacOS/CodexSessionManager"
 mkdir -p "$CSM_APP/Contents/Resources/bin" "$CSM_APP/Contents/Resources/licenses" \
   "$CSM_APP/Contents/Resources/skills"
 install -m 0755 "$CSM_REPO_ROOT/vendor/age/age" "$CSM_APP/Contents/Resources/bin/age"
+install -m 0755 "$CSM_REPO_ROOT/vendor/age/age-keygen" \
+  "$CSM_APP/Contents/Resources/bin/age-keygen"
 ditto "$CSM_REPO_ROOT/skills/manage-codex-sessions" \
   "$CSM_APP/Contents/Resources/skills/manage-codex-sessions"
 install -m 0644 "$CSM_REPO_ROOT/vendor/age/LICENSE" "$CSM_APP/Contents/Resources/licenses/age-BSD-3-Clause.txt"

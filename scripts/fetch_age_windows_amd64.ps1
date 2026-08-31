@@ -13,11 +13,13 @@ $ProofName = "$ArchiveName.proof"
 $ArchiveSha256 = "c56e8ce22f7e80cb85ad946cc82d198767b056366201d3e1a2b93d865be38154"
 $ProofSha256 = "223a4bf46d6bae52b13cee6c7e384c2d3228e9055aecfe77c5d2b59413cefabc"
 $BinarySha256 = "90f5cc37249c06e0b302e476a8a63bcefeecd9437c192b8af33e6ff2d69558dd"
+$KeygenBinarySha256 = "8b9c27ef2ab6f215f689bf1e609bf82c8faf4c041f32452fa80396b3f8c4f687"
 $PolicySha256 = "666d9d0b9ab2e4019769c42eaccd7d6d502a9abac45979bb9b08b7213e4f53e3"
 $BaseUrl = "https://github.com/FiloSottile/age/releases/download/v$AgeVersion"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $VendorRoot = Join-Path $RepoRoot "vendor\age"
 $VendorAge = Join-Path $VendorRoot "age.exe"
+$VendorAgeKeygen = Join-Path $VendorRoot "age-keygen.exe"
 $Verification = Join-Path $VendorRoot "verification.json"
 $Policy = Join-Path $RepoRoot "packaging\sigsum-generic-2025-1.policy"
 
@@ -33,12 +35,18 @@ function Assert-Hash {
 }
 
 if ((Test-Path -LiteralPath $VendorAge -PathType Leaf) -and
+    (Test-Path -LiteralPath $VendorAgeKeygen -PathType Leaf) -and
     (Test-Path -LiteralPath $Verification -PathType Leaf)) {
     try {
         Assert-Hash -Path $VendorAge -Expected $BinarySha256
+        Assert-Hash -Path $VendorAgeKeygen -Expected $KeygenBinarySha256
         $VersionOutput = (& $VendorAge --version | Out-String).Trim()
+        $KeygenVersionOutput = (& $VendorAgeKeygen --version | Out-String).Trim()
         $Metadata = Get-Content -LiteralPath $Verification -Raw | ConvertFrom-Json
-        if ($VersionOutput -eq "v$AgeVersion" -and $Metadata.binary_sha256 -eq $BinarySha256) {
+        if ($VersionOutput -eq "v$AgeVersion" -and
+            $KeygenVersionOutput -eq "v$AgeVersion" -and
+            $Metadata.binary_sha256 -eq $BinarySha256 -and
+            $Metadata.keygen_binary_sha256 -eq $KeygenBinarySha256) {
             Write-Host "Using verified cached age $AgeVersion ($BinarySha256)"
             return
         }
@@ -101,11 +109,14 @@ try {
     $Extracted = Join-Path $FetchRoot "extracted"
     Expand-Archive -LiteralPath $ArchivePath -DestinationPath $Extracted
     $ExtractedAge = Join-Path $Extracted "age\age.exe"
+    $ExtractedAgeKeygen = Join-Path $Extracted "age\age-keygen.exe"
     $ExtractedLicense = Join-Path $Extracted "age\LICENSE"
     Assert-Hash -Path $ExtractedAge -Expected $BinarySha256
+    Assert-Hash -Path $ExtractedAgeKeygen -Expected $KeygenBinarySha256
 
     New-Item -ItemType Directory -Path $VendorRoot -Force | Out-Null
     Copy-Item -LiteralPath $ExtractedAge -Destination $VendorAge -Force
+    Copy-Item -LiteralPath $ExtractedAgeKeygen -Destination $VendorAgeKeygen -Force
     Copy-Item -LiteralPath $ExtractedLicense -Destination (Join-Path $VendorRoot "LICENSE") -Force
     Copy-Item -LiteralPath (Join-Path $RepoRoot "packaging\age-v1.3.1-windows-amd64.json") `
         -Destination $Verification -Force
@@ -113,7 +124,12 @@ try {
     if ($VersionOutput -ne "v$AgeVersion") {
         throw "unexpected age version: $VersionOutput"
     }
+    $KeygenVersionOutput = (& $VendorAgeKeygen --version | Out-String).Trim()
+    if ($KeygenVersionOutput -ne "v$AgeVersion") {
+        throw "unexpected age-keygen version: $KeygenVersionOutput"
+    }
     Write-Host $VersionOutput
+    Write-Host $KeygenVersionOutput
 }
 finally {
     if (Test-Path -LiteralPath $FetchRoot) {

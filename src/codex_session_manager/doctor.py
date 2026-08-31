@@ -15,9 +15,10 @@ from PySide6 import __version__ as pyside_version
 from PySide6.QtCore import QLibraryInfo, qVersion
 
 from codex_session_manager.app_server import connect_and_probe
-from codex_session_manager.backup import EXPECTED_AGE_VERSION, AgeBackend
+from codex_session_manager.backup import EXPECTED_AGE_VERSION, AgeBackend, AgeKeygenBackend
 from codex_session_manager.config import (
     AppPaths,
+    bundled_age_keygen_path,
     bundled_age_path,
     bundled_resources_root,
     standalone_root,
@@ -94,6 +95,44 @@ def _architecture_supported() -> bool:
     return bool(machine)
 
 
+def _age_tool_checks(
+    name: str,
+    executable: Path | None,
+    backend: type[AgeBackend] | type[AgeKeygenBackend],
+    digest_field: str,
+) -> list[Check]:
+    if executable is None:
+        return [Check(name, False, "not found")]
+    checks: list[Check] = []
+    try:
+        version = backend(executable).version()
+        expected = version in {EXPECTED_AGE_VERSION, f"v{EXPECTED_AGE_VERSION}"}
+        checks.append(Check(name, expected, f"{version} at {executable}"))
+    except (OSError, RuntimeError) as exc:
+        checks.append(Check(name, False, str(exc)))
+    resources = bundled_resources_root()
+    verification_path = (
+        resources / "licenses" / "age-verification.json"
+        if resources is not None
+        else executable.parent / "verification.json"
+    )
+    try:
+        verification = json.loads(verification_path.read_text(encoding="utf-8"))
+        expected_sha = verification.get(digest_field)
+        actual_sha, _ = hash_file(executable)
+        integrity_ok = isinstance(expected_sha, str) and actual_sha == expected_sha
+        checks.append(
+            Check(
+                f"{name} integrity",
+                integrity_ok,
+                f"sha256={actual_sha}; metadata={verification_path}",
+            )
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        checks.append(Check(f"{name} integrity", False, str(exc)))
+    return checks
+
+
 def run_doctor(paths: AppPaths, *, probe_app_server: bool = True) -> dict[str, Any]:
     root = standalone_root()
     checks: list[Check] = []
@@ -118,36 +157,15 @@ def run_doctor(paths: AppPaths, *, probe_app_server: bool = True) -> dict[str, A
     checks.append(Check(platform_check_name, platform_plugin.is_file(), str(platform_plugin)))
     image_formats = plugin_path / "imageformats"
     checks.append(Check("Qt image plugins", image_formats.is_dir(), str(image_formats)))
-    age_path = bundled_age_path()
-    if age_path is None:
-        checks.append(Check("age", False, "not found"))
-    else:
-        try:
-            version = AgeBackend(age_path).version()
-            expected = version in {EXPECTED_AGE_VERSION, f"v{EXPECTED_AGE_VERSION}"}
-            checks.append(Check("age", expected, f"{version} at {age_path}"))
-        except (OSError, RuntimeError) as exc:
-            checks.append(Check("age", False, str(exc)))
-        resources = bundled_resources_root()
-        verification_path = (
-            resources / "licenses" / "age-verification.json"
-            if resources is not None
-            else age_path.parent / "verification.json"
+    checks.extend(_age_tool_checks("age", bundled_age_path(), AgeBackend, "binary_sha256"))
+    checks.extend(
+        _age_tool_checks(
+            "age-keygen",
+            bundled_age_keygen_path(),
+            AgeKeygenBackend,
+            "keygen_binary_sha256",
         )
-        try:
-            verification = json.loads(verification_path.read_text(encoding="utf-8"))
-            expected_sha = verification.get("binary_sha256")
-            actual_sha, _ = hash_file(age_path)
-            integrity_ok = isinstance(expected_sha, str) and actual_sha == expected_sha
-            checks.append(
-                Check(
-                    "age integrity",
-                    integrity_ok,
-                    f"sha256={actual_sha}; metadata={verification_path}",
-                )
-            )
-        except (OSError, ValueError, TypeError) as exc:
-            checks.append(Check("age integrity", False, str(exc)))
+    )
     if root:
         checks.append(Check("standalone bundle", True, str(root)))
         checks.append(Check("uv not required", True, "packaged runtime", required=False))

@@ -46,6 +46,7 @@ function Invoke-Checked {
 }
 
 try {
+    & (Join-Path $RepoRoot "scripts\fetch_age_windows_amd64.ps1")
     & (Join-Path $RepoRoot "scripts\check_windows.ps1")
 
     $env:UV_PROJECT_ENVIRONMENT = $BuildEnvironment
@@ -53,8 +54,6 @@ try {
         "sync", "--locked", "--no-default-groups",
         "--group", "runtime", "--group", "gui", "--group", "build", "--compile-bytecode"
     )
-    & (Join-Path $RepoRoot "scripts\fetch_age_windows_amd64.ps1")
-
     $BuildPython = Join-Path $BuildEnvironment "Scripts\python.exe"
     Invoke-Checked -Program $BuildPython -Arguments @(
         "scripts/build_icon_windows.py", "--output", "build/CodexSessionManager.ico"
@@ -104,6 +103,8 @@ try {
     $ResourceSkills = Join-Path $Resources "skills"
     New-Item -ItemType Directory -Path $ResourceBin, $ResourceLicenses, $ResourceSkills -Force | Out-Null
     Copy-Item -LiteralPath "vendor\age\age.exe" -Destination (Join-Path $ResourceBin "age.exe")
+    Copy-Item -LiteralPath "vendor\age\age-keygen.exe" `
+        -Destination (Join-Path $ResourceBin "age-keygen.exe")
     Copy-Item -LiteralPath "vendor\age\LICENSE" -Destination (Join-Path $ResourceLicenses "age-BSD-3-Clause.txt")
     Copy-Item -LiteralPath "vendor\age\verification.json" -Destination (Join-Path $ResourceLicenses "age-verification.json")
     Copy-Item -LiteralPath "THIRD_PARTY_NOTICES.md" -Destination $ResourceLicenses

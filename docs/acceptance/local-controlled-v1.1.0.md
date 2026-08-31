@@ -62,7 +62,7 @@ git -C "$CSM_REPO_ROOT" status --short > "$CSM_EVIDENCE_DIR/worktree-status.txt"
 
 人工确认 doctor 和 schema-audit 的以下字段：
 
-- Python、PySide6、Qt、Qt 插件、age、可写 CSM 私有目录和 App Server 检查通过；
+- Python、PySide6、Qt、Qt 插件、age、age-keygen、可写 CSM 私有目录和 App Server 检查通过；
 - schema 完整；
 - exact_profile_match、conclusion、write_enabled 与实际批准状态一致；
 - unknown 或 incomplete schema 时，记录报告并停止所有 Codex 写入；
@@ -275,10 +275,10 @@ exact_profile_match 为 true、differences 为空时，才可继续真实 Codex 
 
 在打开的原始 CSM GUI 中只做以下动作：
 
-1. 清除所有非 ARCHIVE_THREAD_ID 的选择；
+1. 初始列表不选中任何候选；手工选择且只选择 ARCHIVE_THREAD_ID；
 2. 展开根和 descendants，核对 cwd、状态、标题和数量；
 3. 不选择永久删除候选分组；
-4. 点击“备份并归档”，输入专用 age recipient 和 identity 文件；
+4. 点击“备份并归档”并选择 `.csmbackup` 输出路径；首次使用时确认创建本机托管的单一 age identity，不手工输入 recipient 或选择 identity 文件；
 5. 展开完整 diff/范围，确认备份复验成功后再确认归档；
 6. 保存最终 plan_id、backup manifest SHA-256 和完成结果，不保存正文。
 
@@ -292,6 +292,7 @@ exact_profile_match 为 true、differences 为空时，才可继续真实 Codex 
 
 预期只有该根及其完整安全 descendants 进入 archived 状态，CSM 审计链包含备份、
 最终计划和归档结果。任何备份复验失败、状态/内容/能力/闭包漂移都必须拒绝归档。
+本节的 GUI 托管密钥与 2.2 用于整体 `.codex` 回滚快照的 `age-test-identity` 相互独立；不删除、覆盖或迁移后者。
 
 ### 2.4 真实修改：对话标题、上下文派生和本地记忆文件
 

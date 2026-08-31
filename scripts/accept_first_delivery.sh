@@ -85,6 +85,7 @@ CSM_STABLE_APP=$(CDPATH= cd -- "$(dirname -- "$CSM_STABLE_APP")" && pwd)/$(basen
 test -d "$CSM_APP"
 test -x "$CSM_APP/Contents/MacOS/CodexSessionManager"
 test -x "$CSM_APP/Contents/Resources/bin/age"
+test -x "$CSM_APP/Contents/Resources/bin/age-keygen"
 test -d "$CSM_STABLE_APP"
 test -x "$CSM_STABLE_APP/Contents/MacOS/CodexSessionManager"
 

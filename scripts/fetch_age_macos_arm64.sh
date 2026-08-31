@@ -12,19 +12,26 @@ AGE_PROOF="${AGE_ARCHIVE}.proof"
 AGE_ARCHIVE_SHA="01120ea2cbf0463d4c6bd767f99f3271bbed1cdc8a9aa718a76ba1fe4f01998b"
 AGE_PROOF_SHA="e53545de98acd8fb17aca18ab4940e46edd032418df352b7387be4bc5379a0ac"
 AGE_BINARY_SHA="0e3ea0b1bed2b30aa2dc46eef4e1723864d626c80f37319c20d9b73ca045f56f"
+AGE_KEYGEN_BINARY_SHA="37c4b509d86f233d8dd065f5a905e11d2e1d5549d59445a9bc52da9235a622ad"
 SIGSUM_POLICY_SHA="666d9d0b9ab2e4019769c42eaccd7d6d502a9abac45979bb9b08b7213e4f53e3"
 AGE_BASE_URL="https://github.com/FiloSottile/age/releases/download/v${AGE_VERSION}"
 CSM_REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 CSM_VENDOR_AGE="$CSM_REPO_ROOT/vendor/age/age"
+CSM_VENDOR_AGE_KEYGEN="$CSM_REPO_ROOT/vendor/age/age-keygen"
 CSM_SIGSUM_POLICY="$CSM_REPO_ROOT/packaging/sigsum-generic-2025-1.policy"
 
 # Reuse a previously verified immutable payload.  This keeps repeated local
 # builds and offline packaging runs from downloading the same release again;
 # the pinned binary digest and version remain the trust gate.
-if [ -x "$CSM_VENDOR_AGE" ] && [ -f "$CSM_REPO_ROOT/vendor/age/verification.json" ] \
+if [ -x "$CSM_VENDOR_AGE" ] && [ -x "$CSM_VENDOR_AGE_KEYGEN" ] \
+  && [ -f "$CSM_REPO_ROOT/vendor/age/verification.json" ] \
   && [ "$(shasum -a 256 "$CSM_VENDOR_AGE" | awk '{print $1}')" = "$AGE_BINARY_SHA" ] \
+  && [ "$(shasum -a 256 "$CSM_VENDOR_AGE_KEYGEN" | awk '{print $1}')" = "$AGE_KEYGEN_BINARY_SHA" ] \
   && "$CSM_VENDOR_AGE" --version | grep -q "^v${AGE_VERSION}$" \
+  && "$CSM_VENDOR_AGE_KEYGEN" --version | grep -q "^v${AGE_VERSION}$" \
   && grep -Fq "\"binary_sha256\": \"$AGE_BINARY_SHA\"" \
+    "$CSM_REPO_ROOT/vendor/age/verification.json" \
+  && grep -Fq "\"keygen_binary_sha256\": \"$AGE_KEYGEN_BINARY_SHA\"" \
     "$CSM_REPO_ROOT/vendor/age/verification.json"; then
   echo "Using verified cached age ${AGE_VERSION} (${AGE_BINARY_SHA})"
   exit 0
@@ -56,11 +63,17 @@ GOCACHE="$CSM_FETCH_ROOT/go-cache" \
 mkdir -p "$CSM_FETCH_ROOT/extracted"
 tar -xzf "$CSM_FETCH_ROOT/$AGE_ARCHIVE" -C "$CSM_FETCH_ROOT/extracted"
 test -x "$CSM_FETCH_ROOT/extracted/age/age"
+test -x "$CSM_FETCH_ROOT/extracted/age/age-keygen"
 test -f "$CSM_FETCH_ROOT/extracted/age/LICENSE"
 printf '%s  %s\n' "$AGE_BINARY_SHA" "$CSM_FETCH_ROOT/extracted/age/age" | shasum -a 256 -c -
+printf '%s  %s\n' "$AGE_KEYGEN_BINARY_SHA" \
+  "$CSM_FETCH_ROOT/extracted/age/age-keygen" | shasum -a 256 -c -
 
 mkdir -p "$CSM_REPO_ROOT/vendor/age"
 install -m 0755 "$CSM_FETCH_ROOT/extracted/age/age" "$CSM_REPO_ROOT/vendor/age/age"
+install -m 0755 "$CSM_FETCH_ROOT/extracted/age/age-keygen" \
+  "$CSM_REPO_ROOT/vendor/age/age-keygen"
 install -m 0644 "$CSM_FETCH_ROOT/extracted/age/LICENSE" "$CSM_REPO_ROOT/vendor/age/LICENSE"
 install -m 0644 "$CSM_REPO_ROOT/packaging/age-v1.3.1.json" "$CSM_REPO_ROOT/vendor/age/verification.json"
 "$CSM_REPO_ROOT/vendor/age/age" --version
+"$CSM_REPO_ROOT/vendor/age/age-keygen" --version

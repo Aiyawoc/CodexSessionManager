@@ -57,6 +57,14 @@ class AppPaths:
     def memory_versions_dir(self) -> Path:
         return self.data_dir / "memory-versions"
 
+    @property
+    def keys_dir(self) -> Path:
+        return self.data_dir / "keys"
+
+    @property
+    def managed_backup_identity_file(self) -> Path:
+        return self.keys_dir / "backup.agekey"
+
     def ensure(self) -> None:
         """Create application-owned directories with user-only permissions."""
 
@@ -73,6 +81,7 @@ class AppPaths:
             self.pending_review_requests_dir,
             self.pending_trim_plans_dir,
             self.memory_versions_dir,
+            self.keys_dir,
         ):
             path.mkdir(parents=True, exist_ok=True, mode=0o700)
             with contextlib.suppress(OSError):
@@ -158,6 +167,31 @@ def bundled_age_path(*, allow_development_path: bool = True) -> Path | None:
         system_age = shutil.which("age")
         if system_age:
             return Path(system_age)
+    return None
+
+
+def bundled_age_keygen_path(*, allow_development_path: bool = True) -> Path | None:
+    """Locate the bundled age-keygen executable without downloading anything."""
+
+    resources = bundled_resources_root()
+    if resources:
+        candidate = resources / "bin" / ("age-keygen.exe" if os.name == "nt" else "age-keygen")
+        return candidate if candidate.is_file() else None
+    if allow_development_path:
+        explicit = _override("CSM_AGE_KEYGEN_BIN")
+        if explicit:
+            return explicit
+        repository_candidate = (
+            Path(__file__).parents[2]
+            / "vendor"
+            / "age"
+            / ("age-keygen.exe" if os.name == "nt" else "age-keygen")
+        )
+        if repository_candidate.is_file():
+            return repository_candidate
+        system_age_keygen = shutil.which("age-keygen")
+        if system_age_keygen:
+            return Path(system_age_keygen)
     return None
 
 

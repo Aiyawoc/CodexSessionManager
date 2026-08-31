@@ -180,6 +180,53 @@ def test_archive_apply_checks_backup_and_never_retries_ambiguous_timeout(
     assert client.archive_calls == 1
 
 
+@pytest.mark.parametrize(
+    ("child_archived", "expected_calls"),
+    ((True, ["root", "child"]), (False, ["root"])),
+)
+def test_unarchive_applies_only_archived_closure_members(
+    app_paths, capabilities, snapshot_factory, child_archived, expected_calls
+) -> None:
+    root = snapshot_factory("root", archived=True)
+    child = snapshot_factory("child", parent_id="root", archived=child_archived)
+    snapshots = attach_descendant_closures((root, child))
+    plan = CleanupPlanner().plan_unarchive(snapshots, capabilities)
+
+    class Client:
+        pid = 444
+
+        def __init__(self) -> None:
+            self.archived_ids = {snapshot.id for snapshot in snapshots if snapshot.archived}
+            self.calls: list[str] = []
+
+        def loaded_thread_ids(self):
+            return ()
+
+        def unarchive_thread(self, thread_id: str) -> None:
+            self.calls.append(thread_id)
+            self.archived_ids.remove(thread_id)
+
+    client = Client()
+
+    class Inventory:
+        def list(self, **_kwargs):
+            return tuple(
+                snapshot.model_copy(update={"archived": snapshot.id in client.archived_ids})
+                for snapshot in snapshots
+            )
+
+    with AuditStore(app_paths) as audit:
+        completed = CleanupExecutor(
+            client=client,  # type: ignore[arg-type]
+            inventory=Inventory(),  # type: ignore[arg-type]
+            capabilities=capabilities,
+            audit=audit,
+        ).apply(plan)
+
+    assert completed == ("root",)
+    assert client.calls == expected_calls
+
+
 def test_audit_verification_detects_event_chain_payload_damage(app_paths) -> None:
     with AuditStore(app_paths) as audit:
         audit.append(event_type="first", actor="test", result="succeeded")

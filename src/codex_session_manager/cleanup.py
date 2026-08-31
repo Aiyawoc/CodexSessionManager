@@ -873,7 +873,20 @@ class CleanupExecutor:
                             + ", ".join(sorted(occupied_terminals))
                         )
                     ProcessGuard.assert_no_other_codex_processes(controlled_pid=self.client.pid)
-                self._apply_root(plan, target.root_thread_id)
+                thread_ids = (
+                    tuple(reversed(target.affected_thread_ids))
+                    if plan.action is PlanAction.ARCHIVE
+                    else target.affected_thread_ids
+                    if plan.action is PlanAction.UNARCHIVE
+                    else (target.root_thread_id,)
+                )
+                for thread_id in thread_ids:
+                    if (
+                        plan.action is PlanAction.UNARCHIVE
+                        and not current_by_id[thread_id].archived
+                    ):
+                        continue
+                    self._apply_root(plan, thread_id)
                 completed.append(target.root_thread_id)
             self._verify_result(plan, affected)
             if plan.action is PlanAction.ARCHIVE:
@@ -1015,7 +1028,10 @@ class CleanupExecutor:
             if plan.action is PlanAction.ARCHIVE and not allow_native_archive_transition:
                 if snapshot.archived:
                     raise ValueError(f"thread is already archived: {thread_id}")
-            elif plan.action in {PlanAction.UNARCHIVE, PlanAction.PURGE} and not snapshot.archived:
+            elif not snapshot.archived and (
+                plan.action is PlanAction.PURGE
+                or (plan.action is PlanAction.UNARCHIVE and thread_id == target.root_thread_id)
+            ):
                 raise ValueError(f"thread is no longer archived: {thread_id}")
 
     def _verify_backup_gate(

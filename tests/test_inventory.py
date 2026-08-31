@@ -271,6 +271,55 @@ class _TargetedInventoryClient:
         }
 
 
+class _SummaryLineageClient:
+    def __init__(self, *, parent_id: str | None = "root") -> None:
+        self.reads: list[tuple[str, bool]] = []
+        self.parent_id = parent_id
+
+    def list_threads(self, *, archived: bool = False):
+        if archived:
+            return iter(())
+        return iter(
+            (
+                {"id": "root", "source": "vscode", "status": {"type": "idle"}},
+                {
+                    "id": "child",
+                    "source": {"subAgent": {"other": "reviewer"}},
+                    "parentThreadId": None,
+                    "status": {"type": "idle"},
+                },
+            )
+        )
+
+    def read_thread(self, thread_id: str, *, include_turns: bool = False):
+        self.reads.append((thread_id, include_turns))
+        return {
+            "id": thread_id,
+            "source": {"subAgent": {"other": "reviewer"}},
+            "parentThreadId": self.parent_id,
+            "status": {"type": "idle"},
+            "turns": [],
+        }
+
+
+def test_inventory_repairs_subagent_lineage_missing_from_list_summary() -> None:
+    client = _SummaryLineageClient()
+    snapshots = InventoryService(client).list()  # type: ignore[arg-type]
+    by_id = {snapshot.id: snapshot for snapshot in snapshots}
+
+    assert by_id["child"].parent_id == "root"
+    assert by_id["root"].spawned_descendant_ids == ("child",)
+    assert client.reads == [("child", False)]
+
+
+def test_inventory_rejects_subagent_lineage_missing_from_detail() -> None:
+    client = _SummaryLineageClient(parent_id=None)
+    snapshots = InventoryService(client).list()  # type: ignore[arg-type]
+    child = next(snapshot for snapshot in snapshots if snapshot.id == "child")
+
+    assert not child.mapping_complete
+
+
 def test_targeted_inventory_deep_reads_only_selected_descendant_closure() -> None:
     client = _TargetedInventoryClient()
     snapshots = InventoryService(client).list_for_targets(("root",))  # type: ignore[arg-type]

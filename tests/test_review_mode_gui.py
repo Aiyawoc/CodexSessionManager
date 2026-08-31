@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt
 
 from codex_session_manager.cleanup import CleanupPlanner
 from codex_session_manager.gui import controller as controller_module
-from codex_session_manager.gui.controller import TrimReviewWindow
+from codex_session_manager.gui.controller import ReviewDocument, TrimReviewWindow
 from codex_session_manager.gui.review_mode import ReviewMode
 from codex_session_manager.memory import MemoryAction, MemoryService, MemorySourceRegistry
 from codex_session_manager.models import TrimAction, TrimPlan, TrimSelection
@@ -276,10 +276,10 @@ def test_cleanup_request_is_injected_into_original_project_list(
 
     assert window.review_mode is ReviewMode.CONVERSATION_CLEANUP
     assert window.property("csmReviewRequestId") == request.request_id
-    assert window._selected_task_ids() == (root.id,)
+    assert window._selected_task_ids() == ()
     assert window.ui.taskArchiveButton.isHidden()
     assert window.ui.taskBackupButton.text() == "备份并归档…"
-    assert window.ui.taskBackupButton.isEnabled()
+    assert not window.ui.taskBackupButton.isEnabled()
     assert window.ui.taskDeleteButton.isHidden()
     project_group = next(
         window.ui.taskListView.topLevelItem(index)
@@ -316,6 +316,91 @@ def test_cleanup_request_is_injected_into_original_project_list(
     purge_item = purge_group.child(0)
     assert purge_item.text(0) == "高风险：purge-root"
     assert not bool(purge_item.flags() & Qt.ItemFlag.ItemIsSelectable)
+
+
+def test_cleanup_exact_id_load_adds_and_selects_safe_candidate(
+    qtbot, app_paths, capabilities, snapshot_factory
+) -> None:
+    suggested = snapshot_factory("suggested-root")
+    target = snapshot_factory("exact-root").model_copy(
+        update={"spawned_descendant_ids": ("exact-child",)}
+    )
+    child = snapshot_factory("exact-child", parent_id=target.id)
+    target_summary = target.model_copy(update={"turns": (), "content_complete": False})
+    child_summary = child.model_copy(update={"turns": (), "content_complete": False})
+    initial = CleanupCandidateInventory(
+        capabilities,
+        (suggested, target_summary, child_summary),
+        frozenset(),
+        (),
+        (),
+    )
+    expanded = CleanupCandidateInventory(
+        capabilities,
+        (suggested, target, child),
+        frozenset(),
+        (),
+        (),
+    )
+    calls: list[tuple[str, ...]] = []
+
+    class FakeWorkflows:
+        def inspect_cleanup_candidates(
+            self, root_ids: tuple[str, ...]
+        ) -> CleanupCandidateInventory:
+            calls.append(root_ids)
+            return expanded if target.id in root_ids else initial
+
+    bundle = SuggestionBundle.create(
+        operation=ReviewOperation.CONVERSATION_CLEANUP,
+        source=ReviewSource.MCP,
+        targets=(
+            SuggestionTarget(
+                target_id=suggested.id,
+                source_fingerprint=suggested.management_fingerprint,
+                suggested_action=SuggestedAction.ARCHIVE,
+                reason="LLM 初筛",
+                confidence=0.8,
+            ),
+        ),
+    )
+    bundle_path = SuggestionBundleStore(app_paths).save(bundle)
+    request = ReviewRequest.create(
+        operation=ReviewOperation.CONVERSATION_CLEANUP,
+        source=ReviewSource.MCP,
+        account_root_fingerprint=codex_account_fingerprint(app_paths),
+        target_ids=(suggested.id,),
+        suggestion_bundle_path=bundle_path,
+    )
+    window = TrimReviewWindow(
+        paths=app_paths,
+        load_task_list=False,
+        workflows=FakeWorkflows(),  # type: ignore[arg-type]
+    )
+    qtbot.addWidget(window)
+
+    window.load_review_request(request)
+    qtbot.waitUntil(lambda: calls == [(suggested.id,)], timeout=2000)
+    window.ui.threadIdEdit.setText(target.id)
+    assert window.ui.taskListView.topLevelItemCount() == 0
+
+    document = ReviewDocument(
+        target,
+        capabilities,
+        controller_module.LocalTrimSuggester().suggest(target, capabilities=capabilities),
+    )
+    window._document_loaded(window._generation, document)
+    qtbot.wait(100)
+
+    assert calls == [(suggested.id,), (suggested.id, target.id)]
+    assert window._selected_task_ids() == (target.id,)
+    assert window.ui.taskBackupButton.isEnabled()
+    group = window.ui.taskListView.topLevelItem(0)
+    assert group is not None
+    item = group.child(0)
+    assert item.data(0, Qt.ItemDataRole.UserRole) == target.id
+    assert item.childCount() == 1
+    assert not bool(item.child(0).flags() & Qt.ItemFlag.ItemIsSelectable)
 
 
 def test_cleanup_mode_rebuilds_final_plan_through_sealed_review_request(

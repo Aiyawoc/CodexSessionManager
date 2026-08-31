@@ -12,13 +12,14 @@ from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QFileDialog,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QMessageBox,
     QProgressDialog,
 )
 
-from codex_session_manager.backup import DecryptionSpec, EncryptionSpec
 from codex_session_manager.gui.controller import ReviewDocument, TrimReviewWindow
 from codex_session_manager.gui.i18n import GuiLanguage, compact_number, missing_translation_keys
 from codex_session_manager.gui.prompt import PrecompactPromptDialog
@@ -304,6 +305,24 @@ def test_message_box_message_label_uses_application_text_color(qtbot) -> None:
         application.setStyleSheet(previous_stylesheet)
 
 
+def test_input_dialog_label_uses_application_text_color(qtbot) -> None:
+    application = QApplication.instance()
+    assert application is not None
+    previous_stylesheet = application.styleSheet()
+    application.setStyleSheet(previous_stylesheet + APP_STYLESHEET)
+    input_dialog = QInputDialog()
+    try:
+        qtbot.addWidget(input_dialog)
+        input_dialog.setLabelText("输入确认文本")
+        input_dialog.show()
+        qtbot.wait(10)
+
+        prompt_label = next(label for label in input_dialog.findChildren(QLabel) if label.text())
+        assert prompt_label.palette().color(prompt_label.foregroundRole()).name() == TEXT
+    finally:
+        application.setStyleSheet(previous_stylesheet)
+
+
 def test_shared_task_query_filters_and_supports_multi_selection(
     qtbot, app_paths, snapshot_factory
 ) -> None:
@@ -330,9 +349,7 @@ def test_shared_task_query_filters_and_supports_multi_selection(
     assert window.ui.taskListView.topLevelItem(0).child(0).text(0) == "Alpha conversation"
 
 
-def test_gui_backup_request_uses_recipient_identity_and_expands_descendants(
-    qtbot, app_paths
-) -> None:
+def test_gui_backup_request_uses_managed_identity_and_expands_descendants(qtbot, app_paths) -> None:
     manifest = BackupManifest(
         backup_id="backup-id",
         created_at=utc_now(),
@@ -347,7 +364,7 @@ def test_gui_backup_request_uses_recipient_identity_and_expands_descendants(
         def __init__(self) -> None:
             self.call = None
 
-        def create_backup(self, destination, **kwargs):
+        def create_managed_backup(self, destination, **kwargs):
             self.call = (destination, kwargs)
             return expected
 
@@ -359,13 +376,10 @@ def test_gui_backup_request_uses_recipient_identity_and_expands_descendants(
     )
     qtbot.addWidget(window)
     destination = app_paths.backups_dir / "selected.csmbackup"
-    identity = app_paths.data_dir / "identity.txt"
 
     result = window._create_selected_backup(
         ("root",),
         destination,
-        "age1recipient",
-        identity,
     )
 
     assert result is expected
@@ -373,10 +387,54 @@ def test_gui_backup_request_uses_recipient_identity_and_expands_descendants(
     called_destination, kwargs = workflows.call
     assert called_destination == destination
     assert kwargs["thread_ids"] == ("root",)
-    assert kwargs["encryption"] == EncryptionSpec(mode="age-recipient", recipient="age1recipient")
-    assert kwargs["verification_decryption"] == DecryptionSpec(identity_file=identity)
     assert kwargs["include_raw"] is True
     assert kwargs["expand_descendants"] is True
+
+
+def test_gui_backup_settings_auto_selects_managed_identity(
+    qtbot, app_paths, snapshot_factory, monkeypatch
+) -> None:
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+    root = snapshot_factory("root").model_copy(update={"spawned_descendant_ids": ("child",)})
+    child = snapshot_factory("child", parent_id="root")
+    window._all_task_snapshots = (root, child)
+    destination = app_paths.backups_dir / "selected.csmbackup"
+    questions: list[str] = []
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *_args, **_kwargs: (str(destination), ""),
+    )
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("managed backup must not ask for an identity file")
+        ),
+    )
+    monkeypatch.setattr(
+        QInputDialog,
+        "getText",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("managed backup must not ask for a recipient")
+        ),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda _parent, _title, message, *_args, **_kwargs: (
+            questions.append(message) or QMessageBox.StandardButton.Yes
+        ),
+    )
+
+    settings = window._request_backup_settings(("root",), combined_archive=True)
+
+    assert settings == destination
+    assert len(questions) == 2
+    assert "root" in questions[-1]
+    assert "child" in questions[-1]
 
 
 def test_gui_verified_backup_completion_keeps_archive_as_separate_step(

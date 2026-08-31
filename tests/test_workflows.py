@@ -134,10 +134,7 @@ class _ArchivingWorkflowClient(_WorkflowClient):
 
     def archive_thread(self, thread_id: str) -> None:
         self.archive_calls.append(thread_id)
-        if thread_id == "root":
-            self.archived_ids.update(("root", "child"))
-        else:
-            self.archived_ids.add(thread_id)
+        self.archived_ids.add(thread_id)
 
     def loaded_thread_ids(self) -> tuple[str, ...]:
         return ()
@@ -379,7 +376,7 @@ def test_backup_and_archive_rebuilds_review_plan_and_links_audit(
     assert destination.is_file()
     assert result.backup.covered_thread_ids == ("child", "root")
     assert result.action.completed_ids == ("root",)
-    assert client.archive_calls == ["root"]
+    assert client.archive_calls == ["child", "root"]
     assert client.archived_ids == {"root", "child"}
     inspected = workflows.inspect_cleanup_candidates(("root",))
     assert inspected.verified_backup_ids == frozenset({"root", "child"})

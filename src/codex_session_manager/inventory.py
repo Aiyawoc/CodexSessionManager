@@ -623,16 +623,27 @@ class InventoryService:
         include_turns: bool = False,
     ) -> tuple[ThreadSnapshot, ...]:
         snapshots: list[ThreadSnapshot] = []
-        if include_active:
-            snapshots.extend(
-                normalize_thread(raw, archived=False)
-                for raw in self.client.list_threads(archived=False)
-            )
-        if include_archived:
-            snapshots.extend(
-                normalize_thread(raw, archived=True)
-                for raw in self.client.list_threads(archived=True)
-            )
+        for enabled, archived in (
+            (include_active, False),
+            (include_archived, True),
+        ):
+            if not enabled:
+                continue
+            for raw in self.client.list_threads(archived=archived):
+                summary = normalize_thread(raw, archived=archived)
+                source = raw.get("sourceKind") or raw.get("source")
+                is_subagent = (isinstance(source, str) and source.startswith("subAgent")) or (
+                    isinstance(source, Mapping) and "subAgent" in source
+                )
+                if not include_turns and is_subagent and summary.parent_id is None:
+                    detail = normalize_thread(
+                        self.client.read_thread(summary.id, include_turns=False),
+                        archived=archived,
+                    )
+                    summary = merge_thread_detail(summary, detail)
+                    if summary.parent_id is None and summary.forked_from_id is None:
+                        summary = summary.model_copy(update={"mapping_complete": False})
+                snapshots.append(summary)
         deduplicated = {snapshot.id: snapshot for snapshot in snapshots}
         if include_turns:
             detailed: dict[str, ThreadSnapshot] = {}

@@ -29,17 +29,17 @@ QMainWindow, QDialog, QWidget#centralwidget {{
     color: {TEXT};
 }}
 
-QMessageBox {{
+QMessageBox, QInputDialog {{
     background: {SURFACE};
     color: {TEXT};
 }}
 
-QMessageBox QLabel {{
+QMessageBox QLabel, QInputDialog QLabel {{
     background: transparent;
     color: {TEXT};
 }}
 
-QMessageBox QAbstractButton {{
+QMessageBox QAbstractButton, QInputDialog QAbstractButton {{
     color: {TEXT};
 }}
 

@@ -52,6 +52,8 @@ def test_local_codex_home_snapshot_round_trip_and_no_overwrite(tmp_path: Path) -
     (source / "config.toml").write_text("[test]\nvalue = 'fixture'\n", encoding="utf-8")
     (source / "auth.json").write_text('{"token":"must not be copied"}\n', encoding="utf-8")
     (nested / "rollout.jsonl").write_text('{"id":"fixture"}\n', encoding="utf-8")
+    long_rollout = nested / f"rollout-{'a' * 110}.jsonl"
+    long_rollout.write_text('{"id":"long-name-fixture"}\n', encoding="utf-8")
     (source / "state-link").symlink_to("state")
 
     identity = tmp_path / "age-test-identity"
@@ -125,6 +127,9 @@ def test_local_codex_home_snapshot_round_trip_and_no_overwrite(tmp_path: Path) -
     assert (restored / "config.toml").read_text(encoding="utf-8") == (
         source / "config.toml"
     ).read_text(encoding="utf-8")
+    assert (restored / long_rollout.relative_to(source)).read_text(encoding="utf-8") == (
+        long_rollout.read_text(encoding="utf-8")
+    )
     assert not (restored / "auth.json").exists()
     assert (restored / "state-link").is_symlink()
     assert (restored / "state-link").resolve() == restored / "state"

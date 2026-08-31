@@ -63,7 +63,7 @@ require_tools() {
     fail "this script requires macOS"
   fi
   local tool
-  for tool in find pax tar shasum pgrep mktemp ln; do
+  for tool in find tar shasum pgrep mktemp ln; do
     command -v "$tool" >/dev/null 2>&1 || fail "required command not found: $tool"
   done
 }
@@ -226,7 +226,7 @@ create_snapshot() {
   CSM_TEMP_TO_REMOVE=$(mktemp "$destination_parent/.$destination_name.XXXXXX")
   (
     CDPATH= cd -P -- "$source"
-    snapshot_entries | pax -0 -d -w -x pax -f -
+    snapshot_entries | tar -c --format pax --null --no-recursion -T - -f -
   ) |
     "$CSM_AGE_BIN" --encrypt --recipients-file "$recipients" \
       --output "$CSM_TEMP_TO_REMOVE"

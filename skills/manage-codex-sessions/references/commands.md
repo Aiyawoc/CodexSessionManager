@@ -46,12 +46,11 @@ csm cleanup reconcile PLAN.json --confirm PLAN_ID
 ```text
 csm backup verify OUT.csmbackup --identity IDENTITY_FILE
 csm restore plan OUT.csmbackup --identity IDENTITY_FILE --map-cwd /confirmed/path
-csm restore apply PLAN.json OUT.csmbackup --confirm PLAN_ID --identity IDENTITY_FILE
 csm import chatgpt plan conversations.json --source-account LABEL --map-cwd /confirmed/path
-csm import chatgpt apply PLAN.json conversations.json --confirm PLAN_ID --source-account LABEL
 csm import codex plan /path/to/other/.codex/sessions --source-account LABEL --map-cwd /confirmed/path
-csm import codex apply PLAN.json /path/to/other/.codex/sessions --confirm PLAN_ID --source-account LABEL
 ```
+
+第一版不提供 restore/import 的 Codex 写入 apply 步骤；`restore apply`、`import chatgpt apply` 和 `import codex apply` 均不可用，以上只保留 plan 供审查和生成计划。
 
 口令模式把 `--identity` 替换成布尔 `--passphrase`，并让用户在终端直接操作。
 
@@ -75,13 +74,7 @@ csm audit show
 
 `cleanup`、`context` 和 `memory` 三种 `--page` 值复用原有审查 GUI；记忆模式由左侧第二按钮切换。`pending` 与 `backup_restore` 使用辅助入口。
 
-当前基线不运行 `csm trim apply`：原任务应用不可用，派生投影的真实 round-trip 失败。`thread/inject_items` 返回 `{}`、目标 ID 已创建或方法存在，都不能视为投影写入成功；只有完整 probe 通过并重新批准契约后才可恢复研究。
-
-CLI 仍保留以下兼容命令路径供版本契约检查，但它不是当前可交付写能力，禁止在本基线上运行：
-
-```text
-csm trim apply PLAN.json --confirm PLAN_ID
-```
+第一版不提供 `trim apply` 的 Codex 写入步骤；当前只保留 `trim review`、`trim suggest` 和投影计划。原任务应用不可用，派生投影的真实 round-trip 失败；`thread/inject_items` 返回 `{}`、目标 ID 已创建或方法存在，都不能视为投影写入成功，只有完整 probe 通过并重新批准契约后才可恢复研究。
 
 ## 记忆文件管理
 

@@ -1,3 +1,5 @@
+> **SUPERSEDED IN PART（2026-09-02）**：仅永久删除（purge）及旧精确版本/画像授权归档写入的表述被取代；不可变计划、完整后代闭包、上下文应用延期和来源任务保护决策继续有效。当前边界见 [ADR 0011：版本无关操作契约](0011-version-independent-operation-contracts.md) 与 [当前验收索引](../acceptance/README.md)。
+
 # ADR 0009：延期上下文投影应用，保留审查与计划层
 
 - 状态：Accepted

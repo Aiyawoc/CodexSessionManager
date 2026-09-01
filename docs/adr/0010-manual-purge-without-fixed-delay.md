@@ -1,3 +1,5 @@
+> **SUPERSEDED（2026-09-02）**：本文仅保留为历史证据，不再作为当前执行规则；永久删除（purge）已从第一版退休，旧文中的精确版本/画像授权归档写入仅属历史。当前边界见 [ADR 0011：版本无关操作契约](0011-version-independent-operation-contracts.md) 与 [当前验收索引](../acceptance/README.md)。
+
 # ADR 0010：取消固定归档等待期，保留人工永久删除证据门禁
 
 - 状态：Accepted

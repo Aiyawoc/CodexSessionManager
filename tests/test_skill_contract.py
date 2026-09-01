@@ -18,46 +18,46 @@ CURRENT_CONTRACT_DOCUMENTS = {
     "AGENTS.md": (
         PROJECT_ROOT / "AGENTS.md",
         (
-            "版本无关",
-            "契约敏感",
-            "不是归档授权条件",
-            "归档与反归档由静态、人工复核的最小操作契约逐项评估",
+            "当前边界是版本无关、契约敏感",
+            "第一版任务管理只提供盘点、备份、批量归档和反归档",
+            "当前上下文能力仅限审查与投影计划",
+            "MCP 不暴露归档/反归档执行器",
         ),
     ),
     "README-cn.md": (
         PROJECT_ROOT / "README-cn.md",
         (
-            "版本无关",
-            "契约敏感",
-            "不是归档授权条件",
-            "归档与反归档由静态、人工复核的最小操作契约逐项评估",
+            "当前边界是版本无关、契约敏感",
+            "第一版任务管理只提供盘点、备份、批量归档和反归档；永久删除、重命名、恢复/导入写入、上下文应用和 MCP 写入均不可用。",
+            "当前完全不提供永久删除的资格盘点、计划、GUI、CLI、Skill、MCP 或执行器",
+            "当前 Codex 版本、二进制散列和全量 schema 散列是诊断与计划失效证据，不是归档授权条件。",
         ),
     ),
     "README.md": (
         PROJECT_ROOT / "README.md",
         (
-            "version-independent",
-            "contract-sensitive",
-            "not archive authorization conditions.",
+            "The boundary is version-independent and contract-sensitive",
+            "The first-version task-management write surface is batch archive and unarchive only; permanent deletion, rename, restore/import writes, context application, and MCP writes are unavailable.",
+            "The current Codex version, binary hash, and full schema hash are diagnostic and plan-invalidation evidence, not archive authorization conditions.",
             "archive and unarchive are evaluated against static, human-reviewed minimal operation contracts.",
         ),
     ),
     "acceptance/README.md": (
         PROJECT_ROOT / "docs" / "acceptance" / "README.md",
         (
-            "版本无关",
-            "契约敏感",
-            "不是归档授权条件",
-            "归档与反归档由静态、人工复核的最小操作契约逐项评估",
+            "第一版 Codex 写能力：仅批量归档和反归档",
+            "当前边界是版本无关、契约敏感",
+            "永久删除历史：已从当前能力与二期交付中退役",
+            "当前阶段：继续完成 v1.1 其它功能验收",
         ),
     ),
     "local-controlled-v1.1.0.md": (
         PROJECT_ROOT / "docs" / "acceptance" / "local-controlled-v1.1.0.md",
         (
-            "版本无关",
-            "契约敏感",
-            "不是归档授权条件",
-            "静态、人工复核的最小操作契约",
+            "当前边界是版本无关、契约敏感",
+            "当前 Codex 在线任务仅允许 `archive`/`unarchive` 执行",
+            "不得执行永久删除、重命名或其它当前不可用写入",
+            "MCP 工具恰好十个，没有 archive/unarchive executor",
         ),
     ),
     "context-projection-plan.md": (
@@ -65,37 +65,89 @@ CURRENT_CONTRACT_DOCUMENTS = {
         / "docs"
         / "CodexSessionManager-v1.1-context-projection-and-sensitive-data-plan.md",
         (
-            "版本无关",
-            "契约敏感",
-            "不是归档授权条件",
-            "归档与反归档由静态、人工复核的最小操作契约逐项评估",
+            "当前 Codex 在线任务仅允许 `archive`/`unarchive` 执行",
+            "上下文审查与投影计划可用，但应用不可用",
+            "第一版任务管理只提供盘点、备份、批量归档和反归档，不提供永久删除能力。",
+            "标题修改/重命名不属于第一版范围且当前不可用；只有在 v1.1 之后另行完成产品决策、受支持的操作契约和真实验收",
         ),
     ),
     "phase-two-plan.md": (
         PROJECT_ROOT / "docs" / "CodexSessionManager 二期最终实施计划.md",
         (
-            "版本无关",
-            "契约敏感",
-            "不是归档授权条件",
-            "归档与反归档由静态、人工复核的最小操作契约逐项评估",
+            "二期 D1+ 未启动；未经明确要求不得开始。",
+            "当前 Codex 在线任务仅允许 `archive`/`unarchive` 执行",
+            "标题修改/重命名不属于第一版范围且当前不可用；若在 v1.1 之后仍需研究，必须另行作出产品决策、定义受支持的操作契约并完成真实验收",
+            "本轮不启动 D1+",
         ),
     ),
     "SKILL.md": (
         SKILL_PATH,
         (
-            "版本无关",
-            "契约敏感",
-            "不是归档授权条件",
-            "归档与反归档由静态、人工复核的最小操作契约逐项评估",
+            "当前边界是版本无关、契约敏感",
+            "当前 Codex 版本、二进制散列和全量 schema 散列是诊断与计划失效证据，不是归档授权条件",
+            "永久删除当前不提供资格盘点、计划、GUI、CLI、Skill、MCP 或执行器",
+            "MCP 不提供 archive/unarchive executors",
         ),
     ),
     "safety.md": (
         SKILL_ROOT / "references" / "safety.md",
         (
-            "版本无关",
-            "契约敏感",
-            "不是归档授权条件",
-            "归档与反归档由静态、人工复核的最小操作契约逐项评估",
+            "当前边界是版本无关、契约敏感",
+            "上下文审查与投影计划只保存 CSM 计划，不修改 Codex",
+            "当前 Codex 任务写入仅为 `thread/archive` 和 `thread/unarchive`",
+            "MCP 只读、建议和打开审查 GUI，不提供 archive/unarchive executor",
+        ),
+    ),
+    "commands.md": (
+        COMMANDS_PATH,
+        (
+            "csm cleanup plan/apply",
+            "永久删除、重命名、restore/import 写入和上下文应用不属于当前能力",
+            "第一版不提供 restore/import 的 Codex 写入 apply 步骤",
+            "第一版不提供 `trim apply` 的 Codex 写入步骤",
+        ),
+    ),
+}
+
+HISTORICAL_DOCUMENTS = {
+    "phase-2.5-purge-closure.md": (
+        PROJECT_ROOT / "docs" / "acceptance" / "v1.1.0-phase-2.5-permanent-purge-closure.md",
+        "> **SUPERSEDED（2026-09-02）**",
+        (
+            "../adr/0011-version-independent-operation-contracts.md",
+            "README.md",
+            "永久删除（purge）已从第一版退休",
+            "精确版本/画像授权归档写入仅属历史",
+        ),
+    ),
+    "adr-0010-manual-purge.md": (
+        PROJECT_ROOT / "docs" / "adr" / "0010-manual-purge-without-fixed-delay.md",
+        "> **SUPERSEDED（2026-09-02）**",
+        (
+            "0011-version-independent-operation-contracts.md",
+            "../acceptance/README.md",
+            "永久删除（purge）已从第一版退休",
+            "精确版本/画像授权归档写入仅属历史",
+        ),
+    ),
+    "adr-0002-closures.md": (
+        PROJECT_ROOT / "docs" / "adr" / "0002-plans-closures-and-derived-trimming.md",
+        "> **SUPERSEDED IN PART（2026-09-02）**",
+        (
+            "0011-version-independent-operation-contracts.md",
+            "../acceptance/README.md",
+            "仅永久删除（purge）及旧精确版本/画像授权归档写入的表述被取代",
+            "不可变计划、完整后代闭包、上下文应用延期和来源任务保护决策继续有效",
+        ),
+    ),
+    "adr-0009-context-projection.md": (
+        PROJECT_ROOT / "docs" / "adr" / "0009-defer-context-projection-application.md",
+        "> **SUPERSEDED IN PART（2026-09-02）**",
+        (
+            "0011-version-independent-operation-contracts.md",
+            "../acceptance/README.md",
+            "仅永久删除（purge）及旧精确版本/画像授权归档写入的表述被取代",
+            "不可变计划、完整后代闭包、上下文应用延期和来源任务保护决策继续有效",
         ),
     ),
 }
@@ -107,7 +159,6 @@ CURRENT_DOC_PATHS = (
     PROJECT_ROOT / "docs" / "acceptance" / "first-delivery-v1.1.0.md",
     PROJECT_ROOT / "docs" / "acceptance" / "formal-release-manual-v1.1.0.md",
     PROJECT_ROOT / "docs" / "releases" / "v1.1.0-first-delivery.md",
-    COMMANDS_PATH,
 )
 
 EXPECTED_COMMAND_PATHS = {
@@ -121,14 +172,10 @@ EXPECTED_COMMAND_PATHS = {
     ("backup", "create"),
     ("backup", "verify"),
     ("restore", "plan"),
-    ("restore", "apply"),
     ("import", "chatgpt", "plan"),
-    ("import", "chatgpt", "apply"),
     ("import", "codex", "plan"),
-    ("import", "codex", "apply"),
     ("trim", "review"),
     ("trim", "suggest"),
-    ("trim", "apply"),
     ("hook", "status"),
     ("hook", "install"),
     ("hook", "uninstall"),
@@ -227,6 +274,17 @@ def test_current_docs_use_version_independent_contract_sensitive_boundary() -> N
         assert not missing, (name, missing)
 
 
+def test_historical_documents_have_top_superseded_markers() -> None:
+    for name, (path, expected_prefix, markers) in HISTORICAL_DOCUMENTS.items():
+        text = path.read_text(encoding="utf-8")
+        marker, separator, body = text.partition("\n\n")
+        assert separator, name
+        assert marker.startswith(expected_prefix), name
+        assert body.startswith("# "), name
+        missing = [expected for expected in markers if expected not in marker]
+        assert not missing, (name, missing)
+
+
 def test_current_docs_do_not_use_exact_profile_as_archive_authorization() -> None:
     current_docs = CURRENT_DOC_PATHS
     forbidden = (
@@ -247,27 +305,7 @@ def test_current_docs_do_not_use_exact_profile_as_archive_authorization() -> Non
         assert "永久删除：独立的" not in text
 
 
-def test_current_boundaries_keep_unavailable_writes_and_mcp_read_only() -> None:
-    current_docs = [
-        PROJECT_ROOT / "AGENTS.md",
-        PROJECT_ROOT / "README-cn.md",
-        PROJECT_ROOT / "README.md",
-        PROJECT_ROOT / "docs" / "acceptance" / "README.md",
-        PROJECT_ROOT / "docs" / "acceptance" / "first-delivery-v1.1.0.md",
-        PROJECT_ROOT / "docs" / "acceptance" / "formal-release-manual-v1.1.0.md",
-        PROJECT_ROOT / "docs" / "acceptance" / "local-controlled-v1.1.0.md",
-        PROJECT_ROOT / "docs" / "releases" / "v1.1.0-first-delivery.md",
-        SKILL_PATH,
-        SKILL_ROOT / "references" / "safety.md",
-        SKILL_ROOT / "references" / "commands.md",
-    ]
-    joined = "\n".join(path.read_text(encoding="utf-8") for path in current_docs)
-    assert "第一版任务管理只提供盘点、备份、批量归档和反归档" in joined
-    assert "原任务应用不可用" in joined
-    assert "永久删除" in joined and "不可用" in joined
-    assert "archive/unarchive executors" in joined
-    assert "execute_archive" not in joined
-    assert "execute_unarchive" not in joined
+def test_mcp_has_no_codex_write_executors() -> None:
     mcp_text = (PROJECT_ROOT / "src" / "codex_session_manager" / "mcp_server.py").read_text(
         encoding="utf-8"
     )

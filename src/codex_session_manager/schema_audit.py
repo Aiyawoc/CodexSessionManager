@@ -29,7 +29,7 @@ class SchemaAuditConclusion(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
-_PRIVATE_PATH_START = re.compile(r"(?<![\w])['\"]?(?:[A-Za-z]:[\\/]|/(?=[^/\s,;:()\]\}]+/))")
+_PRIVATE_PATH_START = re.compile(r"(?<![\w])['\"]?(?:[A-Za-z]:[\\/]|/)")
 _HOME_PATH_SUFFIX = re.compile(r"<home>[\\/].*")
 
 

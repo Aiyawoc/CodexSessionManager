@@ -52,3 +52,10 @@ Success: no issues found in 4 source files
 - RED：新增 8 个回归用例，覆盖 POSIX home/绝对路径的未加引号与加引号形式，以及 Windows 斜杠/反斜杠两种形式；基线结果为 8 failed。
 - GREEN：`_portable_probe_error()` 保留路径起点之前的诊断前缀；`<home>` 后缀和私有路径起点后的内容整体替换，安全偏向过度脱敏，继续限制 512 字符并在替换后复验 sealed report。
 - 验证：33 focused tests passed（7 个既有 DeprecationWarning）、Ruff passed、mypy passed；未执行真实账号、bundle、签名、公证或发布验收。
+
+## Round 2 POSIX 路径脱敏修复
+
+- RED：新增 6 个回归场景，覆盖 `/Private Folder/codex` 与 `/Private File` 的引号/非引号形式、首个多路径和多行首路径；基线为 6 failed。
+- 根因：POSIX 路径起点正则错误要求首目录段无空格且必须还有后续 `/`，漏掉含空格首段和单组件绝对路径。
+- GREEN：POSIX 分支改为识别任意非单词边界后的 `/`，命中首个起点后截断后续消息；因此多路径、多行及 URL-like 文本安全偏向过度脱敏，Windows 与 home 路径逻辑保留。
+- 验证：`tests/test_schema_audit.py tests/test_doctor.py tests/test_cli.py tests/test_acceptance_runner.py` 共 39 passed；Ruff 与 `mypy src/codex_session_manager/schema_audit.py` 通过。未执行真实账号、bundle、签名、公证或发布验收。

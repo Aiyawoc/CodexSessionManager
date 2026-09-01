@@ -227,6 +227,50 @@ def test_probe_error_redacts_home_user_and_private_executable_path() -> None:
     report.verify()
 
 
+@pytest.mark.parametrize(
+    ("error", "private_fragments"),
+    (
+        (
+            "schema generation failed while opening /Private Folder/codex and "
+            "/Second Private/secret",
+            ("Private Folder", "codex", "Second Private", "secret"),
+        ),
+        (
+            'schema generation failed while opening "/Private Folder/codex" and '
+            '"/Second Private/secret"',
+            ("Private Folder", "codex", "Second Private", "secret"),
+        ),
+        (
+            "schema generation failed while opening /Private File and /Second File",
+            ("Private File", "Second File"),
+        ),
+        (
+            'schema generation failed while opening "/Private File" and "/Second File"',
+            ("Private File", "Second File"),
+        ),
+        (
+            "schema generation failed\n/Private Folder/codex\nthen /Second Private/secret",
+            ("Private Folder", "codex", "Second Private", "secret"),
+        ),
+        (
+            'schema generation failed\n"/Private File"\nthen "/Second File"',
+            ("Private File", "Second File"),
+        ),
+    ),
+)
+def test_probe_error_redacts_posix_path_start_in_any_message_position(
+    error: str, private_fragments: tuple[str, ...]
+) -> None:
+    prefix = "schema generation failed"
+    report = build_schema_audit_report(_capabilities(available=frozenset(), probe_error=error))
+
+    assert report.probe_error is not None
+    assert report.probe_error.startswith(prefix)
+    for private_fragment in private_fragments:
+        assert private_fragment not in report.probe_error
+    report.verify()
+
+
 def test_schema_audit_rejects_legacy_authorization_fields() -> None:
     report = build_schema_audit_report(_capabilities())
     payload = report.model_dump(mode="json")

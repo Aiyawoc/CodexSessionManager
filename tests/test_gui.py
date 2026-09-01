@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QProgressDialog,
 )
 
+from codex_session_manager.gui import controller as controller_module
 from codex_session_manager.gui.controller import ReviewDocument, TrimReviewWindow
 from codex_session_manager.gui.i18n import GuiLanguage, compact_number, missing_translation_keys
 from codex_session_manager.gui.prompt import PrecompactPromptDialog
@@ -31,9 +32,12 @@ from codex_session_manager.inventory import InventoryFilter
 from codex_session_manager.models import (
     ActionPlan,
     BackupManifest,
+    ContractIssue,
     ItemKind,
+    OperationName,
     PlanAction,
     PlanTarget,
+    ThreadHistoryMode,
     ThreadItemSnapshot,
     ThreadStatus,
     TrimAction,
@@ -68,6 +72,22 @@ def _document(snapshot, capabilities) -> ReviewDocument:
         estimated_tokens_after=snapshot.token_estimate,
     )
     return ReviewDocument(snapshot, capabilities, plan)
+
+
+def _block_operation(capabilities, operation: OperationName, subject: str):
+    blocked = tuple(
+        capability.model_copy(
+            update={
+                "available": False,
+                "runtime_contract_fingerprint": None,
+                "issues": (ContractIssue(code="test_blocked", subject=subject),),
+            }
+        )
+        if capability.operation is operation
+        else capability
+        for capability in capabilities.operation_capabilities
+    )
+    return capabilities.model_copy(update={"operation_capabilities": blocked})
 
 
 def test_review_window_layout_and_stale_worker_result(
@@ -145,6 +165,7 @@ def test_review_window_layout_and_stale_worker_result(
 
     current = _document(snapshot_factory("current"), capabilities)
     window.task_snapshots = (current.snapshot,)
+    window._task_capabilities = capabilities
     window._populate_task_list(window.task_snapshots)
     window._document_loaded(0, current)
     assert window.document == current
@@ -249,7 +270,8 @@ def test_trim_apply_button_requires_safe_inactive_source_status(
         snapshot_factory("not-loaded", status=ThreadStatus.NOT_LOADED), capabilities
     )
     window._document_loaded(0, not_loaded)
-    assert window.ui.applyButton.isEnabled()
+    assert not window.ui.applyButton.isEnabled()
+    assert "当前仅支持审查与投影计划" in window.ui.applyButton.toolTip()
 
     unknown = _document(snapshot_factory("unknown", status=ThreadStatus.UNKNOWN), capabilities)
     window._document_loaded(0, unknown)
@@ -337,11 +359,14 @@ def test_protected_gui_target_refuses_exclusion(
     assert "硬保护" in window.ui.errorLabel.text()
 
 
-def test_task_list_selection_loads_selected_thread_id(qtbot, app_paths, snapshot_factory) -> None:
+def test_task_list_selection_loads_selected_thread_id(
+    qtbot, app_paths, capabilities, snapshot_factory
+) -> None:
     window = TrimReviewWindow(paths=app_paths, load_task_list=False)
     qtbot.addWidget(window)
     snapshot = snapshot_factory("selected-task")
     window.task_snapshots = (snapshot,)
+    window._task_capabilities = capabilities
     window._populate_task_list(window.task_snapshots)
 
     loaded_ids: list[str] = []
@@ -357,23 +382,33 @@ def test_task_list_selection_loads_selected_thread_id(qtbot, app_paths, snapshot
     assert window.ui.threadIdEdit.text() == ""
 
 
-def test_archived_task_does_not_offer_archive_action(qtbot, app_paths, snapshot_factory) -> None:
+def test_archived_task_switches_to_unarchive_and_rejects_mixed_selection(
+    qtbot, app_paths, capabilities, snapshot_factory
+) -> None:
     archived = snapshot_factory("archived", archived=True)
     active = snapshot_factory("active")
     running = snapshot_factory("running", status=ThreadStatus.ACTIVE)
     window = TrimReviewWindow(paths=app_paths, load_task_list=False)
     qtbot.addWidget(window)
     window.task_snapshots = (archived, active, running)
+    window._task_capabilities = capabilities
     window._populate_task_list(window.task_snapshots)
 
     window._select_task_in_list("archived")
-    assert not window.ui.taskArchiveButton.isEnabled()
+    assert window.ui.taskArchiveButton.isEnabled()
+    assert window.ui.taskArchiveButton.text() == "反归档"
     assert not window.ui.taskDeleteButton.isEnabled()
-    assert "上游" in window.ui.taskDeleteButton.toolTip()
 
     window._select_task_in_list("active")
     assert window.ui.taskArchiveButton.isEnabled()
     assert not window.ui.taskDeleteButton.isEnabled()
+
+    group = window.ui.taskListView.topLevelItem(0)
+    assert group is not None
+    for index in range(group.childCount()):
+        if group.child(index).data(0, Qt.ItemDataRole.UserRole) in {"active", "archived"}:
+            group.child(index).setSelected(True)
+    assert not window.ui.taskArchiveButton.isEnabled()
 
     window._select_task_in_list("running")
     assert not window.ui.taskArchiveButton.isEnabled()
@@ -478,13 +513,14 @@ def test_gui_purge_uses_one_exact_confirmation_phrase(
 
 
 def test_shared_task_query_filters_and_supports_multi_selection(
-    qtbot, app_paths, snapshot_factory
+    qtbot, app_paths, capabilities, snapshot_factory
 ) -> None:
     window = TrimReviewWindow(paths=app_paths, load_task_list=False)
     qtbot.addWidget(window)
     first = snapshot_factory("first").model_copy(update={"title": "Alpha conversation"})
     second = snapshot_factory("second").model_copy(update={"title": "Beta conversation"})
     window.task_snapshots = (first, second)
+    window._task_capabilities = capabilities
     window._populate_task_list(window.task_snapshots)
     group = window.ui.taskListView.topLevelItem(0)
     assert group is not None and group.childCount() == 2
@@ -1211,13 +1247,11 @@ def test_plan_persistence_and_trim_apply_run_in_worker(
     assert window.current_plan is not None
 
     events.clear()
+    saved_worker = pool.worker
     window._apply_plan()
     assert events == []
-    assert window._write_in_progress
-    assert pool.worker is not None
-    pool.worker.run()
-    assert events == ["save", "apply"]
     assert not window._write_in_progress
+    assert pool.worker is saved_worker
 
 
 def test_designer_generated_modules_are_reproducible(tmp_path: Path) -> None:
@@ -1240,4 +1274,177 @@ def test_designer_generated_modules_are_reproducible(tmp_path: Path) -> None:
             capture_output=True,
             text=True,
         )
-        assert generated.read_bytes() == committed.read_bytes()
+    assert generated.read_bytes() == committed.read_bytes()
+
+
+def test_task_inventory_keeps_capabilities_for_archive_eligibility(
+    qtbot, app_paths, capabilities, snapshot_factory
+) -> None:
+    snapshot = snapshot_factory("inventory-capability")
+    runtime_capabilities = capabilities.model_copy(
+        update={
+            "codex_version": "0.151.0-alpha.7.2",
+            "codex_binary_sha256": "c" * 64,
+            "schema_sha256": "d" * 64,
+        }
+    )
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+
+    window._task_list_loaded(
+        window._task_generation,
+        InventoryResult(runtime_capabilities, (snapshot,)),
+    )
+    window._select_task_in_list(snapshot.id)
+
+    assert window._task_capabilities is runtime_capabilities
+    assert window.ui.taskArchiveButton.isEnabled()
+
+
+def test_paginated_contract_reason_only_blocks_paginated_task(
+    qtbot, app_paths, capabilities, snapshot_factory
+) -> None:
+    paginated = snapshot_factory(
+        "paginated-contract",
+        history_mode=ThreadHistoryMode.PAGINATED,
+    )
+    legacy = snapshot_factory("legacy-contract")
+    blocked = _block_operation(
+        capabilities,
+        OperationName.HISTORY_PAGINATED,
+        "ThreadTurnsListParams.itemsView must accept full",
+    )
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+    window._task_list_loaded(
+        window._task_generation,
+        InventoryResult(blocked, (paginated, legacy)),
+    )
+
+    window._select_task_in_list(paginated.id)
+    assert not window.ui.taskArchiveButton.isEnabled()
+    assert "itemsView" in window.ui.taskArchiveButton.toolTip()
+
+    window._select_task_in_list(legacy.id)
+    assert window.ui.taskArchiveButton.isEnabled()
+
+
+def test_archive_and_unarchive_contracts_are_independent_in_gui(
+    qtbot, app_paths, capabilities, snapshot_factory
+) -> None:
+    archived = snapshot_factory("archived-contract", archived=True)
+    blocked = _block_operation(capabilities, OperationName.ARCHIVE, "archive response mismatch")
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+    window._task_list_loaded(
+        window._task_generation,
+        InventoryResult(blocked, (archived,)),
+    )
+
+    window._select_task_in_list(archived.id)
+
+    assert window.ui.taskArchiveButton.isEnabled()
+    assert window.ui.taskArchiveButton.text() == "反归档"
+
+
+def test_unknown_history_mode_is_fail_closed_in_gui(
+    qtbot, app_paths, capabilities, snapshot_factory
+) -> None:
+    unknown = snapshot_factory(
+        "unknown-history",
+        history_mode=ThreadHistoryMode.UNKNOWN,
+    )
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+    window._task_list_loaded(
+        window._task_generation,
+        InventoryResult(capabilities, (unknown,)),
+    )
+
+    window._select_task_in_list(unknown.id)
+
+    assert not window.ui.taskArchiveButton.isEnabled()
+    assert "history mode is unknown" in window.ui.taskArchiveButton.toolTip()
+
+
+def test_task_context_menu_has_no_rename_write_action(
+    qtbot, app_paths, capabilities, snapshot_factory, monkeypatch
+) -> None:
+    snapshot = snapshot_factory("context-menu")
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+    window._task_list_loaded(
+        window._task_generation,
+        InventoryResult(capabilities, (snapshot,)),
+    )
+    window.show()
+    qtbot.wait(1)
+    group = window.ui.taskListView.topLevelItem(0)
+    assert group is not None
+    item = group.child(0)
+
+    class FakeSignal:
+        def connect(self, _callback) -> None:
+            pass
+
+    class FakeAction:
+        def __init__(self, text: str) -> None:
+            self._text = text
+            self.triggered = FakeSignal()
+
+        def text(self) -> str:
+            return self._text
+
+        def setEnabled(self, _enabled: bool) -> None:
+            pass
+
+        def setVisible(self, _visible: bool) -> None:
+            pass
+
+        def setToolTip(self, _tooltip: str) -> None:
+            pass
+
+        def setStatusTip(self, _status: str) -> None:
+            pass
+
+    class FakeMenu:
+        def __init__(self, _parent) -> None:
+            self._actions: list[FakeAction] = []
+
+        def addAction(self, text: str) -> FakeAction:
+            action = FakeAction(text)
+            self._actions.append(action)
+            return action
+
+        def addSeparator(self) -> None:
+            pass
+
+        def exec(self, *_args) -> None:
+            pass
+
+    menus: list[FakeMenu] = []
+
+    def make_menu(parent) -> FakeMenu:
+        menu = FakeMenu(parent)
+        menus.append(menu)
+        return menu
+
+    monkeypatch.setattr(controller_module, "QMenu", make_menu)
+
+    window._show_task_context_menu(window.ui.taskListView.visualItemRect(item).center())
+
+    assert menus
+    assert all(action.text() != "更名…" for action in menus[0]._actions)
+
+
+def test_context_plan_can_save_but_context_apply_stays_disabled(
+    qtbot, app_paths, capabilities, snapshot_factory
+) -> None:
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+
+    window._document_loaded(0, _document(snapshot_factory("context-plan"), capabilities))
+
+    assert window.ui.savePlanButton.isEnabled()
+    assert not window.ui.applyButton.isEnabled()
+    assert "当前仅支持审查与投影计划" in window.ui.applyButton.toolTip()

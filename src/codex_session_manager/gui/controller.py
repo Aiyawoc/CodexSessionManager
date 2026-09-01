@@ -26,7 +26,11 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
 )
 
-from codex_session_manager.cleanup import PURGE_CONFIRMATION_PHRASE, PURGE_EXECUTION_ENABLED
+from codex_session_manager.cleanup import (
+    PURGE_CONFIRMATION_PHRASE,
+    PURGE_EXECUTION_ENABLED,
+    selected_root_block_reason,
+)
 from codex_session_manager.cleanup_review import prepare_cleanup_action_plan
 from codex_session_manager.config import AppPaths, get_paths
 from codex_session_manager.gui.i18n import (
@@ -74,9 +78,9 @@ from codex_session_manager.models import (
     SAFE_INACTIVE_STATUSES,
     ActionPlan,
     CapabilityMatrix,
+    PlanAction,
     ThreadItemSnapshot,
     ThreadSnapshot,
-    ThreadStatus,
     TrimAction,
     TrimPlan,
     TrimSelection,
@@ -114,6 +118,7 @@ from codex_session_manager.workflows import (
     BackupArchiveResult,
     BackupCreationResult,
     CleanupCandidateInventory,
+    InventoryResult,
     SensitiveScanBatch,
 )
 
@@ -228,6 +233,7 @@ class TrimReviewWindow(QMainWindow):
         self.timeline_model: TurnTimelineModel | None = None
         self.task_snapshots: tuple[ThreadSnapshot, ...] = ()
         self._all_task_snapshots: tuple[ThreadSnapshot, ...] = ()
+        self._task_capabilities: CapabilityMatrix | None = None
         self._verified_backup_ids: frozenset[str] = frozenset()
         self.selections: dict[str, TrimSelection] = {}
         self.review_state: ReviewState | None = None
@@ -684,6 +690,8 @@ class TrimReviewWindow(QMainWindow):
             self.ui.taskBackupButton.setText(self._t("backup"))
             self.ui.taskBackupButton.setToolTip(self._t("backup_selected", count=1))
             self.ui.taskArchiveButton.setText(self._t("archive"))
+            self.ui.applyButton.setEnabled(False)
+            self.ui.applyButton.setToolTip(self._t("context_apply_unavailable"))
             self.ui.threadIdEdit.setPlaceholderText(self._t("task_search_placeholder"))
             task_header = self.ui.taskListView.headerItem()
             task_header.setText(0, self._t("task_name"))
@@ -829,11 +837,13 @@ class TrimReviewWindow(QMainWindow):
         self.ui.sensitiveScanButton.setChecked(False)
         self.ui.sensitiveScanButton.blockSignals(False)
         generation = self._task_generation
+        self._task_capabilities = None
+        self._update_task_action_state()
         criteria = self._task_inventory_filter()
         self.ui.taskRefreshButton.setEnabled(False)
         self.ui.taskListStatusLabel.setText(self._t("task_list_loading"))
 
-        def load() -> tuple[ThreadSnapshot, ...] | CleanupCandidateInventory:
+        def load() -> InventoryResult | CleanupCandidateInventory:
             if self.review_mode is ReviewMode.CONVERSATION_CLEANUP and (
                 self._cleanup_candidate_ids or self._cleanup_loaded_candidate_ids
             ):
@@ -847,7 +857,7 @@ class TrimReviewWindow(QMainWindow):
                 criteria=criteria,
                 include_active=True,
                 include_archived=True,
-            ).snapshots
+            )
 
         worker = FunctionWorker(load, self._worker_owner)
         worker.signals.result.connect(
@@ -865,6 +875,7 @@ class TrimReviewWindow(QMainWindow):
         if generation != self._task_generation or self._closing:
             return
         if isinstance(value, CleanupCandidateInventory):
+            self._task_capabilities = value.capabilities
             snapshots = value.snapshots
             self._verified_backup_ids = value.verified_backup_ids
             by_id = {snapshot.id: snapshot for snapshot in snapshots}
@@ -877,10 +888,9 @@ class TrimReviewWindow(QMainWindow):
                 dict.fromkeys((*safe_loaded_ids, *value.supplemental_root_ids))
             )
             self._purge_candidate_ids = value.purge_root_ids
-        elif isinstance(value, tuple) and all(
-            isinstance(snapshot, ThreadSnapshot) for snapshot in value
-        ):
-            snapshots = value
+        elif isinstance(value, InventoryResult):
+            self._task_capabilities = value.capabilities
+            snapshots = value.snapshots
             self._verified_backup_ids = frozenset()
             self._supplemental_candidate_ids = ()
             self._purge_candidate_ids = ()
@@ -931,6 +941,8 @@ class TrimReviewWindow(QMainWindow):
     def _task_list_failed(self, generation: int, message: str) -> None:
         if generation != self._task_generation or self._closing:
             return
+        self._task_capabilities = None
+        self._update_task_action_state()
         self.ui.taskListStatusLabel.setText(self._t("task_list_failed_input"))
         self._show_error(self._t("task_list_failed", error=message))
 
@@ -1483,14 +1495,37 @@ class TrimReviewWindow(QMainWindow):
                 values.append(value)
         return tuple(dict.fromkeys(values))
 
-    def _can_archive_selected_tasks(self) -> bool:
+    def _can_archive_selected_tasks(self, *, require_content_complete: bool = True) -> bool:
         selected_ids = self._selected_task_ids()
         if not selected_ids:
             return False
         by_id = {
             snapshot.id: snapshot for snapshot in (self._all_task_snapshots or self.task_snapshots)
         }
-        return all(self._can_archive_root(thread_id, by_id) for thread_id in selected_ids)
+        return all(
+            self._can_archive_root(
+                thread_id,
+                by_id,
+                require_content_complete=require_content_complete,
+            )
+            for thread_id in selected_ids
+        )
+
+    def _can_unarchive_selected_tasks(self, *, require_content_complete: bool = True) -> bool:
+        selected_ids = self._selected_task_ids()
+        if not selected_ids:
+            return False
+        by_id = {
+            snapshot.id: snapshot for snapshot in (self._all_task_snapshots or self.task_snapshots)
+        }
+        return all(
+            self._can_unarchive_root(
+                thread_id,
+                by_id,
+                require_content_complete=require_content_complete,
+            )
+            for thread_id in selected_ids
+        )
 
     def _can_purge_selected_task(self) -> bool:
         if not PURGE_EXECUTION_ENABLED:
@@ -1510,28 +1545,117 @@ class TrimReviewWindow(QMainWindow):
             and snapshot.status in SAFE_INACTIVE_STATUSES
         )
 
-    @staticmethod
     def _can_archive_root(
+        self,
         thread_id: str,
         by_id: dict[str, ThreadSnapshot],
+        *,
+        require_content_complete: bool = True,
     ) -> bool:
-        root = by_id.get(thread_id)
-        if root is None:
+        if self._task_capabilities is None:
             return False
-        closure_ids = (root.id, *root.spawned_descendant_ids)
-        for closure_id in closure_ids:
-            snapshot = by_id.get(closure_id)
-            if (
-                snapshot is None
-                or snapshot.archived
-                or snapshot.pinned
-                or snapshot.ephemeral
-                or snapshot.status not in SAFE_INACTIVE_STATUSES
-                or not snapshot.mapping_complete
-                or not snapshot.content_complete
-            ):
-                return False
-        return True
+        return (
+            selected_root_block_reason(
+                action=PlanAction.ARCHIVE,
+                thread_id=thread_id,
+                snapshots=by_id,
+                capabilities=self._task_capabilities,
+                require_content_complete=require_content_complete,
+            )
+            is None
+        )
+
+    def _can_unarchive_root(
+        self,
+        thread_id: str,
+        by_id: dict[str, ThreadSnapshot],
+        *,
+        require_content_complete: bool = True,
+    ) -> bool:
+        if self._task_capabilities is None:
+            return False
+        return (
+            selected_root_block_reason(
+                action=PlanAction.UNARCHIVE,
+                thread_id=thread_id,
+                snapshots=by_id,
+                capabilities=self._task_capabilities,
+                require_content_complete=require_content_complete,
+            )
+            is None
+        )
+
+    def _selected_archive_action(self) -> PlanAction | None:
+        selected_ids = self._selected_task_ids()
+        if not selected_ids:
+            return None
+        by_id = {
+            snapshot.id: snapshot for snapshot in (self._all_task_snapshots or self.task_snapshots)
+        }
+        selected = [by_id.get(thread_id) for thread_id in selected_ids]
+        if any(snapshot is None for snapshot in selected):
+            return None
+        states = {snapshot.archived for snapshot in selected if snapshot is not None}
+        if states == {True}:
+            return PlanAction.UNARCHIVE
+        if states == {False}:
+            return PlanAction.ARCHIVE
+        return None
+
+    def _selected_archive_block_reason(
+        self,
+        action: PlanAction | None,
+        by_id: dict[str, ThreadSnapshot],
+    ) -> str | None:
+        if action is None:
+            return None
+        checker = (
+            self._unarchive_root_block_reason
+            if action is PlanAction.UNARCHIVE
+            else self._archive_root_block_reason
+        )
+        return next(
+            (
+                reason
+                for thread_id in self._selected_task_ids()
+                if (reason := checker(thread_id, by_id))
+            ),
+            None,
+        )
+
+    def _archive_root_block_reason(
+        self,
+        thread_id: str,
+        by_id: dict[str, ThreadSnapshot],
+        *,
+        require_content_complete: bool = True,
+    ) -> str | None:
+        if self._task_capabilities is None:
+            return self._t("task_capabilities_unavailable")
+        return selected_root_block_reason(
+            action=PlanAction.ARCHIVE,
+            thread_id=thread_id,
+            snapshots=by_id,
+            capabilities=self._task_capabilities,
+            require_content_complete=require_content_complete,
+        )
+
+    def _unarchive_root_block_reason(
+        self,
+        thread_id: str,
+        by_id: dict[str, ThreadSnapshot],
+        *,
+        require_content_complete: bool = True,
+    ) -> str | None:
+        if self._task_capabilities is None:
+            return self._t("task_capabilities_unavailable")
+        return selected_root_block_reason(
+            action=PlanAction.UNARCHIVE,
+            thread_id=thread_id,
+            snapshots=by_id,
+            capabilities=self._task_capabilities,
+            require_content_complete=require_content_complete,
+        )
 
     def _update_task_action_state(self) -> None:
         if self.review_mode is ReviewMode.MEMORY_EDIT:
@@ -1539,14 +1663,39 @@ class TrimReviewWindow(QMainWindow):
             self.ui.taskArchiveButton.setEnabled(False)
             self.ui.taskDeleteButton.setEnabled(False)
             return
-        enabled = bool(self._selected_task_ids()) and not self._task_write_in_progress
+        selected_ids = self._selected_task_ids()
+        enabled = bool(selected_ids) and not self._task_write_in_progress
         if self.review_mode is ReviewMode.CONVERSATION_CLEANUP:
             self.ui.taskBackupButton.setEnabled(enabled and self._can_archive_selected_tasks())
             self.ui.taskArchiveButton.setEnabled(False)
             self.ui.taskDeleteButton.setEnabled(False)
             return
         self.ui.taskBackupButton.setEnabled(enabled)
-        self.ui.taskArchiveButton.setEnabled(enabled and self._can_archive_selected_tasks())
+        action = self._selected_archive_action()
+        by_id = {
+            snapshot.id: snapshot for snapshot in (self._all_task_snapshots or self.task_snapshots)
+        }
+        block_reason = self._selected_archive_block_reason(action, by_id)
+        self.ui.taskArchiveButton.setText(
+            self._t("unarchive") if action is PlanAction.UNARCHIVE else self._t("archive")
+        )
+        self.ui.taskArchiveButton.setEnabled(
+            enabled and action is not None and block_reason is None
+        )
+        self.ui.taskArchiveButton.setToolTip(
+            block_reason
+            or (
+                self._t("archive_mixed_or_unsafe")
+                if selected_ids and action is None
+                else self._t(
+                    "unarchive_selected" if action is PlanAction.UNARCHIVE else "archive_selected",
+                    count=len(selected_ids) or 1,
+                )
+            )
+        )
+        if block_reason:
+            self.ui.taskContextStatusLabel.setText(block_reason)
+            self.ui.taskContextStatusLabel.setToolTip(block_reason)
         self.ui.taskDeleteButton.setEnabled(enabled and self._can_purge_selected_task())
 
     @Slot(QPoint)
@@ -1565,7 +1714,6 @@ class TrimReviewWindow(QMainWindow):
             self.ui.taskListView.setCurrentItem(item)
         selected_count = len(self._selected_task_ids())
         menu = QMenu(self)
-        rename_action = menu.addAction(self._t("rename"))
         copy_action = menu.addAction(self._t("copy_id"))
         menu.addSeparator()
         backup_action = menu.addAction(
@@ -1576,12 +1724,16 @@ class TrimReviewWindow(QMainWindow):
                 count=selected_count,
             )
         )
-        archive_action = menu.addAction(self._t("archive_selected", count=selected_count))
+        action = self._selected_archive_action()
+        archive_action = menu.addAction(
+            self._t(
+                "unarchive_selected" if action is PlanAction.UNARCHIVE else "archive_selected",
+                count=selected_count,
+            )
+        )
         delete_action = menu.addAction(self._t("delete_selected", count=selected_count))
-        rename_action.setVisible(self.review_mode is ReviewMode.CONTEXT_TRIM)
         archive_action.setVisible(self.review_mode is ReviewMode.CONTEXT_TRIM)
         delete_action.setVisible(self.review_mode is ReviewMode.CONTEXT_TRIM)
-        rename_action.setEnabled(not self._task_write_in_progress)
         backup_action.setEnabled(
             not self._task_write_in_progress
             and (
@@ -1589,8 +1741,13 @@ class TrimReviewWindow(QMainWindow):
                 or self._can_archive_selected_tasks()
             )
         )
+        by_id = {
+            snapshot.id: snapshot for snapshot in (self._all_task_snapshots or self.task_snapshots)
+        }
         archive_action.setEnabled(
-            not self._task_write_in_progress and self._can_archive_selected_tasks()
+            not self._task_write_in_progress
+            and action is not None
+            and self._selected_archive_block_reason(action, by_id) is None
         )
         delete_action.setEnabled(
             not self._task_write_in_progress and self._can_purge_selected_task()
@@ -1598,18 +1755,11 @@ class TrimReviewWindow(QMainWindow):
         if not PURGE_EXECUTION_ENABLED:
             delete_action.setToolTip(self._t("purge_blocked_upstream"))
             delete_action.setStatusTip(self._t("purge_blocked_upstream"))
-        rename_action.triggered.connect(lambda _checked=False: self._rename_task(thread_id))
         copy_action.triggered.connect(lambda _checked=False: self._copy_conversation_id(thread_id))
         backup_action.triggered.connect(self._task_backup_clicked)
         archive_action.triggered.connect(self._archive_selected_tasks)
         delete_action.triggered.connect(self._delete_selected_tasks)
         menu.exec(self.ui.taskListView.viewport().mapToGlobal(point))
-
-    def _snapshot_for(self, thread_id: str) -> ThreadSnapshot | None:
-        return next(
-            (snapshot for snapshot in self.task_snapshots if snapshot.id == thread_id),
-            None,
-        )
 
     def _copy_conversation_id(self, thread_id: str) -> None:
         clipboard = QApplication.clipboard()
@@ -1618,48 +1768,6 @@ class TrimReviewWindow(QMainWindow):
             return
         clipboard.setText(thread_id)
         self.ui.taskListStatusLabel.setText(self._t("id_copied"))
-
-    def _rename_task(self, thread_id: str) -> None:
-        snapshot = self._snapshot_for(thread_id)
-        if snapshot is None:
-            self._show_error(self._t("task_stale"))
-            return
-        new_name, accepted = QInputDialog.getText(
-            self,
-            self._t("rename_title"),
-            self._t("rename_prompt"),
-            QLineEdit.EchoMode.Normal,
-            snapshot.title,
-        )
-        if not accepted:
-            return
-        normalized_name = new_name.strip()
-        if not normalized_name:
-            self._show_error(self._t("rename_empty"))
-            return
-        self._start_task_operation(
-            self._t("rename_busy"),
-            lambda: self._apply_task_rename(thread_id, normalized_name),
-            self._task_rename_succeeded,
-        )
-
-    def _apply_task_rename(self, thread_id: str, new_name: str) -> ActionExecutionResult:
-        return self.workflows.rename_thread(thread_id, new_name)
-
-    def _task_rename_succeeded(self, value: object) -> None:
-        if not isinstance(value, ActionExecutionResult):
-            self._show_error(self._t("rename_invalid"))
-            return
-        QMessageBox.information(
-            self,
-            self._t("rename_done_title"),
-            self._t(
-                "rename_done",
-                count=len(value.completed_ids),
-                plan_id=value.plan.plan_id,
-            ),
-        )
-        self.load_task_list()
 
     @Slot()
     def _task_backup_clicked(self) -> None:
@@ -1839,11 +1947,33 @@ class TrimReviewWindow(QMainWindow):
         if not selected_ids:
             self._show_error(self._t("select_task"))
             return
+        action = self._selected_archive_action()
+        by_id = {
+            snapshot.id: snapshot for snapshot in (self._all_task_snapshots or self.task_snapshots)
+        }
+        block_reason = self._selected_archive_block_reason(action, by_id)
+        if action is None:
+            self._show_error(self._t("archive_mixed_or_unsafe"))
+            return
+        if block_reason is not None:
+            self._show_error(block_reason)
+            return
         self._start_task_operation(
-            self._t("archive_plan_busy"),
-            lambda: self._prepare_selected_archive(selected_ids),
+            self._t(
+                "unarchive_plan_busy" if action is PlanAction.UNARCHIVE else "archive_plan_busy"
+            ),
+            lambda: self._prepare_selected_archive_action(action, selected_ids),
             self._confirm_prepared_archive,
         )
+
+    def _prepare_selected_archive_action(
+        self,
+        action: PlanAction,
+        selected_ids: tuple[str, ...],
+    ) -> ActionPlan:
+        if action is PlanAction.UNARCHIVE:
+            return self.workflows.prepare_selected_unarchive(selected_ids).plan
+        return self._prepare_selected_archive(selected_ids)
 
     def _prepare_selected_archive(self, selected_ids: tuple[str, ...]) -> ActionPlan:
         if (
@@ -1866,11 +1996,12 @@ class TrimReviewWindow(QMainWindow):
         affected = {
             thread_id for target in value.targets for thread_id in target.affected_thread_ids
         }
+        unarchive = value.action is PlanAction.UNARCHIVE
         answer = QMessageBox.question(
             self,
-            self._t("archive_confirm_title"),
+            self._t("unarchive_confirm_title" if unarchive else "archive_confirm_title"),
             self._t(
-                "archive_confirm",
+                "unarchive_confirm" if unarchive else "archive_confirm",
                 plan_id=value.plan_id,
                 roots=len(value.targets),
                 affected=len(affected),
@@ -1879,10 +2010,15 @@ class TrimReviewWindow(QMainWindow):
             QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
-            self.ui.taskListStatusLabel.setText(self._t("archive_saved", plan_id=value.plan_id))
+            self.ui.taskListStatusLabel.setText(
+                self._t(
+                    "unarchive_saved" if unarchive else "archive_saved",
+                    plan_id=value.plan_id,
+                )
+            )
             return
         self._start_task_operation(
-            self._t("archive_apply_busy"),
+            self._t("unarchive_apply_busy" if unarchive else "archive_apply_busy"),
             lambda: self._apply_prepared_archive(value),
             self._task_archive_succeeded,
         )
@@ -1894,11 +2030,12 @@ class TrimReviewWindow(QMainWindow):
         if not isinstance(value, ActionExecutionResult):
             self._show_error(self._t("archive_invalid"))
             return
+        unarchive = value.plan.action is PlanAction.UNARCHIVE
         QMessageBox.information(
             self,
-            self._t("archive_done_title"),
+            self._t("unarchive_done_title" if unarchive else "archive_done_title"),
             self._t(
-                "archive_done",
+                "unarchive_done" if unarchive else "archive_done",
                 count=len(value.completed_ids),
                 plan_id=value.plan.plan_id,
             ),
@@ -2384,27 +2521,13 @@ class TrimReviewWindow(QMainWindow):
                 value.snapshot.id,
                 clear=self.review_mode is not ReviewMode.CONVERSATION_CLEANUP,
             )
-        self.ui.savePlanButton.setEnabled(
-            self._context_plan_available()
-            and (not self.hook_mode or value.capabilities.write_enabled)
-        )
-        self.ui.applyButton.setEnabled(
-            self._context_plan_available()
-            and not self.hook_mode
-            and value.snapshot.status in SAFE_INACTIVE_STATUSES
-        )
+        self.ui.savePlanButton.setEnabled(self._context_plan_available())
+        self.ui.applyButton.setEnabled(False)
+        self.ui.applyButton.setToolTip(self._t("context_apply_unavailable"))
         self._update_estimate()
         if value.snapshot.turns:
             first = self.timeline_model.index(0, 0)
             self.ui.timelineView.setCurrentIndex(first)
-        if not value.capabilities.write_enabled:
-            self.ui.applyButton.setEnabled(False)
-            self._show_error(
-                self._t(
-                    "read_only_server",
-                    reason=value.capabilities.read_only_reason or self._t("unknown_protocol"),
-                )
-            )
         if value.external_applied_target_ids or value.external_ignored_target_ids:
             self.ui.taskContextStatusLabel.setText(
                 self._t(
@@ -2951,31 +3074,7 @@ class TrimReviewWindow(QMainWindow):
         if self.review_mode is ReviewMode.MEMORY_EDIT:
             self._apply_memory_plan()
             return
-        try:
-            plan = self._build_plan()
-        except (ValueError, OSError, TrimError) as exc:
-            self._show_error(self._t("plan_validate_failed", error=exc))
-            return
-        if self._write_in_progress:
-            self._show_error(self._t("write_in_progress"))
-            return
-        self._set_busy(True, self._t("apply_busy"))
-        self._write_in_progress = True
-        generation = self._generation
-
-        def apply() -> str:
-            self.workflows.save_plan(plan)
-            return self.workflows.apply_trim(plan)
-
-        worker = FunctionWorker(apply, self._worker_owner)
-        worker.signals.result.connect(
-            lambda value, current=generation: self._apply_succeeded(current, value)
-        )
-        worker.signals.error.connect(
-            lambda message, current=generation: self._apply_failed(current, message)
-        )
-        worker.signals.finished.connect(lambda current=generation: self._apply_finished(current))
-        self.thread_pool.start(worker)
+        self._show_error(self._t("context_apply_unavailable"))
 
     def _build_memory_plan(self) -> tuple[MemoryPlan, str]:
         snapshot = self.memory_snapshot
@@ -3130,19 +3229,10 @@ class TrimReviewWindow(QMainWindow):
             return
         self.ui.suggestButton.setEnabled(not busy and self._context_plan_available())
         self.ui.savePlanButton.setEnabled(
-            not busy
-            and self._context_plan_available()
-            and self.document is not None
-            and (not self.hook_mode or self.document.capabilities.write_enabled)
+            not busy and self._context_plan_available() and self.document is not None
         )
-        self.ui.applyButton.setEnabled(
-            not busy
-            and not self.hook_mode
-            and self._context_plan_available()
-            and self.document is not None
-            and self.document.snapshot.status is not ThreadStatus.ACTIVE
-            and self.document.capabilities.write_enabled
-        )
+        self.ui.applyButton.setEnabled(False)
+        self.ui.applyButton.setToolTip(self._t("context_apply_unavailable"))
         if message:
             self.ui.taskContextStatusLabel.setText(message)
             self.ui.taskContextStatusLabel.setToolTip(message)

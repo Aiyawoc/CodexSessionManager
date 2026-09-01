@@ -2,7 +2,7 @@
 
 本文用于判断 CodexSessionManager `v1.1.0` 是否可以从“首批用户受控测试候选”推进为**正式公开发布版本**。
 
-本文只列出正式发布前必须由维护者、平台测试人员或工作区管理员手动确认的项目。自动化门禁仍是前置条件，但不能替代真实账号、实体 GUI、签名公证、Windows 原生环境和真实 ChatGPT MCP app 验收。
+本文只列出正式发布前必须由维护者、平台测试人员或工作区管理员手动确认的项目。自动化门禁仍是前置条件，但不能替代真实账号、实体 GUI、签名公证和 Windows 原生环境；只有启用可选远程 profile 时，才需要真实 ChatGPT MCP app 验收。
 
 ## 1. 发布判定原则
 
@@ -21,8 +21,8 @@
 - 写操作绕过不可变计划、最终确认或本地安全校验；
 - macOS 签名、公证、staple 或 Gatekeeper 验证失败；
 - Windows 签名无效、发布者身份错误或正式资产仍为 unsigned；
-- MCP 缺少认证、暴露未批准执行器或可读取未授权数据；
-- 真实 ChatGPT 无法稳定发现工具或无法唤起本地最终审查 GUI；
+- （启用可选远程 profile 时）MCP 缺少认证、暴露未批准执行器或可读取未授权数据；
+- （启用可选远程 profile 时）真实 ChatGPT 无法稳定发现工具或无法唤起本地最终审查 GUI；
 - ZIP、校验值、版本、标签或候选提交不一致。
 
 ### 1.2 验收数据边界
@@ -47,13 +47,15 @@
 | FR-02 | macOS 签名、公证与 Gatekeeper | 干净 Apple Silicon macOS | Developer ID、Hardened Runtime、时间戳、公证、staple、Gatekeeper 全部通过 |
 | FR-03 | macOS 真实账号与 Cocoa GUI | 真实 Codex 账号、实体窗口 | 清理、上下文审查/投影计划、PendingPlan、记忆、审计闭环通过且原数据符合预期；2.4 应用执行保持上游阻塞 |
 | FR-04 | Windows x64 签名与原生运行 | 干净 Windows 11 x64 | Authenticode 有效、安装/升级/GUI/回退通过，无未知发布者或签名错误 |
-| FR-05 | ChatGPT MCP app 与固定 Tunnel | 支持完整 MCP 的真实工作区 | 远程连接、认证、工具快照、GUI 唤起、断线恢复和权限隔离通过 |
+| FR-05（可选） | 可选远程 ChatGPT MCP app 与固定 Tunnel | 启用 remote profile 的真实工作区 | 仅在发布范围明确启用 remote profile 时执行；远程连接、认证、工具快照、GUI 唤起、断线恢复和权限隔离通过；默认发布不纳入 GO 条件 |
 | FR-06 | 安装、升级、回退与卸载说明 | macOS + Windows | 旧版本升级不丢数据，失败自动回退，手动回退和卸载路径可执行 |
-| FR-07 | 安全与隐私负向测试 | 本机 + 公网入口 | 伪造、重放、越权、路径逃逸、错误认证和超限请求全部被拒绝 |
+| FR-07 | 安全与隐私负向测试 | 本机（启用 remote profile 时加公网） | 伪造、重放、越权、路径逃逸、错误认证和超限请求全部被拒绝 |
 | FR-08 | 发布资产与来源证明 | 发布平台 | 标签、提交、版本、签名资产、校验值、许可证和文档一致，回下载复验通过 |
 | FR-09 | 发布后冒烟与回滚准备 | 公开下载入口 | 首次下载可用、关键流程正常、旧资产和撤回方案可立即使用 |
 
-任一硬门禁为 `FAIL` 或 `NOT-RUN` 时，最终结论必须为 **NO-GO**。
+默认必需门禁为 FR-01、FR-02、FR-03、FR-04、FR-06、FR-07、FR-08、FR-09；其中任一为 `FAIL` 或 `NOT-RUN` 时，最终结论必须为 **NO-GO**。FR-05 仅在发布范围启用 remote profile 时成为必需门禁；未启用时记录为 `N/A`，不阻塞默认 GO。
+
+默认首次交付和正式发布使用 Codex Desktop 本机 MCP stdio（`csm mcp stdio`）。Streamable HTTP 仅用于可选本机诊断；真实 ChatGPT 与固定 Cloudflare Tunnel 仅属于可选/历史 remote profile。
 
 ## 3. FR-01：候选冻结与自动证据
 
@@ -401,7 +403,7 @@ Get-AuthenticodeSignature .\Install-CodexSessionManager.ps1
 4. 运行安装脚本；
 5. 执行 `csm version`、`csm doctor`、GUI 和 Hook fail-open 冒烟；
 6. 测试中文输入法、键盘导航、缩放、窗口关闭和多选状态；
-7. 使用测试账号走一次上下文派生和只读清理审查；
+7. 使用测试账号完成上下文审查和投影计划检查；上游阻塞期间不创建派生任务；
 8. 使用测试 `MEMORY.md` 走一次修改与恢复；
 9. 从上一公开版本升级，再执行失败回退和手动回退；
 10. 按发布文档执行卸载，确认用户数据默认保留。
@@ -426,17 +428,19 @@ Get-AuthenticodeSignature .\Install-CodexSessionManager.ps1
 - bundle、安装、升级、回退和 SmartScreen 截图/记录；
 - 正式 ZIP SHA-256。
 
-## 7. FR-05：真实 ChatGPT MCP app、固定 Tunnel 与权限
+## 7. FR-05（可选）：真实 ChatGPT MCP app、固定 Tunnel 与权限
+
+本节仅在发布范围明确启用可选 remote profile 时执行。默认发布使用 Codex Desktop 本机 MCP stdio，不以本节的远程 ChatGPT/Tunnel 条件作为 FR-01、FR-02、FR-03、FR-04、FR-06、FR-07、FR-08、FR-09 的 GO 前置条件；未启用时将 FR-05 记为 `N/A`。
 
 ### 7.1 工作区和连接方式
 
-截至 `2026-08-18`，OpenAI 官方说明中，完整 MCP（包括被标记为非只读的动作）面向 ChatGPT Business、Enterprise 和 Edu 的 Web 工作区；Pro 仅支持 read/fetch 权限。CSM 的 `prepare_*` 和 `open_*` 工具会创建本地不可变审查请求或唤起 GUI，因此正式端到端验收必须使用能够批准完整工具面的 Business 或 Enterprise/Edu 工作区。仅在 Pro 上通过只读工具发现，不能替代此门禁。
+截至 `2026-08-18`，若启用该远程 profile，OpenAI 官方说明中的完整 MCP（包括被标记为非只读的动作）面向 ChatGPT Business、Enterprise 和 Edu 的 Web 工作区；Pro 仅支持 read/fetch 权限。CSM 的 `prepare_*` 和 `open_*` 工具会创建本地不可变审查请求或唤起 GUI，因此该 profile 的正式端到端验收必须使用能够批准完整工具面的 Business 或 Enterprise/Edu 工作区。仅在 Pro 上通过只读工具发现，不能替代此可选门禁。
 
-ChatGPT 不能直接连接只监听本机的 MCP server。应使用 OpenAI 支持的 Secure MCP Tunnel，或使用经过安全评审的固定远程 HTTPS 入口。当前项目可使用固定 Cloudflare Tunnel，但不得使用随机 `trycloudflare.com` Quick Tunnel 作为正式发布入口。
+启用该 profile 时，ChatGPT 不能直接连接只监听本机的 MCP server。应使用 OpenAI 支持的 Secure MCP Tunnel，或使用经过安全评审的固定远程 HTTPS 入口。当前项目可使用固定 Cloudflare Tunnel，但不得使用随机 `trycloudflare.com` Quick Tunnel 作为正式发布入口。
 
 ### 7.2 Tunnel 配置验收
 
-CSM 仍只监听回环地址：
+启用该 profile 时，CSM 仍只监听回环地址：
 
 ```bash
 export CSM_MCP_BEARER_TOKEN='本地生成的长随机值'
@@ -475,7 +479,7 @@ curl --fail https://openai-mcp.example.com/healthz
 
 ### 7.3 ChatGPT 工具快照
 
-在 ChatGPT Web 开发者模式中创建 draft app，提供远程 MCP endpoint 和目标认证方式，执行 **Scan Tools**。
+启用该 profile 后，在 ChatGPT Web 开发者模式中创建 draft app，提供远程 MCP endpoint 和目标认证方式，执行 **Scan Tools**。
 
 工具快照必须精确包含：
 
@@ -508,7 +512,7 @@ OpenAI 当前会保存经管理员审核的工具快照。工具名称、参数�
 
 ### 7.4 功能与负向测试
 
-使用测试数据逐项执行：
+启用该 profile 后，使用测试数据逐项执行：
 
 1. 只读盘点；
 2. 生成清理建议并唤起原 GUI；
@@ -602,7 +606,7 @@ OpenAI 当前会保存经管理员审核的工具快照。工具名称、参数�
 | 对话内容或能力漂移 | 计划失效，不写入 |
 | 记忆文件 mtime/inode/大小/指纹变化 | 旧计划失效，不覆盖 |
 | 未登记路径、`..`、符号链接 | 拒绝 |
-| 错误 Bearer、Origin、Content-Type、超限请求 | 返回预期错误码 |
+| （启用 remote profile 时）错误 Bearer、Origin、Content-Type、超限请求 | 返回预期错误码 |
 | MCP 直接请求归档/反归档/裁剪/记忆写入工具 | 工具不存在 |
 | Hook 超时、崩溃、GUI 取消 | fail-open，继续原生压缩 |
 | 写请求超时 | 不自动重试，先复读实际状态 |
@@ -666,11 +670,11 @@ OpenAI 当前会保存经管理员审核的工具快照。工具名称、参数�
 5. 打开 GUI；
 6. 运行只读盘点；
 7. 使用测试数据打开一次上下文、清理和记忆审查；
-8. 从 ChatGPT published app 调用只读盘点和打开演示；
+8. 通过 Codex Desktop 本机 MCP stdio 调用只读盘点和打开演示；若启用 remote profile，再从 ChatGPT published app 调用一次；
 9. 验证公开文档和下载链接；
 10. 检查错误监控和支持渠道中是否出现签名、安装或工具快照问题。
 
-发布负责人必须预先准备：
+若启用 remote profile，发布负责人还必须预先准备：
 
 - 撤回 release 的权限和步骤；
 - 关闭 ChatGPT app 或撤销工作区访问的步骤；
@@ -684,23 +688,23 @@ OpenAI 当前会保存经管理员审核的工具快照。工具名称、参数�
 
 只有同时满足以下条件，才允许标记 **GO**：
 
-- FR-01 至 FR-09 全部完成；
-- 所有硬门禁为 `PASS`；
+- 默认必需门禁 FR-01、FR-02、FR-03、FR-04、FR-06、FR-07、FR-08、FR-09 全部完成；
+- 默认必需门禁均为 `PASS`；启用 remote profile 时，FR-05 也必须为 `PASS`；
 - 没有未关闭的 P0/P1 缺陷；
 - 所有 `PASS-WITH-LIMITATION` 均为非安全关键问题，已进入 release notes，并由发布负责人签字；
 - macOS 公证资产和 Windows 签名资产均从公开下载地址回读验证；
 - 真实 Codex 测试账号、实体 GUI、记忆恢复、PendingPlan、备份归档和审计闭环通过；
-- 真实 ChatGPT 工作区、固定 Tunnel、工具快照、认证和权限验收通过；
+- 默认使用 Codex Desktop 本机 MCP stdio 完成 MCP 门禁；启用 remote profile 时，真实 ChatGPT 工作区、固定 Tunnel、工具快照、认证和权限验收也必须通过；
 - 安装、升级、失败回退、手动回退和卸载说明通过；
 - checksum、版本、tag、commit、许可证和文档一致；
 - 发布后撤回和凭据轮换方案可执行。
 
 以下任一情况必须 **NO-GO**：
 
-- 任何硬门禁未运行或失败；
+- 任何默认必需门禁未运行或失败；启用 remote profile 时 FR-05 未运行或失败；
 - 需要关闭认证、Gatekeeper、SmartScreen 或本地安全校验才能完成测试；
 - 真实数据可能被错误归档、覆盖、泄漏或不可恢复；
-- MCP 工具面、参数或管理员审核快照与候选提交不一致；
+- （启用 remote profile 时）MCP 工具面、参数或管理员审核快照与候选提交不一致；
 - 正式资产仍为 ad-hoc、unsigned、未公证或测试通道；
 - 发布资产回下载后哈希或签名不一致；
 - 无法在规定时间内撤回或轮换凭据。
@@ -718,7 +722,7 @@ Git tag：
 安全复核人：
 macOS 验收人：
 Windows 验收人：
-ChatGPT 工作区管理员：
+（启用 remote profile 时）ChatGPT 工作区管理员：
 ```
 
 ### 13.2 平台和资产
@@ -741,7 +745,9 @@ Release evidence SHA-256：
 Audit chain tail SHA-256：
 ```
 
-### 13.3 MCP 与 ChatGPT
+### 13.3 MCP 与 ChatGPT（可选 remote profile）
+
+默认 remote profile：disabled / enabled（未启用时 FR-05 记为 `N/A`）
 
 ```text
 ChatGPT 计划/工作区类型：
@@ -762,7 +768,7 @@ Tunnel 配置哈希：
 | FR-02 |  |  |  |  |
 | FR-03 |  |  |  |  |
 | FR-04 |  |  |  |  |
-| FR-05 |  |  |  |  |
+| FR-05（可选） |  |  |  |  |
 | FR-06 |  |  |  |  |
 | FR-07 |  |  |  |  |
 | FR-08 |  |  |  |  |

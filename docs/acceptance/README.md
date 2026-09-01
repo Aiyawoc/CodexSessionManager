@@ -31,11 +31,11 @@
 ### 首次交付与正式发布
 
 - [`first-delivery-v1.1.0.md`](first-delivery-v1.1.0.md)：首次交付候选验收。
-- [`formal-release-manual-v1.1.0.md`](formal-release-manual-v1.1.0.md)：正式发布前人工验收；在统一修订前，不得把其中的上下文应用步骤视为当前已验证能力。
+- [`formal-release-manual-v1.1.0.md`](formal-release-manual-v1.1.0.md)：正式发布前人工验收；上下文应用步骤须按 2.4 收口结论执行，当前不可用。
 
 ### 操作契约审查与历史验收
 
-- [`app-server-schema-approval.md`](app-server-schema-approval.md)：App Server 操作契约人工审查流程。
+- [`app-server-schema-approval.md`](app-server-schema-approval.md)：App Server 操作契约人工审查流程（当前归档/反归档能力依据）。
 - [`../adr/0011-version-independent-operation-contracts.md`](../adr/0011-version-independent-operation-contracts.md)：版本无关、契约敏感的五项操作边界；归档/反归档逐项评估。
 - [`app-server-schema-0.151.0-alpha.7.2.md`](app-server-schema-0.151.0-alpha.7.2.md)：历史精确画像证据，仅用于诊断和计划失效。
 - [`macos-real-account-v1.0.1.md`](macos-real-account-v1.0.1.md)：v1.0.1 历史真实账号验收。
@@ -45,7 +45,7 @@
 - [`../CodexSessionManager-v1.1-context-projection-and-sensitive-data-plan.md`](../CodexSessionManager-v1.1-context-projection-and-sensitive-data-plan.md)：v1.1 收口、敏感信息修改优先级和后续研究计划。
 - [`../adr/0009-defer-context-projection-application.md`](../adr/0009-defer-context-projection-application.md)：延期上下文投影应用的架构决策。
 
-在 README、Skill、旧 Runbook 和二期计划完成统一修订前，上述文件以及 2.4 收口记录对以下内容具有优先级：
+当前文件关系如下：2.4 能力状态以 [`v1.1.0-phase-2.4-context-projection-closure.md`](v1.1.0-phase-2.4-context-projection-closure.md) 的收口结论为准；研发顺序以 v1.1 上下文投影与敏感信息计划为准；首次交付与正式发布门禁分别以对应 Runbook 为准；README 与 Skill 反映相同的当前能力边界：
 
 - 2.4 是否通过；
 - 当前是否支持上下文应用；

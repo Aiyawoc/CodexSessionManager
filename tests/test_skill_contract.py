@@ -300,6 +300,59 @@ def test_current_docs_use_version_independent_contract_sensitive_boundary() -> N
         assert not missing, (name, missing)
 
 
+def test_owned_docs_keep_current_operation_contract_wording() -> None:
+    expectations = {
+        "SKILL.md": (
+            SKILL_PATH,
+            (
+                "Codex 逻辑恢复当前仅生成 `plan`，没有 Codex 写入 `apply`",
+                "记忆功能只管理明确登记的本地文件",
+            ),
+        ),
+        "first-delivery-release.md": (
+            PROJECT_ROOT / "docs" / "releases" / "v1.1.0-first-delivery.md",
+            (
+                "首次交付当前门禁是 Codex Desktop 本机 MCP stdio（`csm mcp stdio`）",
+                "Streamable HTTP（`csm mcp serve`）仅用于可选本机诊断",
+                "真实 ChatGPT 与固定 Cloudflare Tunnel 属于可选/历史远程 profile",
+                "历史基线：2026-08-18 本地候选证据",
+                "不代表当前 HEAD 的证据",
+            ),
+        ),
+        "formal-release-manual.md": (
+            PROJECT_ROOT / "docs" / "acceptance" / "formal-release-manual-v1.1.0.md",
+            (
+                "FR-05（可选）",
+                "默认首次交付和正式发布使用 Codex Desktop 本机 MCP stdio",
+                "FR-05 仅在发布范围启用 remote profile 时成为必需门禁",
+                "上游阻塞期间不创建派生任务",
+                "默认必需门禁 FR-01、FR-02、FR-03、FR-04、FR-06、FR-07、FR-08、FR-09",
+            ),
+        ),
+        "context-projection-plan.md": (
+            PROJECT_ROOT
+            / "docs"
+            / "CodexSessionManager-v1.1-context-projection-and-sensitive-data-plan.md",
+            (
+                "2.4 能力状态以 2.4 收口记录为准，研发顺序以本计划为准",
+                "上游阻塞期间不得创建派生任务",
+            ),
+        ),
+        "acceptance-index.md": (
+            PROJECT_ROOT / "docs" / "acceptance" / "README.md",
+            (
+                "App Server 操作契约人工审查流程（当前归档/反归档能力依据）",
+                "当前文件关系如下：2.4 能力状态以",
+                "正式发布前人工验收；上下文应用步骤须按 2.4 收口结论执行，当前不可用",
+            ),
+        ),
+    }
+    for name, (path, markers) in expectations.items():
+        text = path.read_text(encoding="utf-8")
+        missing = [marker for marker in markers if marker not in text]
+        assert not missing, (name, missing)
+
+
 def test_readmes_keep_restore_import_and_trim_commands_plan_only() -> None:
     for name, (path, expected_rows) in README_COMMAND_CONTRACTS.items():
         text = path.read_text(encoding="utf-8")

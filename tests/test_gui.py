@@ -29,8 +29,11 @@ from codex_session_manager.gui.widgets import CenteredHandleSplitter
 from codex_session_manager.hashing import utc_now
 from codex_session_manager.inventory import InventoryFilter
 from codex_session_manager.models import (
+    ActionPlan,
     BackupManifest,
     ItemKind,
+    PlanAction,
+    PlanTarget,
     ThreadItemSnapshot,
     ThreadStatus,
     TrimAction,
@@ -414,6 +417,51 @@ def test_input_dialog_label_uses_application_text_color(qtbot) -> None:
         assert prompt_label.palette().color(prompt_label.foregroundRole()).name() == TEXT
     finally:
         application.setStyleSheet(previous_stylesheet)
+
+
+def test_gui_purge_uses_one_exact_confirmation_phrase(
+    qtbot, app_paths, capabilities, snapshot_factory, monkeypatch
+) -> None:
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+    snapshot = snapshot_factory("root", archived=True)
+    plan = ActionPlan.create(
+        action=PlanAction.PURGE,
+        capability_fingerprint=capabilities.fingerprint,
+        targets=(
+            PlanTarget(
+                root_thread_id=snapshot.id,
+                affected_thread_ids=(snapshot.id,),
+                snapshot_fingerprints={snapshot.id: snapshot.management_fingerprint},
+            ),
+        ),
+    )
+    prompts: list[str] = []
+    applied: list[tuple[ActionPlan, str]] = []
+
+    monkeypatch.setattr(
+        QInputDialog,
+        "getText",
+        lambda _parent, _title, prompt, *_args, **_kwargs: (
+            prompts.append(prompt) or ("确认删除", True)
+        ),
+    )
+    monkeypatch.setattr(
+        window,
+        "_apply_prepared_purge",
+        lambda selected_plan, confirmation: applied.append((selected_plan, confirmation)),
+    )
+    monkeypatch.setattr(
+        window,
+        "_start_task_operation",
+        lambda _message, function, _on_success: function(),
+    )
+
+    window._confirm_prepared_purge(plan)
+
+    assert len(prompts) == 1
+    assert plan.plan_id in prompts[0]
+    assert applied == [(plan, "确认删除")]
 
 
 def test_shared_task_query_filters_and_supports_multi_selection(

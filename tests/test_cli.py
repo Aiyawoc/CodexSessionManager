@@ -63,6 +63,12 @@ def test_cli_exposes_planned_command_surface() -> None:
     assert "--older-than-days" in cleanup_review.stdout
     assert "--request" in cleanup_review.stdout
 
+    purge_apply = runner.invoke(app, ["purge", "apply", "--help"])
+    assert purge_apply.exit_code == 0
+    assert "--confirm" in purge_apply.stdout
+    assert "确认删除" in purge_apply.stdout
+    assert "--permanent-phrase" not in purge_apply.stdout
+
     memory = runner.invoke(app, ["memory", "--help"])
     assert memory.exit_code == 0
     for command in (

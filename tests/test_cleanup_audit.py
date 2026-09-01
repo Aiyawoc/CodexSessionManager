@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from codex_session_manager.app_server import RequestTimeout
+from codex_session_manager.app_server import RequestError, RequestTimeout
 from codex_session_manager.audit import AuditStore
 from codex_session_manager.cleanup import CleanupExecutor, CleanupPlanner
 from codex_session_manager.hashing import hash_file
@@ -389,8 +389,7 @@ def test_explicit_purge_plans_only_selected_eligible_roots(
                 audit=audit,
             ).apply(
                 multi_root_plan,
-                confirmation=multi_root_plan.plan_id,
-                permanent_phrase="PERMANENTLY DELETE CODEX TASKS",
+                confirmation="确认删除",
             )
 
         plan_without_trusted_gate = ActionPlan.create(
@@ -437,6 +436,113 @@ def test_purge_requires_archive_bound_manifest_and_intact_audit_chain(
         audit.connection.commit()
         with pytest.raises(ValueError, match="not bound to its audit event"):
             audit.trusted_archive("root")
+
+
+def test_archived_not_loaded_purge_accepts_terminal_thread_not_found(
+    tmp_path: Path,
+    app_paths,
+    capabilities,
+    snapshot_factory,
+    monkeypatch,
+) -> None:
+    snapshot = snapshot_factory(
+        "root",
+        archived=True,
+        status=ThreadStatus.NOT_LOADED,
+    )
+
+    class Client:
+        pid = 444
+
+        def __init__(self) -> None:
+            self.deleted = False
+            self.background_terminal_checks = 0
+
+        def loaded_thread_ids(self):
+            return ()
+
+        def background_terminals(self, thread_id: str):
+            self.background_terminal_checks += 1
+            raise RequestError(
+                "thread/backgroundTerminals/list",
+                {"code": -32600, "message": f"thread not found: {thread_id}"},
+            )
+
+        def delete_thread(self, thread_id: str) -> None:
+            assert thread_id == snapshot.id
+            self.deleted = True
+
+    client = Client()
+
+    class Inventory:
+        def list(self, **_kwargs):
+            return () if client.deleted else (snapshot,)
+
+    with AuditStore(app_paths) as audit:
+        manifest = _record_backup(audit, snapshot, tmp_path / "root.csmbackup")
+        audit.record_trusted_archive(
+            thread_id=snapshot.id,
+            plan_sha256="p" * 64,
+            manifest_sha256=manifest.manifest_sha256,
+        )
+        plan = CleanupPlanner().plan_selected_purge(
+            (snapshot,), capabilities, audit, (snapshot.id,)
+        )
+        monkeypatch.setattr(
+            "codex_session_manager.cleanup.ProcessGuard.assert_no_other_codex_processes",
+            lambda *, controlled_pid: None,
+        )
+
+        completed = CleanupExecutor(
+            client=client,  # type: ignore[arg-type]
+            inventory=Inventory(),  # type: ignore[arg-type]
+            capabilities=capabilities,
+            audit=audit,
+        ).apply(
+            plan,
+            confirmation="确认删除",
+        )
+
+    assert completed == (snapshot.id,)
+    assert client.deleted
+    assert client.background_terminal_checks == 2
+
+
+@pytest.mark.parametrize(
+    ("status", "error"),
+    (
+        (
+            ThreadStatus.IDLE,
+            {"code": -32600, "message": "thread not found: root"},
+        ),
+        (
+            ThreadStatus.NOT_LOADED,
+            {"code": -32600, "message": "thread not found: another-root"},
+        ),
+        (
+            ThreadStatus.NOT_LOADED,
+            {"code": -32601, "message": "thread not found: root"},
+        ),
+    ),
+)
+def test_purge_does_not_hide_other_terminal_query_failures(
+    app_paths, capabilities, snapshot_factory, status, error
+) -> None:
+    snapshot = snapshot_factory("root", archived=True, status=status)
+
+    class Client:
+        def background_terminals(self, _thread_id: str):
+            raise RequestError("thread/backgroundTerminals/list", error)
+
+    with AuditStore(app_paths) as audit:
+        executor = CleanupExecutor(
+            client=Client(),  # type: ignore[arg-type]
+            inventory=object(),  # type: ignore[arg-type]
+            capabilities=capabilities,
+            audit=audit,
+        )
+        with pytest.raises(RequestError):
+            executor._purge_background_terminals(snapshot)
 
 
 def test_archive_plan_and_apply_reject_ephemeral_or_archive_state_drift(

@@ -76,8 +76,8 @@ class RequestError(AppServerError):
         self.method = method
         self.code = error.get("code")
         self.data = error.get("data")
-        message = str(error.get("message", "unknown App Server error"))
-        super().__init__(f"{method} failed ({self.code}): {message}")
+        self.message = str(error.get("message", "unknown App Server error"))
+        super().__init__(f"{method} failed ({self.code}): {self.message}")
 
 
 class RequestTimeout(AppServerError):

@@ -27,7 +27,7 @@ from codex_session_manager.backup import (
     DecryptionSpec,
     EncryptionSpec,
 )
-from codex_session_manager.cleanup import CleanupPolicy
+from codex_session_manager.cleanup import PURGE_CONFIRMATION_PHRASE, CleanupPolicy
 from codex_session_manager.config import get_paths
 from codex_session_manager.doctor import run_doctor
 from codex_session_manager.hooks import HookInstaller
@@ -841,8 +841,10 @@ def purge_plan() -> None:
 @purge_app.command("apply")
 def purge_apply(
     plan_path: Path,
-    confirm: Annotated[str, typer.Option("--confirm", help="精确 plan_id")],
-    permanent_phrase: Annotated[str, typer.Option("--permanent-phrase")],
+    confirm: Annotated[
+        str,
+        typer.Option("--confirm", help=f"精确输入：{PURGE_CONFIRMATION_PHRASE}"),
+    ],
 ) -> None:
     """人工永久删除；有任何活动 Codex 进程、漂移或证据缺失即停止。"""
 
@@ -852,7 +854,6 @@ def purge_apply(
     result = _workflows().apply_action(
         plan,
         confirmation=confirm,
-        permanent_phrase=permanent_phrase,
     )
     _emit({"deleted_roots": result.completed_ids, "plan_sha256": plan.plan_sha256})
 

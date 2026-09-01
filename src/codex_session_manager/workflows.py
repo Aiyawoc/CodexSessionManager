@@ -461,7 +461,6 @@ class ApplicationWorkflows:
         plan: ActionPlan,
         *,
         confirmation: str,
-        permanent_phrase: str | None = None,
     ) -> ActionExecutionResult:
         with self.session(experimental_api=plan.action is PlanAction.PURGE) as session:
             client, capabilities, inventory = session.services()
@@ -473,7 +472,6 @@ class ApplicationWorkflows:
             ).apply(
                 plan,
                 confirmation=confirmation,
-                permanent_phrase=permanent_phrase,
             )
             return ActionExecutionResult(plan, completed)
 

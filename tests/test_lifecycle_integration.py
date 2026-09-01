@@ -173,8 +173,7 @@ def test_real_age_backup_archive_and_purge_lifecycle(
             audit=audit,
         ).apply(
             purge_plan,
-            confirmation=purge_plan.plan_id,
-            permanent_phrase="PERMANENTLY DELETE CODEX TASKS",
+            confirmation="确认删除",
         )
         assert purged == ("thread-1",)
         assert client.deleted

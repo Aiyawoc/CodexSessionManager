@@ -397,8 +397,7 @@ Codex desktop 只能准备建议：
 - 写入前重新通过 doctor、schema、状态、内容指纹、能力指纹和闭包复核；
 - 没有其它 Codex 进程、loaded thread 或 background terminal；
 - 只选择一个已经确认属于 CSM_PROJECT_ROOT 的根；
-- 人工输入精确 plan_id 和固定短语
-  PERMANENTLY DELETE CODEX TASKS。
+- 计划 ID 只读展示，人工只需单次精确输入“确认删除”。
 
 完成 2.3 并确认归档与审计证据后，从同一个精确根 ID 打开：
 
@@ -411,8 +410,8 @@ Codex desktop 只能准备建议：
 1. 计划只有这个根及其完整 descendants；
 2. CSM 可信归档记录和 archive-bound 当前 backup evidence 均满足；
 3. 对话 cwd 仍为 CSM_PROJECT_ROOT；
-4. 第一处确认输入精确 plan_id；
-5. 第二处确认输入精确短语 PERMANENTLY DELETE CODEX TASKS。
+4. 计划 ID 与单根/完整 descendants 范围只读显示正确；
+5. 唯一一处确认输入精确短语“确认删除”。
 
 删除后重新运行 `threads show` 和 `audit verify`，保存“目标已不存在”的回读结果、purge plan SHA-256、审计事件和备份 manifest SHA-256；不保存正文。该证据层级必须标记为“真实本机 App Server 永久删除”，不能由 fixture、offscreen GUI 或只有计划的结果替代。
 
@@ -421,11 +420,11 @@ Codex desktop 只能准备建议：
 
 #### 2026-09-01 本轮门禁记录
 
-- 实现层证据：`scripts/check.sh`、`scripts/test_source_workflow.sh` 均通过；Ruff、严格 mypy、UI 生成一致性、Skill 校验和 `249 passed` 全部通过。大文本敏感筛查曾重复触发 Qt 心跳超时，定位为 macOS `sleep(0)` 不能保证主线程调度；改为每个 256 KiB 扫描块让出 1 ms 后，完整 GUI 套件和全套测试通过。
+- 实现层证据：`scripts/check.sh`、`scripts/test_source_workflow.sh` 均通过；Ruff、严格 mypy、UI 生成一致性、Skill 校验和 `254 passed` 全部通过。大文本敏感筛查曾重复触发 Qt 心跳超时，定位为 macOS `sleep(0)` 不能保证主线程调度；改为每个 256 KiB 扫描块让出 1 ms 后，完整 GUI 套件和全套测试通过。
 - bundle 层证据：从当前源码 fresh 构建 arm64 standalone；`accept_macos_bundle.sh`、ad-hoc `codesign --verify --deep --strict`、中文空格路径、内置 CPython/PySide6/Qt/age 和 bundled Skill 工作流通过。
-- 真实 App Server 只读证据：显式使用已批准的 Codex CLI `0.142.1`，精确 schema SHA-256 `3e07fdc39d62bb0afaa1509863bebee96178572372a8eeaa7e95bddb2b2f24ad`，`write_enabled=true`。用户指定根 ID 的 SHA-256 为 `e1c2bddbdd61d18259e51fc19192c3d118f8c5e13601e9812a718862eae501af`；当前为 `notLoaded`、未归档、非 pinned，已知闭包包含一个 descendant。
-- 当前阻塞：尚未由用户在实体 GUI 完成“备份并归档”及随后单根“删除”确认，因此本段不能记为真实永久删除通过，也没有发生真实归档或删除写入。
-- 下一步：在 fresh bundle 的 cleanup review 中由用户只选上述根，完成托管 age 备份、完整复验和归档；重启上下文页后再次单选该已归档根，关闭其它 Codex 进程并完成精确 plan ID 与固定短语确认，再回读状态和审计链。
+- 真实 App Server 写入与回读证据：显式使用已批准的 Codex CLI `0.142.1`，精确 schema SHA-256 `3e07fdc39d62bb0afaa1509863bebee96178572372a8eeaa7e95bddb2b2f24ad`，`write_enabled=true`。用户指定根 ID 的 SHA-256 为 `e1c2bddbdd61d18259e51fc19192c3d118f8c5e13601e9812a718862eae501af`；托管 age 备份覆盖根与一个 descendant，manifest SHA-256 为 `96d26c9fb91ee7f6e18a1c9064a2ad5b3320b1f8ef052c1fa9a34454bad5584e`；归档计划 ID 仅记录 SHA-256 `ea3adc42650ff38a4819035efb4466851cfe3caefea1471e5b15b8451b24696c`。归档列表回读确认两者均为 `archived=true`、`notLoaded`、非 pinned。
+- 当前阻塞：首次实体 GUI 永久删除尝试在任何 `thread/delete` 之前被 `thread/backgroundTerminals/list` 的 `-32600 thread not found` 停止；失败后官方 App Server 归档列表再次确认根与 descendant 仍完整归档，故不能记为真实永久删除通过。根因是该接口无法寻址 `archived + notLoaded` 任务；实现仅对同一任务的这一精确错误组合归一化为空终端结果，其它状态、错误码或 ID 继续失败关闭。
+- 下一步：完成本次回归、fresh bundle 验收后，在实体 GUI 中再次单选该已归档根，确认只出现一次输入并精确填写“确认删除”；随后回读目标不存在状态、purge 审计事件和既有备份证据。
 
 ## 3. 回滚和收尾
 

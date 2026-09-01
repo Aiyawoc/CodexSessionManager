@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
 )
 
+from codex_session_manager.cleanup import PURGE_CONFIRMATION_PHRASE
 from codex_session_manager.cleanup_review import prepare_cleanup_action_plan
 from codex_session_manager.config import AppPaths, get_paths
 from codex_session_manager.gui.i18n import (
@@ -1941,21 +1942,12 @@ class TrimReviewWindow(QMainWindow):
         if not accepted:
             self.ui.taskListStatusLabel.setText(self._t("purge_saved", plan_id=value.plan_id))
             return
-        phrase, accepted = QInputDialog.getText(
-            self,
-            self._t("purge_final_title"),
-            self._t("purge_final_prompt"),
-            QLineEdit.EchoMode.Normal,
-        )
-        if not accepted:
-            self.ui.taskListStatusLabel.setText(self._t("purge_saved", plan_id=value.plan_id))
-            return
-        if confirmation != value.plan_id or phrase != "PERMANENTLY DELETE CODEX TASKS":
+        if confirmation != PURGE_CONFIRMATION_PHRASE:
             self._show_error(self._t("purge_mismatch"))
             return
         self._start_task_operation(
             self._t("purge_apply_busy"),
-            lambda: self._apply_prepared_purge(value, confirmation, phrase),
+            lambda: self._apply_prepared_purge(value, confirmation),
             self._task_purge_succeeded,
         )
 
@@ -1963,12 +1955,10 @@ class TrimReviewWindow(QMainWindow):
         self,
         plan: ActionPlan,
         confirmation: str,
-        permanent_phrase: str,
     ) -> ActionExecutionResult:
         return self.workflows.apply_action(
             plan,
             confirmation=confirmation,
-            permanent_phrase=permanent_phrase,
         )
 
     def _task_purge_succeeded(self, value: object) -> None:

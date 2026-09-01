@@ -32,7 +32,7 @@ csm backup create OUT.csmbackup --thread TASK_ID --recipient AGE_RECIPIENT --ide
 csm cleanup apply PLAN.json --confirm PLAN_ID
 csm cleanup reconcile PLAN.json --confirm PLAN_ID
 csm purge plan
-csm purge apply PLAN.json --confirm PLAN_ID --permanent-phrase "PERMANENTLY DELETE CODEX TASKS"
+csm purge apply PLAN.json --confirm "确认删除"
 ```
 
 固定归档等待期已取消，但永久删除仍不能由备份直接解锁。目标必须先由 CSM 完成归档并留下绑定同一备份 manifest 的可信归档证据。GUI 中一次只单选一个已归档根并由用户主动点击“删除”；MCP、Hook 和自动清理没有永久删除入口。

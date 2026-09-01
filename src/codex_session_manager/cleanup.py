@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Final
 
-from codex_session_manager.app_server import RequestTimeout, SubprocessAppServer
+from codex_session_manager.app_server import RequestError, RequestTimeout, SubprocessAppServer
 from codex_session_manager.audit import AuditStore
 from codex_session_manager.hashing import utc_now
 from codex_session_manager.inventory import (
@@ -27,10 +27,12 @@ from codex_session_manager.models import (
     PlanTarget,
     RiskLevel,
     ThreadSnapshot,
+    ThreadStatus,
 )
 
 DEFAULT_STALE_DAYS: Final[int] = 90
 MAX_ROOTS: Final[int] = 100
+PURGE_CONFIRMATION_PHRASE: Final[str] = "确认删除"
 
 
 @dataclass(frozen=True, slots=True)
@@ -767,7 +769,6 @@ class CleanupExecutor:
         plan: ActionPlan,
         *,
         confirmation: str | None = None,
-        permanent_phrase: str | None = None,
     ) -> tuple[str, ...]:
         plan.verify()
         if plan.action is PlanAction.PURGE and len(plan.targets) != 1:
@@ -791,15 +792,26 @@ class CleanupExecutor:
         if plan.action in {PlanAction.ARCHIVE, PlanAction.PURGE}:
             self._verify_backup_gate(plan, current_by_id)
         if plan.action is PlanAction.PURGE:
-            if confirmation != plan.plan_id:
-                raise ValueError("purge confirmation must equal the exact plan id")
-            if permanent_phrase != "PERMANENTLY DELETE CODEX TASKS":
-                raise ValueError("missing permanent-deletion confirmation phrase")
-            self._verify_purge_gate(plan, plan.targets, current_by_id)
             self.capabilities.require_write("thread/backgroundTerminals/list")
             self.capabilities.require_write("thread/loaded/list")
+        affected = {
+            thread_id for target in plan.targets for thread_id in target.affected_thread_ids
+        }
+        loaded = (
+            set(self.client.loaded_thread_ids())
+            if self.capabilities.supports("thread/loaded/list")
+            else set()
+        )
+        if loaded & affected:
+            raise RuntimeError(
+                f"affected threads are loaded: {', '.join(sorted(loaded & affected))}"
+            )
+        if plan.action is PlanAction.PURGE:
+            if confirmation != PURGE_CONFIRMATION_PHRASE:
+                raise ValueError("missing permanent-deletion confirmation phrase")
+            self._verify_purge_gate(plan, plan.targets, current_by_id)
             background_processes = {
-                thread_id: self.client.background_terminals(thread_id)
+                thread_id: self._purge_background_terminals(current_by_id[thread_id])
                 for target in plan.targets
                 for thread_id in target.affected_thread_ids
             }
@@ -814,18 +826,6 @@ class CleanupExecutor:
                     + ", ".join(sorted(occupied))
                 )
             ProcessGuard.assert_no_other_codex_processes(controlled_pid=self.client.pid)
-        loaded = (
-            set(self.client.loaded_thread_ids())
-            if self.capabilities.supports("thread/loaded/list")
-            else set()
-        )
-        affected = {
-            thread_id for target in plan.targets for thread_id in target.affected_thread_ids
-        }
-        if loaded & affected:
-            raise RuntimeError(
-                f"affected threads are loaded: {', '.join(sorted(loaded & affected))}"
-            )
 
         self.audit.begin_operation(plan_sha256=plan.plan_sha256, action=plan.action.value)
         completed: list[str] = []
@@ -855,7 +855,7 @@ class CleanupExecutor:
                             "affected threads became loaded: " + ", ".join(sorted(occupied_loaded))
                         )
                     fresh_terminals = {
-                        thread_id: self.client.background_terminals(thread_id)
+                        thread_id: self._purge_background_terminals(fresh_by_id[thread_id])
                         for thread_id in target.affected_thread_ids
                     }
                     occupied_terminals = {
@@ -909,6 +909,24 @@ class CleanupExecutor:
                 target_ids=tuple(sorted(affected)),
                 details={"error": str(exc), "completed_roots": completed},
             )
+            raise
+
+    def _purge_background_terminals(
+        self, snapshot: ThreadSnapshot
+    ) -> tuple[dict[str, object], ...]:
+        """Normalize the App Server's archived/notLoaded not-found sentinel."""
+
+        try:
+            return self.client.background_terminals(snapshot.id)
+        except RequestError as exc:
+            if (
+                snapshot.archived
+                and snapshot.status is ThreadStatus.NOT_LOADED
+                and exc.method == "thread/backgroundTerminals/list"
+                and exc.code == -32600
+                and exc.message == f"thread not found: {snapshot.id}"
+            ):
+                return ()
             raise
 
     def reconcile_native_archive(self, plan: ActionPlan) -> tuple[str, ...]:

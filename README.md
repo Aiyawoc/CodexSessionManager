@@ -449,7 +449,7 @@ No for standalone builds. The macOS and Windows bundles carry their own runtime 
 <details>
 <summary><strong>Why is the conversation list empty or App Server unavailable?</strong></summary>
 
-Run `csm doctor`. A macOS standalone build checks explicit `CSM_CODEX_BIN`, then `CODEX_CLI_PATH`, the current PATH, and finally the CLI bundled inside ChatGPT.app. If it is still unavailable, set `CSM_CODEX_BIN` to its absolute path. Also verify that `CODEX_HOME` and `CSM_CODEX_HOME` refer to the intended, identical data root.
+Run `csm doctor`. Codex CLI discovery order is `CSM_CODEX_BIN`, a valid `CODEX_CLI_PATH`, ChatGPT.app's bundled Codex, PATH's `codex`, and finally the literal `codex` fallback. Also verify that `CODEX_HOME` and `CSM_CODEX_HOME` refer to the intended, identical data root.
 </details>
 
 <details>

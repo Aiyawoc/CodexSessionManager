@@ -450,7 +450,7 @@ scripts/package_macos_release.sh --app dist/CodexSessionManager.app
 <details>
 <summary><strong>为什么对话列表为空，或 App Server 不可用？</strong></summary>
 
-先运行 `csm doctor`。macOS standalone 会优先使用显式的 `CSM_CODEX_BIN`，其次检查 `CODEX_CLI_PATH`、当前 PATH，最后尝试 ChatGPT.app 内置 CLI；若仍不可用，可用 `CSM_CODEX_BIN` 指向其绝对路径。同时检查 `CODEX_HOME` 与 `CSM_CODEX_HOME` 是否指向预期且相同的数据根。
+先运行 `csm doctor`。Codex CLI 发现顺序固定为 `CSM_CODEX_BIN`、有效的 `CODEX_CLI_PATH`、ChatGPT.app 内置 Codex、PATH 中的 `codex`，最后回退到字面命令 `codex`。同时检查 `CODEX_HOME` 与 `CSM_CODEX_HOME` 是否指向预期且相同的数据根。
 </details>
 
 <details>

@@ -46,6 +46,16 @@ def test_codex_binary_uses_bundled_codex_when_desktop_path_is_empty(monkeypatch)
     assert codex_binary() == bundled
 
 
+def test_codex_binary_prefers_bundled_codex_over_path_codex(monkeypatch) -> None:
+    bundled = "/Applications/ChatGPT.app/Contents/Resources/codex"
+    monkeypatch.delenv("CSM_CODEX_BIN", raising=False)
+    monkeypatch.delenv("CODEX_CLI_PATH", raising=False)
+    monkeypatch.setattr(config.shutil, "which", lambda _name: "/usr/local/bin/codex")
+    monkeypatch.setattr(config, "_bundled_codex_binary", lambda: bundled, raising=False)
+
+    assert codex_binary() == bundled
+
+
 def test_private_atomic_create_never_replaces_existing_evidence(tmp_path: Path) -> None:
     destination = tmp_path / "evidence.json"
     private_atomic_create(destination, b"first")

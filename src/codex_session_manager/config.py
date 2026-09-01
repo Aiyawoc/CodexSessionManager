@@ -215,10 +215,11 @@ def codex_binary() -> str:
         candidate = Path(cli_path).expanduser()
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return str(candidate)
+    bundled = _bundled_codex_binary()
+    if bundled:
+        return bundled
     discovered = shutil.which("codex")
-    if discovered:
-        return discovered
-    return _bundled_codex_binary() or "codex"
+    return discovered or "codex"
 
 
 def stable_installed_app() -> Path:

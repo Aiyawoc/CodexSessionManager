@@ -167,6 +167,106 @@ class _RecordingClient(SubprocessAppServer):
         raise AssertionError(method)
 
 
+class _ThreadHistoryClient(_RecordingClient):
+    def __init__(self, read_result, turn_results=()):
+        super().__init__()
+        self.read_result = read_result
+        self.turn_results = list(turn_results)
+
+    def request(self, method, params=None, *, timeout=None):
+        self.requests.append((method, params or {}))
+        if method == "thread/read":
+            return self.read_result
+        if method == "thread/turns/list":
+            return self.turn_results.pop(0)
+        raise AssertionError(method)
+
+
+@pytest.mark.parametrize("terminal_cursor", [None, ""])
+def test_thread_read_pages_full_history_for_paginated_threads(terminal_cursor) -> None:
+    client = _ThreadHistoryClient(
+        {
+            "thread": {
+                "id": "paginated",
+                "historyMode": "paginated",
+                "turns": [{"id": "partial", "items": []}],
+            }
+        },
+        [
+            {"data": [{"id": "turn-1", "items": []}], "nextCursor": "page-2"},
+            {"data": [{"id": "turn-2", "items": []}], "nextCursor": terminal_cursor},
+        ],
+    )
+
+    thread = client.read_thread("paginated", include_turns=True)
+
+    assert [turn["id"] for turn in thread["turns"]] == ["turn-1", "turn-2"]
+    turn_requests = [params for method, params in client.requests if method == "thread/turns/list"]
+    assert turn_requests == [
+        {
+            "threadId": "paginated",
+            "limit": 100,
+            "sortDirection": "asc",
+            "itemsView": "full",
+        },
+        {
+            "threadId": "paginated",
+            "limit": 100,
+            "sortDirection": "asc",
+            "itemsView": "full",
+            "cursor": "page-2",
+        },
+    ]
+
+
+@pytest.mark.parametrize(
+    ("include_turns", "history_mode"),
+    [(False, "paginated"), (True, "legacy")],
+)
+def test_thread_read_skips_turn_listing_when_not_needed(include_turns, history_mode) -> None:
+    client = _ThreadHistoryClient(
+        {
+            "thread": {
+                "id": "thread",
+                "historyMode": history_mode,
+                "turns": [{"id": "original", "items": []}],
+            }
+        },
+        [{"data": [], "nextCursor": None}],
+    )
+
+    thread = client.read_thread("thread", include_turns=include_turns)
+
+    assert [turn["id"] for turn in thread["turns"]] == ["original"]
+    assert all(method != "thread/turns/list" for method, _params in client.requests)
+
+
+@pytest.mark.parametrize(
+    ("turn_results", "message"),
+    [
+        ([None], "result must be an object"),
+        ([{"data": {}}], "data must be an array"),
+        ([{"data": [None], "nextCursor": None}], "non-object turn"),
+        ([{"data": [], "nextCursor": 1}], "cursor must be a string or null"),
+        (
+            [
+                {"data": [], "nextCursor": "same"},
+                {"data": [], "nextCursor": "same"},
+            ],
+            "repeated cursor",
+        ),
+    ],
+)
+def test_thread_read_rejects_malformed_paginated_turn_pages(turn_results, message) -> None:
+    client = _ThreadHistoryClient(
+        {"thread": {"id": "paginated", "historyMode": "paginated", "turns": []}},
+        turn_results,
+    )
+
+    with pytest.raises(ProtocolError, match=message):
+        client.read_thread("paginated", include_turns=True)
+
+
 def test_inventory_requests_all_source_kinds_and_start_uses_schema_fields() -> None:
     client = _RecordingClient()
     assert tuple(client.list_threads()) == ()

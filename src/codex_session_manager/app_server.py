@@ -364,7 +364,43 @@ class SubprocessAppServer:
         thread = dict(result["thread"])
         if thread.get("id") != thread_id:
             raise ProtocolError("thread/read returned a different thread id")
+        if include_turns and thread.get("historyMode") == "paginated":
+            thread["turns"] = self._list_full_turns(thread_id)
         return thread
+
+    def _list_full_turns(self, thread_id: str) -> list[dict[str, Any]]:
+        """Load all paginated turns in the server-provided order."""
+        turns: list[dict[str, Any]] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        while True:
+            params: dict[str, Any] = {
+                "threadId": thread_id,
+                "limit": 100,
+                "sortDirection": "asc",
+                "itemsView": "full",
+            }
+            if cursor is not None:
+                params["cursor"] = cursor
+            result = self.request("thread/turns/list", params)
+            if not isinstance(result, dict):
+                raise ProtocolError("thread/turns/list result must be an object")
+            data = result.get("data")
+            if not isinstance(data, list):
+                raise ProtocolError("thread/turns/list data must be an array")
+            if any(not isinstance(turn, dict) for turn in data):
+                raise ProtocolError("thread/turns/list data contains a non-object turn")
+            turns.extend(data)
+
+            next_cursor = result.get("nextCursor")
+            if next_cursor is None or next_cursor == "":
+                return turns
+            if not isinstance(next_cursor, str):
+                raise ProtocolError("thread/turns/list cursor must be a string or null")
+            if next_cursor in seen_cursors:
+                raise ProtocolError("thread/turns/list returned a repeated cursor")
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
 
     def loaded_thread_ids(self) -> tuple[str, ...]:
         result = self.request("thread/loaded/list", {})

@@ -227,6 +227,19 @@ EXPECTED_COMMAND_PATHS = {
     ("memory", "restore", "apply"),
 }
 
+DEFAULT_MCP_TOOLS = (
+    "inspect_conversation_inventory",
+    "prepare_cleanup_suggestions",
+    "open_cleanup_review",
+    "prepare_context_suggestions",
+    "open_context_review",
+    "inspect_memory_source",
+    "prepare_memory_suggestions",
+    "open_memory_review",
+    "get_pending_review_status",
+    "open_review_demo",
+)
+
 
 def _documented_command_paths() -> set[tuple[str, ...]]:
     paths: set[tuple[str, ...]] = set()
@@ -291,6 +304,38 @@ def test_skill_keeps_stable_entry_and_fail_closed_safety_contract() -> None:
     assert "禁止直接修改 Codex JSONL、SQLite、认证或配置" in skill_text
     assert "只执行读取、备份、验证和计划" in skill_text
     assert "只有用户明确要求启用时才运行 `csm hook install --yes`" in skill_text
+
+
+def test_mcp_default_entry_and_formal_release_tool_surface_are_explicit() -> None:
+    skill_text = SKILL_PATH.read_text(encoding="utf-8")
+    commands_text = COMMANDS_PATH.read_text(encoding="utf-8")
+    formal_text = (
+        PROJECT_ROOT / "docs" / "acceptance" / "formal-release-manual-v1.1.0.md"
+    ).read_text(encoding="utf-8")
+
+    for text in (skill_text, commands_text):
+        assert "Codex Desktop 当前和默认 MCP 入口是 `csm mcp stdio`" in text
+        assert "`csm mcp serve` 仅用于可选本机 HTTP 诊断" in text
+
+    default_section = formal_text.split("### 5.7 Codex Desktop 本机 MCP 精确工具面", 1)[1].split(
+        "## 6. FR-04", 1
+    )[0]
+    assert "`csm mcp stdio`" in default_section
+    assert "恰好" in default_section
+    assert all(tool in default_section for tool in DEFAULT_MCP_TOOLS)
+    assert all(
+        forbidden in default_section
+        for forbidden in (
+            "archive/unarchive executor",
+            "trim/context apply",
+            "memory write",
+            "permanent delete/purge",
+            "restore/import writes",
+            "other Codex task-write tools",
+        )
+    )
+    assert "不能只以 MCP 冒烟" in default_section
+    assert "默认必须使用 Codex Desktop 本机 MCP stdio 完成 5.7 的精确工具面校验" in formal_text
 
 
 def test_current_docs_use_version_independent_contract_sensitive_boundary() -> None:

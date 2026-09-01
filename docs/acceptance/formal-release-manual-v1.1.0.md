@@ -334,11 +334,42 @@ csm memory review SOURCE_ID
 
 - 脱敏后的测试对话 ID 哈希和测试记忆 source ID 哈希；
 - schema report SHA-256；
+- Codex Desktop 本机 MCP stdio 工具快照和工具定义哈希；
 - TrimPlan、MemoryPlan、备份 manifest 和 audit chain tail SHA-256；
 - 来源不变、投影计划、派生 round-trip 的阻塞结论、归档状态和恢复结果的核对记录；
 - GUI 尺寸、系统缩放、macOS 版本和测试日期。
 
 不得在证据中记录对话正文、记忆正文、identity 内容、Bearer token 或用户私有绝对路径。
+
+### 5.7 Codex Desktop 本机 MCP 精确工具面
+
+默认正式发布路径必须在 Codex Desktop 中启动并验证本机 stdio 入口 `csm mcp stdio`。不能只以 MCP 冒烟或任一工具调用成功作为通过；必须记录实际工具快照和工具定义哈希，并确认工具面**恰好**包含以下十个工具：
+
+```text
+inspect_conversation_inventory
+prepare_cleanup_suggestions
+open_cleanup_review
+prepare_context_suggestions
+open_context_review
+inspect_memory_source
+prepare_memory_suggestions
+open_memory_review
+get_pending_review_status
+open_review_demo
+```
+
+同时必须确认不存在 archive/unarchive executor、trim/context apply、memory write、permanent delete/purge、restore/import writes，或任何其它 Codex task-write tool，例如：
+
+```text
+archive/unarchive executor
+execute_trim / apply_trim / apply_context
+apply_memory_edit
+delete_* / purge_*
+restore_apply / import_*_apply
+other Codex task-write tools
+```
+
+以上是默认 MCP 门禁；FR-05 仍是独立的可选 remote profile，不能用远程工具快照替代本机 stdio 精确工具面校验。缺少工具、出现额外或被禁止的工具、无法取得快照，或只完成冒烟而未完成精确校验，均为 **NO-GO**。
 
 ## 6. FR-04：Windows x64 签名、安装和实体 GUI
 
@@ -670,7 +701,7 @@ OpenAI 当前会保存经管理员审核的工具快照。工具名称、参数�
 5. 打开 GUI；
 6. 运行只读盘点；
 7. 使用测试数据打开一次上下文、清理和记忆审查；
-8. 通过 Codex Desktop 本机 MCP stdio 调用只读盘点和打开演示；若启用 remote profile，再从 ChatGPT published app 调用一次；
+8. 通过 Codex Desktop 本机 MCP stdio 完成 5.7 的精确工具面校验；若启用 remote profile，再从 ChatGPT published app 调用一次；
 9. 验证公开文档和下载链接；
 10. 检查错误监控和支持渠道中是否出现签名、安装或工具快照问题。
 
@@ -694,7 +725,7 @@ OpenAI 当前会保存经管理员审核的工具快照。工具名称、参数�
 - 所有 `PASS-WITH-LIMITATION` 均为非安全关键问题，已进入 release notes，并由发布负责人签字；
 - macOS 公证资产和 Windows 签名资产均从公开下载地址回读验证；
 - 真实 Codex 测试账号、实体 GUI、记忆恢复、PendingPlan、备份归档和审计闭环通过；
-- 默认使用 Codex Desktop 本机 MCP stdio 完成 MCP 门禁；启用 remote profile 时，真实 ChatGPT 工作区、固定 Tunnel、工具快照、认证和权限验收也必须通过；
+- 默认必须使用 Codex Desktop 本机 MCP stdio 完成 5.7 的精确工具面校验（恰好十个允许工具且没有 Codex task-write 工具）；启用 remote profile 时，真实 ChatGPT 工作区、固定 Tunnel、工具快照、认证和权限验收也必须通过；
 - 安装、升级、失败回退、手动回退和卸载说明通过；
 - checksum、版本、tag、commit、许可证和文档一致；
 - 发布后撤回和凭据轮换方案可执行。
@@ -704,6 +735,7 @@ OpenAI 当前会保存经管理员审核的工具快照。工具名称、参数�
 - 任何默认必需门禁未运行或失败；启用 remote profile 时 FR-05 未运行或失败；
 - 需要关闭认证、Gatekeeper、SmartScreen 或本地安全校验才能完成测试；
 - 真实数据可能被错误归档、覆盖、泄漏或不可恢复；
+- 默认 `csm mcp stdio` 未完成 5.7 的精确工具面校验、工具面缺失/多余/含禁用工具，或仅完成 MCP 冒烟；
 - （启用 remote profile 时）MCP 工具面、参数或管理员审核快照与候选提交不一致；
 - 正式资产仍为 ad-hoc、unsigned、未公证或测试通道；
 - 发布资产回下载后哈希或签名不一致；

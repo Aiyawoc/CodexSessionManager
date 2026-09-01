@@ -71,6 +71,7 @@ PreCompact Hook 只保存计划。在 GUI 关闭、崩溃、启动失败或超�
 
 ## MCP 编排边界
 
+- Codex Desktop 当前和默认 MCP 入口是 `csm mcp stdio`。`csm mcp serve` 仅用于可选本机 HTTP 诊断，不得替代默认 stdio 门禁；启用 FR-05 remote profile 时，另按正式发布手册的远程 HTTP/Tunnel 流程验收。
 - `csm mcp serve` 只注册盘点、建议准备、打开审查、状态查询和只读演示工具。
 - 允许调用：`inspect_conversation_inventory`、`prepare_cleanup_suggestions`、`open_cleanup_review`、`prepare_context_suggestions`、`open_context_review`、`inspect_memory_source`、`prepare_memory_suggestions`、`open_memory_review`、`get_pending_review_status`、`open_review_demo`。
 - MCP 不提供 archive/unarchive executors、永久删除、`execute_trim`、`apply_memory_edit` 或任何绕过 GUI 最终确认的写入工具。

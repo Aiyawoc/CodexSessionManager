@@ -18,6 +18,8 @@ Hook 中禁止使用 `uv`、`.venv`、网络下载或依赖安装。
 
 ## 盘点、备份与归档管理
 
+Codex Desktop 当前和默认 MCP 入口是 `csm mcp stdio`。`csm mcp serve` 仅用于可选本机 HTTP 诊断，不得替代默认 stdio 门禁；启用 FR-05 remote profile 时，另按正式发布手册的远程 HTTP/Tunnel 流程验收。
+
 ```text
 csm threads list --project /absolute/project/path
 csm threads list --older-than-days 90

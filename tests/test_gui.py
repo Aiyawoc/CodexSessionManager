@@ -11,6 +11,7 @@ from PySide6.QtCore import QModelIndex, QPoint, Qt, QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QAbstractSpinBox,
     QApplication,
     QFileDialog,
     QHeaderView,
@@ -165,6 +166,24 @@ def test_task_age_filter_defaults_to_all_and_builds_csm_criteria(qtbot, app_path
     assert age_spin.suffix() == ""
     assert age_spin.specialValueText() == ""
     assert window.ui.olderThanDaysUnitLabel.text() == "天"
+    assert age_spin.buttonSymbols() is QAbstractSpinBox.ButtonSymbols.NoButtons
+    assert age_spin.alignment() & Qt.AlignmentFlag.AlignHCenter
+    assert age_spin.minimumWidth() == 84
+    assert age_spin.maximumWidth() == 84
+    assert "QLabel#olderThanDaysLabel, QLabel#olderThanDaysUnitLabel" in APP_STYLESHEET
+
+    window.show()
+    QApplication.processEvents()
+    assert age_spin.height() == 36
+    assert window.ui.olderThanDaysUnitLabel.isVisible()
+    assert (
+        window.ui.olderThanDaysUnitLabel.geometry().left()
+        > window.ui.olderThanDaysSpinBox.geometry().right()
+    )
+    assert (
+        window.ui.olderThanDaysUnitLabel.geometry().right()
+        <= window.ui.taskPane.contentsRect().right()
+    )
 
     build_filter = getattr(window, "_task_inventory_filter", None)
     assert callable(build_filter)

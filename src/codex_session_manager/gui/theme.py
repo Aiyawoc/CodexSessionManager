@@ -168,6 +168,11 @@ QLabel#reasonLabel, QLabel#summaryLabel {{
     font-weight: 500;
 }}
 
+QLabel#olderThanDaysLabel, QLabel#olderThanDaysUnitLabel {{
+    color: {TEXT_MUTED};
+    font-weight: 500;
+}}
+
 QLabel#taskContextStatusLabel {{
     font-size: 11px;
 }}

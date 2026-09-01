@@ -15,13 +15,13 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QFont, QFontDatabase, QGradient, QIcon,
     QImage, QKeySequence, QLinearGradient, QPainter,
     QPalette, QPixmap, QRadialGradient, QTransform)
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox,
-    QFrame, QGridLayout, QHBoxLayout, QHeaderView,
-    QLabel, QLineEdit, QMainWindow, QPlainTextEdit,
-    QProgressBar, QPushButton, QSizePolicy, QSpacerItem,
-    QSpinBox, QTextBrowser, QTextEdit, QToolButton,
-    QTreeView, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
-    QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QAbstractSpinBox, QApplication, QCheckBox,
+    QComboBox, QFrame, QGridLayout, QHBoxLayout,
+    QHeaderView, QLabel, QLineEdit, QMainWindow,
+    QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy,
+    QSpacerItem, QSpinBox, QTextBrowser, QTextEdit,
+    QToolButton, QTreeView, QTreeWidget, QTreeWidgetItem,
+    QVBoxLayout, QWidget)
 
 from codex_session_manager.gui.widgets import CenteredHandleSplitter
 
@@ -192,15 +192,20 @@ class Ui_MainWindow(object):
         self.taskFilterLayout = QHBoxLayout()
         self.taskFilterLayout.setSpacing(6)
         self.taskFilterLayout.setObjectName(u"taskFilterLayout")
+        self.taskFilterLayout.setAlignment(Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter)
         self.olderThanDaysLabel = QLabel(self.taskPane)
         self.olderThanDaysLabel.setObjectName(u"olderThanDaysLabel")
+        self.olderThanDaysLabel.setMinimumSize(QSize(0, 36))
+        self.olderThanDaysLabel.setAlignment(Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter)
 
         self.taskFilterLayout.addWidget(self.olderThanDaysLabel)
 
         self.olderThanDaysSpinBox = QSpinBox(self.taskPane)
         self.olderThanDaysSpinBox.setObjectName(u"olderThanDaysSpinBox")
-        self.olderThanDaysSpinBox.setMinimumSize(QSize(64, 32))
-        self.olderThanDaysSpinBox.setMaximumSize(QSize(76, 32))
+        self.olderThanDaysSpinBox.setMinimumSize(QSize(84, 36))
+        self.olderThanDaysSpinBox.setMaximumSize(QSize(84, 36))
+        self.olderThanDaysSpinBox.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.olderThanDaysSpinBox.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         self.olderThanDaysSpinBox.setMinimum(0)
         self.olderThanDaysSpinBox.setMaximum(36500)
         self.olderThanDaysSpinBox.setValue(0)
@@ -209,6 +214,8 @@ class Ui_MainWindow(object):
 
         self.olderThanDaysUnitLabel = QLabel(self.taskPane)
         self.olderThanDaysUnitLabel.setObjectName(u"olderThanDaysUnitLabel")
+        self.olderThanDaysUnitLabel.setMinimumSize(QSize(18, 36))
+        self.olderThanDaysUnitLabel.setAlignment(Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter)
 
         self.taskFilterLayout.addWidget(self.olderThanDaysUnitLabel)
 

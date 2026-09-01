@@ -46,3 +46,56 @@ commit 短 SHA：由最终提交后在任务回执中记录。
 - 已确认 `src/` 不再引用 `protocol_profiles`、`TRUSTED_WRITE_SCHEMAS`、`AUDITED_PROTOCOL_PROFILES`；版本号、二进制 SHA 和全量 schema SHA 仍作为 CapabilityMatrix 诊断/指纹输入，不参与操作可用判定。
 - 当前本机 Codex `0.142.1` 实际 probe：inventory、legacy、archive、unarchive 可用；分页方法仅实验集合且未协商时局部不可用，符合契约规则。
 - 未运行完整 `scripts/check.sh`、真实账号写入、bundle 或发布验收；工作区已有其它任务修改，提交仅暂存本任务及必要的测试/runtime profile 退役 hunk。
+
+## 修复轮次 1：独立复核 Important
+
+基线：`996eaa0`。本轮仅处理六项 Important，未恢复上下文应用或其它写能力。
+
+### TDD 证据
+
+RED：
+
+```text
+env UV_CACHE_DIR=/private/tmp/csm-uv-cache uv run --locked pytest tests/test_operation_contracts.py -q
+4 failed, 10 passed
+```
+
+失败分别复现了响应 union/allOf/enum 误放行和循环 `$ref` 的 `RecursionError`；恢复的 derived-trim subprocess 回归也先以失败关闭/旧 profile-era fixture 不可构造暴露绑定断裂。
+
+GREEN：
+
+```text
+env UV_CACHE_DIR=/private/tmp/csm-uv-cache uv run --locked pytest \
+  tests/test_operation_contracts.py \
+  tests/test_app_server.py \
+  tests/test_app_server_process.py \
+  tests/test_hashing_models_plans.py \
+  tests/test_schema_audit.py -q
+49 passed in 5.81s
+```
+
+### 修复映射
+
+1. `allOf` 现在逐约束求交，响应 `anyOf`/`oneOf` 的每个分支逐一检查；请求 union 只接受能满足全部字段的完整分支，并保留合法布尔 JSON Schema。
+2. enum 缺失、空值、非数组和缺少必需值均结构化失败；新增未知字符串值保持兼容。
+3. `$ref` 采用有界深度和访问栈；循环、非法组合器及非法分支记录 `reference_cycle`、`schema_combiner` 或 `schema_branch`，不再递归崩溃或静默通过。
+4. 请求 schema 的规范化完整 `required_sets` 纳入运行时投影；集合顺序规范化，集合内容变化会改变运行时指纹。
+5. 恢复 derived-trim subprocess 回归，断言上下文应用失败关闭且 `thread/fork`、`thread/start`、`thread/inject_items`、`thread/name/set`、`thread/rollback` 均零调用。
+6. `tests/test_schema_audit.py` 改用当前 `CapabilityMatrix`/操作能力测试数据，移除已删除 profile module 依赖；未扩大 report-v2。
+
+### 静态验证
+
+```text
+env UV_CACHE_DIR=/private/tmp/csm-uv-cache uv run --locked ruff check <本轮涉及 Python 文件>
+All checks passed!
+
+env UV_CACHE_DIR=/private/tmp/csm-uv-cache uv run --locked mypy \
+  src/codex_session_manager/operation_contracts.py \
+  src/codex_session_manager/app_server.py \
+  src/codex_session_manager/schema_audit.py
+Success: no issues found in 3 source files
+```
+
+本轮未运行完整 `scripts/check.sh`、真实账号写入、bundle 或发布验收；工作树其它任务修改保持未暂存，报告路径保持为本文件。
+
+补充：本轮相关五组聚焦测试已完整收集并通过；全量 `pytest -q` 仍在 collection 阶段被未授权路径 `tests/test_cli.py` 对已删除 `codex_session_manager.protocol_profiles` 的旧 import 阻断。本轮不扩大到该路径，避免越过 route 写入边界。

@@ -542,3 +542,43 @@ def test_cli_reads_and_builds_a_sealed_plan_without_app_server_writes(
         "thread/start",
         "thread/unarchive",
     }
+
+
+def test_cli_derived_trim_fails_closed_without_app_server_writes(tmp_path: Path) -> None:
+    executable = _fake_codex(tmp_path)
+    environment = _isolated_environment(tmp_path, executable)
+
+    suggested = _run_cli(environment, "trim", "suggest", "root")
+    assert suggested.returncode == 0, suggested.stderr
+    suggested_payload = json.loads(suggested.stdout)
+    plan = suggested_payload["plan"]
+
+    applied = _run_cli(
+        environment,
+        "trim",
+        "apply",
+        suggested_payload["path"],
+        "--confirm",
+        plan["plan_id"],
+    )
+
+    assert applied.returncode != 0
+    assert "no approved operation contract" in (applied.stderr + applied.stdout)
+    records = [
+        json.loads(line)
+        for line in Path(environment["CSM_FAKE_APP_SERVER_LOG"])
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    methods = {
+        record["message"].get("method")
+        for record in records
+        if isinstance(record.get("message"), dict)
+    }
+    assert not methods & {
+        "thread/fork",
+        "thread/rollback",
+        "thread/start",
+        "thread/inject_items",
+        "thread/name/set",
+    }

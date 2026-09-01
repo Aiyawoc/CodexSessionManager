@@ -181,7 +181,7 @@ def _evaluate(
     experimental_methods: set[str] | None = None,
     experimental_api: bool = True,
 ):
-    stable = stable_documents or _baseline_documents()
+    stable = _baseline_documents() if stable_documents is None else stable_documents
     experimental = stable if experimental_documents is None else experimental_documents
     return evaluate_operation_contracts(
         stable_documents=stable,
@@ -349,3 +349,120 @@ def test_new_required_unsent_archive_field_blocks_only_archive() -> None:
     assert not capabilities[OperationName.ARCHIVE].available
     assert capabilities[OperationName.UNARCHIVE].available
     assert any(issue.code == "requiredness" for issue in capabilities[OperationName.ARCHIVE].issues)
+
+
+def test_response_unions_reject_an_unrecoverable_branch() -> None:
+    for keyword in ("anyOf", "oneOf"):
+        changed = deepcopy(_baseline_documents())
+        changed["v2/ThreadListResponse.json"]["properties"]["data"] = {
+            keyword: [
+                {"type": "array", "items": {"$ref": "#/definitions/Thread"}},
+                {"type": "string"},
+            ]
+        }
+
+        capabilities = _by_name(_evaluate(changed))
+
+        assert not capabilities[OperationName.INVENTORY_COMMON].available
+        assert not capabilities[OperationName.ARCHIVE].available
+        assert capabilities[OperationName.HISTORY_LEGACY].available
+
+
+def test_request_union_accepts_the_exact_csm_value() -> None:
+    changed = deepcopy(_baseline_documents())
+    changed["v2/ThreadArchiveParams.json"]["properties"]["threadId"] = {
+        "anyOf": [{"type": "integer"}, {"type": "string"}]
+    }
+
+    capabilities = _by_name(_evaluate(changed))
+
+    assert capabilities[OperationName.ARCHIVE].available
+
+
+def test_all_of_applies_all_request_constraints() -> None:
+    changed = deepcopy(_baseline_documents())
+    changed["v2/ThreadArchiveParams.json"]["properties"]["threadId"] = {
+        "allOf": [{"type": "string"}, {"enum": ["not-a-thread-id"]}]
+    }
+
+    capabilities = _by_name(_evaluate(changed))
+
+    assert not capabilities[OperationName.ARCHIVE].available
+    assert any(issue.code == "schema_combiner" for issue in capabilities[OperationName.ARCHIVE].issues)
+
+
+def test_enum_presence_is_fail_closed_but_unknown_values_are_compatible() -> None:
+    cases = (
+        (None, True),
+        ([], False),
+        ("full", False),
+        (["summary"], False),
+        (["full", "future"], True),
+    )
+    for enum, available in cases:
+        changed = deepcopy(_baseline_documents())
+        field = changed["v2/ThreadTurnsListParams.json"]["properties"]["itemsView"]
+        if enum is None:
+            field.pop("enum")
+        else:
+            field["enum"] = enum
+
+        capability = _by_name(_evaluate(changed))[OperationName.HISTORY_PAGINATED]
+
+        assert capability.available is available
+
+
+def test_cyclic_refs_and_invalid_combiners_fail_closed_without_recursion_error() -> None:
+    cyclic = deepcopy(_baseline_documents())
+    cyclic["v2/ThreadListResponse.json"]["definitions"]["Thread"] = {
+        "$ref": "#/definitions/Thread"
+    }
+    cyclic_capability = _by_name(_evaluate(cyclic))[OperationName.INVENTORY_COMMON]
+    assert not cyclic_capability.available
+    assert any(issue.code == "reference_cycle" for issue in cyclic_capability.issues)
+
+    mutual = deepcopy(_baseline_documents())
+    mutual["v2/ThreadListResponse.json"]["definitions"]["Thread"] = {
+        "$ref": "#/definitions/Other"
+    }
+    mutual["v2/ThreadListResponse.json"]["definitions"]["Other"] = {
+        "$ref": "#/definitions/Thread"
+    }
+    mutual_capability = _by_name(_evaluate(mutual))[OperationName.INVENTORY_COMMON]
+    assert not mutual_capability.available
+    assert any(issue.code == "reference_cycle" for issue in mutual_capability.issues)
+
+    invalid = deepcopy(_baseline_documents())
+    invalid["v2/ThreadListResponse.json"]["properties"]["data"] = {
+        "anyOf": [{"type": "array"}, "not-a-schema"]
+    }
+    invalid_capability = _by_name(_evaluate(invalid))[OperationName.INVENTORY_COMMON]
+    assert not invalid_capability.available
+    assert any(issue.code == "schema_branch" for issue in invalid_capability.issues)
+
+    invalid_combiner = deepcopy(_baseline_documents())
+    invalid_combiner["v2/ThreadListResponse.json"]["properties"]["data"] = {
+        "oneOf": "not-an-array"
+    }
+    combiner_capability = _by_name(_evaluate(invalid_combiner))[OperationName.INVENTORY_COMMON]
+    assert not combiner_capability.available
+    assert any(issue.code == "schema_combiner" for issue in combiner_capability.issues)
+
+
+def test_required_set_changes_runtime_fingerprint_but_not_order() -> None:
+    before = _by_name(_evaluate())[OperationName.INVENTORY_COMMON]
+
+    added = deepcopy(_baseline_documents())
+    added["v2/ThreadListParams.json"]["required"] = ["archived"]
+    after_added = _by_name(_evaluate(added))[OperationName.INVENTORY_COMMON]
+    assert after_added.available
+    assert after_added.runtime_contract_fingerprint != before.runtime_contract_fingerprint
+
+    reordered = deepcopy(_baseline_documents())
+    reordered["v2/ThreadListParams.json"]["required"] = ["limit", "archived"]
+    reordered["v2/ThreadLoadedListParams.json"]["required"] = ["limit"]
+    first = _by_name(_evaluate(reordered))[OperationName.INVENTORY_COMMON]
+    reordered["v2/ThreadListParams.json"]["required"] = ["archived", "limit"]
+    second = _by_name(_evaluate(reordered))[OperationName.INVENTORY_COMMON]
+    assert first.available and second.available
+    assert first.runtime_contract_fingerprint == second.runtime_contract_fingerprint

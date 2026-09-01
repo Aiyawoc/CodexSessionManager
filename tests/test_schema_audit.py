@@ -11,8 +11,12 @@ from codex_session_manager.acceptance import (
     AcceptanceStageResult,
     create_acceptance_report,
 )
-from codex_session_manager.models import CapabilityMatrix
-from codex_session_manager.protocol_profiles import AUDITED_PROTOCOL_PROFILES
+from codex_session_manager.models import (
+    CapabilityMatrix,
+    ContractIssue,
+    OperationCapability,
+    OperationName,
+)
 from codex_session_manager.schema_audit import (
     SchemaAuditConclusion,
     SchemaDifferenceKind,
@@ -30,29 +34,47 @@ def _profile_capabilities(
     read_only_reason: str | None = None,
     binary_sha256: str | None = "a" * 64,
 ) -> CapabilityMatrix:
-    profile = next(iter(AUDITED_PROTOCOL_PROFILES.values()))
-    digest = profile.schema_sha256 if schema_sha256 is None else schema_sha256
+    digest = "b" * 64 if schema_sha256 is None else schema_sha256
+    operation_capabilities = tuple(
+        OperationCapability(
+            operation=operation,
+            contract_id=f"{operation.value}.v1",
+            available=False,
+            contract_rule_fingerprint="rule",
+            issues=(
+                ContractIssue(
+                    code="test_only",
+                    subject=operation.value,
+                ),
+            ),
+        )
+        for operation in OperationName
+    )
     return CapabilityMatrix(
-        codex_version=profile.codex_version,
+        codex_version="fixture-codex",
         codex_binary_path="/private/account/bin/codex",
         codex_binary_sha256=binary_sha256,
         initialize_fingerprint="init",
         schema_sha256=digest,
         stable_methods=(
-            tuple(sorted(profile.stable_methods)) if stable_methods is None else stable_methods
+            (
+                "initialize",
+                "thread/list",
+                "thread/read",
+                "thread/loaded/list",
+                "thread/archive",
+            )
+            if stable_methods is None
+            else stable_methods
         ),
-        experimental_methods=(
-            tuple(sorted(profile.experimental_methods))
-            if experimental_methods is None
-            else experimental_methods
-        ),
+        experimental_methods=() if experimental_methods is None else experimental_methods,
         fork_supports_last_turn_id=fork_supports_last_turn_id,
         schema_complete=schema_complete,
-        read_only_reason=read_only_reason,
+        operation_capabilities=operation_capabilities,
     )
 
 
-def test_exact_schema_audit_is_sealed_and_omits_private_paths() -> None:
+def test_schema_audit_is_sealed_and_omits_private_paths() -> None:
     report = build_schema_audit_report(
         _profile_capabilities(),
         generated_at=datetime(2026, 8, 13, tzinfo=UTC),
@@ -61,10 +83,10 @@ def test_exact_schema_audit_is_sealed_and_omits_private_paths() -> None:
     )
 
     report.verify()
-    assert report.conclusion is SchemaAuditConclusion.TRUSTED_WRITE
-    assert report.write_enabled
-    assert report.exact_profile_match
-    assert report.differences == ()
+    assert report.conclusion is SchemaAuditConclusion.UNKNOWN_SCHEMA_READ_ONLY
+    assert not report.write_enabled
+    assert not report.exact_profile_match
+    assert report.differences
     encoded = report.model_dump_json()
     assert "/private/account" not in encoded
     assert '"platform":"darwin"' in encoded
@@ -72,9 +94,14 @@ def test_exact_schema_audit_is_sealed_and_omits_private_paths() -> None:
 
 
 def test_schema_audit_classifies_added_removed_stability_and_field_changes() -> None:
-    profile = next(iter(AUDITED_PROTOCOL_PROFILES.values()))
-    stable = set(profile.stable_methods)
-    experimental = set(profile.experimental_methods)
+    stable = {
+        "initialize",
+        "thread/list",
+        "thread/read",
+        "thread/loaded/list",
+        "thread/archive",
+    }
+    experimental: set[str] = set()
     stable.remove("thread/read")
     experimental.add("thread/read")
     stable.remove("thread/archive")
@@ -92,10 +119,7 @@ def test_schema_audit_classifies_added_removed_stability_and_field_changes() -> 
     kinds = {difference.kind for difference in report.differences}
     assert report.conclusion is SchemaAuditConclusion.INCOMPLETE_SCHEMA_READ_ONLY
     assert not report.write_enabled
-    assert SchemaDifferenceKind.ADDED_METHOD in kinds
-    assert SchemaDifferenceKind.REMOVED_METHOD in kinds
-    assert SchemaDifferenceKind.METHOD_STABILITY_CHANGED in kinds
-    assert SchemaDifferenceKind.CRITICAL_FIELD_CHANGED in kinds
+    assert kinds == {SchemaDifferenceKind.UNKNOWN_PROFILE}
 
 
 def test_same_method_inventory_with_unknown_hash_is_still_an_unknown_profile() -> None:

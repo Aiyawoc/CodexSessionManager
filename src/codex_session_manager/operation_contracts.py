@@ -61,6 +61,22 @@ class _Projection:
     types: frozenset[str] = frozenset()
     enums: frozenset[str] = frozenset()
     item_types: frozenset[str] = frozenset()
+    enum_present: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _SchemaShape:
+    types: frozenset[str] = frozenset()
+    enum: tuple[Any, ...] | None = None
+    properties: tuple[tuple[str, tuple[_SchemaShape, ...]], ...] = ()
+    required: frozenset[str] = frozenset()
+    items: tuple[_SchemaShape, ...] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _PathResult:
+    shape: _SchemaShape | None
+    required: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +84,7 @@ class _FieldResult:
     projection: _Projection
     present: bool
     required: bool
+    variants: tuple[_PathResult, ...] = ()
 
 
 def _field(
@@ -98,6 +115,10 @@ _STRING: Final[tuple[str, ...]] = ("string",)
 _STRING_OR_NULL: Final[tuple[str, ...]] = ("string", "null")
 _ARRAY: Final[tuple[str, ...]] = ("array",)
 _OBJECT: Final[tuple[str, ...]] = ("object",)
+_SCHEMA_TYPES: Final[frozenset[str]] = frozenset(
+    {"array", "boolean", "integer", "null", "number", "object", "string"}
+)
+_MAX_SCHEMA_DEPTH: Final[int] = 64
 
 _THREAD_FIELDS: Final[tuple[_FieldRule, ...]] = (
     _field("v2/ThreadListResponse.json", "data", "[]", "id", types=_STRING, required=True),
@@ -106,7 +127,7 @@ _THREAD_FIELDS: Final[tuple[_FieldRule, ...]] = (
         "data",
         "[]",
         "createdAt",
-        types=("integer", "number", "string"),
+        types=("integer", "number", "string", "null"),
         required=True,
     ),
     _field(
@@ -114,7 +135,7 @@ _THREAD_FIELDS: Final[tuple[_FieldRule, ...]] = (
         "data",
         "[]",
         "updatedAt",
-        types=("integer", "number", "string"),
+        types=("integer", "number", "string", "null"),
         required=True,
     ),
     _field(
@@ -529,10 +550,161 @@ class _Evaluation:
             return None
         return document
 
+    def _intersect(
+        self, left: _SchemaShape, right: _SchemaShape, subject: str
+    ) -> _SchemaShape | None:
+        if left.types and right.types:
+            types = left.types & right.types
+            if not types:
+                return None
+        else:
+            types = left.types or right.types
+        enum: tuple[Any, ...] | None
+        if left.enum is not None and right.enum is not None:
+            enum = tuple(value for value in left.enum if value in right.enum)
+            if not enum:
+                return None
+        else:
+            enum = left.enum if left.enum is not None else right.enum
+        left_properties = dict(left.properties)
+        right_properties = dict(right.properties)
+        properties: list[tuple[str, tuple[_SchemaShape, ...]]] = []
+        for name in sorted(left_properties.keys() | right_properties.keys()):
+            variants = left_properties.get(name) or right_properties.get(name)
+            if name in left_properties and name in right_properties:
+                variants = tuple(
+                    merged
+                    for left_variant in left_properties[name]
+                    for right_variant in right_properties[name]
+                    if (merged := self._intersect(left_variant, right_variant, subject)) is not None
+                )
+                if not variants:
+                    return None
+            assert variants is not None
+            properties.append((name, tuple(variants)))
+        items: tuple[_SchemaShape, ...] | None
+        if left.items is not None and right.items is not None:
+            items = tuple(
+                merged
+                for left_item in left.items
+                for right_item in right.items
+                if (merged := self._intersect(left_item, right_item, subject)) is not None
+            )
+            if not items:
+                return None
+        else:
+            items = left.items if left.items is not None else right.items
+        return _SchemaShape(
+            types=frozenset(types),
+            enum=enum,
+            properties=tuple(properties),
+            required=left.required | right.required,
+            items=items,
+        )
+
+    def _direct_shape(
+        self,
+        node: Mapping[str, Any],
+        document: Mapping[str, Any],
+        subject: str,
+        ref_stack: tuple[str, ...],
+        depth: int,
+    ) -> _SchemaShape | None:
+        raw_type = node.get("type")
+        if isinstance(raw_type, str):
+            types = {raw_type}
+        elif isinstance(raw_type, list) and raw_type and all(
+            isinstance(value, str) and value in _SCHEMA_TYPES for value in raw_type
+        ):
+            types = set(raw_type)
+        elif raw_type is None:
+            types = set()
+        else:
+            self.issue(
+                "schema_type",
+                subject,
+                expected="JSON Schema type or non-empty type array",
+                actual=raw_type,
+            )
+            return None
+        enum: tuple[Any, ...] | None = None
+        if "enum" in node:
+            raw_enum = node["enum"]
+            if not isinstance(raw_enum, list) or not raw_enum:
+                self.issue(
+                    "enum_value",
+                    subject,
+                    expected="non-empty enum array",
+                    actual=raw_enum,
+                )
+                return None
+            enum = tuple(raw_enum)
+        raw_required = node.get("required")
+        required: frozenset[str]
+        if raw_required is None:
+            required = frozenset()
+        elif isinstance(raw_required, list) and all(
+            isinstance(value, str) for value in raw_required
+        ):
+            required = frozenset(raw_required)
+        else:
+            self.issue(
+                "schema_required",
+                subject,
+                expected="array of field names",
+                actual=raw_required,
+            )
+            return None
+        raw_properties = node.get("properties")
+        properties: list[tuple[str, tuple[_SchemaShape, ...]]] = []
+        if raw_properties is not None:
+            if not isinstance(raw_properties, Mapping):
+                self.issue(
+                    "schema_properties",
+                    subject,
+                    expected="JSON object",
+                    actual=raw_properties,
+                )
+                return None
+            for name, value in raw_properties.items():
+                if not isinstance(name, str):
+                    self.issue("schema_properties", subject, expected="string field name", actual=name)
+                    return None
+                variants = self.expand(value, document, f"{subject}.{name}", ref_stack, depth + 1)
+                if variants:
+                    properties.append((name, tuple(variants)))
+        items: tuple[_SchemaShape, ...] | None = None
+        if "items" in node:
+            raw_items = node["items"]
+            if not isinstance(raw_items, (Mapping, bool)):
+                self.issue("schema_branch", f"{subject}.items", expected="JSON object", actual=raw_items)
+                return None
+            items = tuple(self.expand(raw_items, document, f"{subject}.items", ref_stack, depth + 1))
+        if not types and (properties or required):
+            types.add("object")
+        return _SchemaShape(
+            types=frozenset(types),
+            enum=enum,
+            properties=tuple(properties),
+            required=required,
+            items=items,
+        )
+
     def expand(
-        self, node: Any, document: Mapping[str, Any], subject: str
-    ) -> list[Mapping[str, Any]]:
+        self,
+        node: Any,
+        document: Mapping[str, Any],
+        subject: str,
+        ref_stack: tuple[str, ...] = (),
+        depth: int = 0,
+    ) -> list[_SchemaShape]:
+        if depth > _MAX_SCHEMA_DEPTH:
+            self.issue("schema_depth", subject, expected=f"depth <= {_MAX_SCHEMA_DEPTH}", actual=depth)
+            return []
+        if isinstance(node, bool):
+            return [_SchemaShape()] if node else []
         if not isinstance(node, Mapping):
+            self.issue("schema_branch", subject, expected="JSON object", actual=node)
             return []
         reference = node.get("$ref")
         if reference is not None:
@@ -544,127 +716,242 @@ class _Evaluation:
                     actual=reference,
                 )
                 return []
-            definitions = document.get("definitions")
             name = reference.removeprefix("#/definitions/")
+            if not name or name in ref_stack:
+                self.issue("reference_cycle", subject, expected="acyclic local reference", actual=reference)
+                return []
+            definitions = document.get("definitions")
             target = definitions.get(name) if isinstance(definitions, Mapping) else None
             if not isinstance(target, Mapping):
                 self.issue("reference_unresolved", subject, expected=reference, actual=reference)
                 return []
-            return self.expand(target, document, subject)
-        branches: list[Mapping[str, Any]] = []
-        for keyword in ("allOf", "anyOf", "oneOf"):
-            values = node.get(keyword)
-            if isinstance(values, list):
-                branches.extend(
-                    branch for value in values for branch in self.expand(value, document, subject)
-                )
-        if branches:
-            direct = {
-                key: value for key, value in node.items() if key not in {"allOf", "anyOf", "oneOf"}
-            }
-            if direct:
-                branches.append(direct)
-            return branches
-        return [node]
+            resolved = self.expand(target, document, subject, (*ref_stack, name), depth + 1)
+            siblings = {key: value for key, value in node.items() if key != "$ref"}
+            if not siblings:
+                return resolved
+            local = self.expand(siblings, document, subject, ref_stack, depth + 1)
+            return [
+                merged
+                for resolved_shape in resolved
+                for local_shape in local
+                if (merged := self._intersect(resolved_shape, local_shape, subject)) is not None
+            ]
 
-    def project(
-        self,
-        nodes: list[Mapping[str, Any]],
-        document: Mapping[str, Any],
-        subject: str,
-    ) -> _Projection:
-        types: set[str] = set()
-        enums: set[str] = set()
-        item_types: set[str] = set()
-        for node in nodes:
-            raw_type = node.get("type")
-            if isinstance(raw_type, str):
-                types.add(raw_type)
-            elif isinstance(raw_type, list):
-                types.update(item for item in raw_type if isinstance(item, str))
-            elif isinstance(node.get("properties"), Mapping) or isinstance(
-                node.get("required"), list
-            ):
-                types.add("object")
-            raw_enum = node.get("enum")
-            if isinstance(raw_enum, list):
-                enums.update(item for item in raw_enum if isinstance(item, str))
-            raw_items = node.get("items")
-            if isinstance(raw_items, Mapping):
-                item_nodes = self.expand(raw_items, document, subject)
-                item_types.update(self.project(item_nodes, document, subject).types)
-        return _Projection(frozenset(types), frozenset(enums), frozenset(item_types))
+        direct_node = {
+            key: value for key, value in node.items() if key not in {"allOf", "anyOf", "oneOf"}
+        }
+        direct_shape = self._direct_shape(
+            direct_node, document, subject, ref_stack, depth + 1
+        )
+        variants = [direct_shape] if direct_shape is not None else []
+        for keyword in ("allOf", "anyOf", "oneOf"):
+            if keyword not in node:
+                continue
+            values = node[keyword]
+            if not isinstance(values, list) or not values:
+                self.issue(
+                    "schema_combiner",
+                    subject,
+                    expected=f"{keyword} non-empty array",
+                    actual=values,
+                )
+                variants = []
+                continue
+            if keyword == "allOf":
+                combined = variants or [_SchemaShape()]
+                for index, value in enumerate(values):
+                    if not isinstance(value, Mapping):
+                        self.issue(
+                            "schema_branch",
+                            f"{subject}.{keyword}[{index}]",
+                            expected="JSON object",
+                            actual=value,
+                        )
+                        continue
+                    branch_variants = self.expand(
+                        value, document, f"{subject}.{keyword}[{index}]", ref_stack, depth + 1
+                    )
+                    combined = [
+                        merged
+                        for left in combined
+                        for right in branch_variants
+                        if (merged := self._intersect(left, right, subject)) is not None
+                    ]
+                variants = combined
+            else:
+                branch_variants = []
+                for index, value in enumerate(values):
+                    if not isinstance(value, Mapping):
+                        self.issue(
+                            "schema_branch",
+                            f"{subject}.{keyword}[{index}]",
+                            expected="JSON object",
+                            actual=value,
+                        )
+                        continue
+                    branch_variants.extend(
+                        self.expand(
+                            value,
+                            document,
+                            f"{subject}.{keyword}[{index}]",
+                            ref_stack,
+                            depth + 1,
+                        )
+                    )
+                if not branch_variants:
+                    variants = []
+                    continue
+                variants = [
+                    merged
+                    for left in variants or [_SchemaShape()]
+                    for right in branch_variants
+                    if (merged := self._intersect(left, right, subject)) is not None
+                ]
+            if not variants:
+                self.issue("schema_combiner", subject, expected="compatible schema branches", actual=keyword)
+        return variants
+
+    @staticmethod
+    def _properties(shape: _SchemaShape) -> dict[str, tuple[_SchemaShape, ...]]:
+        return dict(shape.properties)
+
+    def _walk(self, shape: _SchemaShape, path: tuple[str, ...]) -> list[_PathResult]:
+        if not path:
+            return [_PathResult(shape)]
+        step, *rest = path
+        if step == "[]":
+            if shape.items is None:
+                return []
+            return [
+                result
+                for item in shape.items
+                for result in self._walk(item, tuple(rest))
+            ]
+        children = self._properties(shape).get(step)
+        if children is None:
+            return []
+        results: list[_PathResult] = []
+        for child in children:
+            child_results = self._walk(child, tuple(rest))
+            if not rest:
+                results.extend(
+                    _PathResult(result.shape, step in shape.required) for result in child_results
+                )
+            else:
+                results.extend(child_results)
+        return results
+
+    @staticmethod
+    def _shape_item_types(shape: _SchemaShape) -> frozenset[str] | None:
+        if shape.items is None:
+            return None
+        return frozenset(item_type for item in shape.items for item_type in item.types)
+
+    def _projection(self, variants: tuple[_PathResult, ...]) -> _Projection:
+        shapes = tuple(result.shape for result in variants if result.shape is not None)
+        types = frozenset(value for shape in shapes for value in shape.types)
+        enums = frozenset(
+            value for shape in shapes if shape.enum is not None for value in shape.enum if isinstance(value, str)
+        )
+        item_types = frozenset(
+            value
+            for shape in shapes
+            for item in (shape.items or ())
+            for value in item.types
+        )
+        return _Projection(types, enums, item_types, any(shape.enum is not None for shape in shapes))
 
     def field(self, rule: _FieldRule) -> _FieldResult:
         document = self.document(rule.document)
         if document is None:
             self.projection.append({"document": rule.document, "path": rule.path, "present": False})
-            return _FieldResult(_Projection(), False, False)
-        nodes: list[Mapping[str, Any]] = [document]
-        required = False
-        for step in rule.path:
-            next_nodes: list[Mapping[str, Any]] = []
-            if step == "[]":
-                for parent in nodes:
-                    for variant in self.expand(parent, document, f"{rule.document}#{rule.path}"):
-                        raw_items = variant.get("items")
-                        if isinstance(raw_items, Mapping):
-                            next_nodes.extend(
-                                self.expand(raw_items, document, f"{rule.document}#{rule.path}")
-                            )
-                nodes = next_nodes
-                continue
-            for parent in nodes:
-                variants = self.expand(parent, document, f"{rule.document}#{rule.path}")
-                for variant in variants:
-                    properties = variant.get("properties")
-                    if isinstance(properties, Mapping) and step in properties:
-                        value = properties[step]
-                        if (
-                            isinstance(variant.get("required"), list)
-                            and step in variant["required"]
-                        ):
-                            required = True
-                        next_nodes.extend(
-                            self.expand(value, document, f"{rule.document}#{rule.path}")
-                        )
-            if not next_nodes:
-                self.projection.append(
-                    {"document": rule.document, "path": rule.path, "present": False}
-                )
-                return _FieldResult(_Projection(), False, required)
-            nodes = next_nodes
-        result = self.project(nodes, document, f"{rule.document}#{rule.path}")
+            return _FieldResult(_Projection(), False, False, (_PathResult(None),))
+        variants: list[_PathResult] = []
+        for root in self.expand(document, document, rule.document):
+            found = self._walk(root, rule.path)
+            variants.extend(found or [_PathResult(None)])
+        result_variants = tuple(variants)
+        result = self._projection(result_variants)
         self.projection.append(
             {
                 "document": rule.document,
                 "path": rule.path,
-                "present": True,
-                "required": required,
-                "types": sorted(result.types),
-                "enums": sorted(result.enums),
-                "item_types": sorted(result.item_types),
+                "present": any(value.shape is not None for value in result_variants),
+                "variants": [
+                    {
+                        "present": value.shape is not None,
+                        "required": value.required,
+                        "types": sorted(value.shape.types) if value.shape is not None else [],
+                        "enums": sorted(result.enums) if value.shape is not None else [],
+                        "item_types": sorted(result.item_types) if value.shape is not None else [],
+                    }
+                    for value in result_variants
+                ],
             }
         )
-        return _FieldResult(result, True, required)
+        return _FieldResult(
+            result,
+            any(value.shape is not None for value in result_variants),
+            any(value.required for value in result_variants),
+            result_variants,
+        )
 
     def required_fields(self, request: _RequestRule) -> None:
         document = self.document(request.document)
         if document is None:
             return
+        variants = self.expand(document, document, request.document)
+        required_sets = tuple(tuple(sorted(variant.required)) for variant in variants)
+        self.projection.append(
+            {"document": request.document, "required_sets": required_sets}
+        )
         known = set(request.supported_required_fields)
-        for variant in self.expand(document, document, request.document):
-            required = variant.get("required")
-            if not isinstance(required, list):
+        if any(set(required) <= known for required in required_sets):
+            return
+        for name in sorted({name for required in required_sets for name in required if name not in known}):
+            self.issue(
+                "requiredness",
+                f"{request.document}.required.{name}",
+                expected="field CSM can satisfy",
+                actual="required",
+            )
+
+    def _request_matches(self, rule: _FieldRule, result: _PathResult) -> bool:
+        shape = result.shape
+        if shape is None or (rule.required is True and not result.required):
+            return False
+        if rule.types and not shape.types.intersection(rule.types):
+            return False
+        if rule.required_types and not set(rule.required_types).issubset(shape.types):
+            return False
+        if rule.item_types:
+            item_types = self._shape_item_types(shape)
+            if not item_types or not item_types.intersection(rule.item_types):
+                return False
+        return not (
+            shape.enum is not None
+            and (
+                not rule.enum_contains
+                or not set(rule.enum_contains).intersection(
+                    value for value in shape.enum if isinstance(value, str)
+                )
+            )
+        )
+
+    def request_satisfied(self, request: _RequestRule) -> bool:
+        document = self.documents.get(request.document)
+        if not isinstance(document, Mapping):
+            return False
+        known = set(request.supported_required_fields)
+        for root in self.expand(document, document, request.document):
+            if not root.required <= known:
                 continue
-            for name in required:
-                if isinstance(name, str) and name not in known:
-                    self.issue(
-                        "requiredness",
-                        f"{request.document}.required.{name}",
-                        expected="field CSM can satisfy",
-                        actual="required",
-                    )
+            if all(
+                any(self._request_matches(field, result) for result in self._walk(root, field.path))
+                for field in request.fields
+            ):
+                return True
+        return False
 
 
 def _method_evidence(
@@ -696,55 +983,77 @@ def _method_evidence(
     return tuple(evidence)
 
 
-def _validate_field(evaluation: _Evaluation, rule: _FieldRule, result: _FieldResult) -> None:
-    if not result.present:
-        if not rule.allow_missing:
+def _validate_field(
+    evaluation: _Evaluation,
+    rule: _FieldRule,
+    result: _FieldResult,
+    *,
+    request: bool = False,
+) -> None:
+    subject = f"{rule.document}#{'.'.join(rule.path)}"
+    if request:
+        if any(evaluation._request_matches(rule, value) for value in result.variants):
+            return
+        if not result.present:
+            evaluation.issue("field_missing", subject, expected="field present", actual=None)
+        else:
             evaluation.issue(
-                "field_missing",
-                f"{rule.document}#{'.'.join(rule.path)}",
-                expected="field present",
-                actual=None,
+                "schema_combiner",
+                subject,
+                expected="one complete request branch satisfiable by CSM",
+                actual="no matching branch",
             )
         return
-    actual_types = result.projection.types
-    if rule.types and not actual_types.intersection(rule.types):
-        evaluation.issue(
-            "field_type",
-            f"{rule.document}#{'.'.join(rule.path)}",
-            expected="|".join(rule.types),
-            actual="|".join(sorted(actual_types)) or None,
-        )
-    if rule.required_types and not set(rule.required_types).issubset(actual_types):
-        evaluation.issue(
-            "field_type",
-            f"{rule.document}#{'.'.join(rule.path)}",
-            expected="contains " + "|".join(rule.required_types),
-            actual="|".join(sorted(actual_types)) or None,
-        )
-    actual_items = result.projection.item_types
-    if rule.item_types and not actual_items.intersection(rule.item_types):
-        evaluation.issue(
-            "field_type",
-            f"{rule.document}#{'.'.join(rule.path)}[]",
-            expected="|".join(rule.item_types),
-            actual="|".join(sorted(actual_items)) or None,
-        )
-    if rule.enum_contains and result.projection.enums:
+    if not result.present:
+        if not rule.allow_missing:
+            evaluation.issue("field_missing", subject, expected="field present", actual=None)
+        return
+    if any(value.shape is None for value in result.variants) and not rule.allow_missing:
+        evaluation.issue("field_missing", subject, expected="field present in every response branch", actual=None)
+    for value in result.variants:
+        shape = value.shape
+        if shape is None:
+            continue
+        actual_types = shape.types
+        if rule.types and (not actual_types or not actual_types <= set(rule.types)):
+            evaluation.issue(
+                "field_type",
+                subject,
+                expected="|".join(rule.types),
+                actual="|".join(sorted(actual_types)) or None,
+            )
+        if rule.required_types and not set(rule.required_types).issubset(actual_types):
+            evaluation.issue(
+                "field_type",
+                subject,
+                expected="contains " + "|".join(rule.required_types),
+                actual="|".join(sorted(actual_types)) or None,
+            )
+        if rule.item_types:
+            actual_items = evaluation._shape_item_types(shape)
+            if actual_items is None or not actual_items or not actual_items <= set(rule.item_types):
+                evaluation.issue(
+                    "field_type",
+                    subject + "[]",
+                    expected="|".join(rule.item_types),
+                    actual="|".join(sorted(actual_items or ())) or None,
+                )
+        if rule.required is not None and value.required is not rule.required:
+            evaluation.issue(
+                "requiredness",
+                subject,
+                expected=str(rule.required).lower(),
+                actual=str(value.required).lower(),
+            )
+    if rule.enum_contains and result.projection.enum_present:
         missing = set(rule.enum_contains) - result.projection.enums
         if missing:
             evaluation.issue(
                 "enum_value",
-                f"{rule.document}#{'.'.join(rule.path)}",
+                subject,
                 expected="contains " + ",".join(rule.enum_contains),
-                actual="|".join(sorted(result.projection.enums)),
+                actual="|".join(sorted(result.projection.enums)) or None,
             )
-    if rule.required is not None and result.required is not rule.required:
-        evaluation.issue(
-            "requiredness",
-            f"{rule.document}#{'.'.join(rule.path)}",
-            expected=str(rule.required).lower(),
-            actual=str(result.required).lower(),
-        )
 
 
 def _evaluate_rule(
@@ -766,33 +1075,45 @@ def _evaluate_rule(
         evaluation.required_fields(request)
         for field_rule in request.fields:
             result = evaluation.field(field_rule)
-            _validate_field(evaluation, field_rule, result)
+            _validate_field(evaluation, field_rule, result, request=True)
+        if not evaluation.request_satisfied(request):
+            evaluation.issue(
+                "schema_combiner",
+                request.document,
+                expected="one complete request branch satisfiable by CSM",
+                actual="no matching branch",
+            )
+    request_fields = {
+        field_rule for request in rule.request_rules for field_rule in request.fields
+    }
     for document_rule in rule.document_rules:
         document = evaluation.document(document_rule.document)
         if document is None:
             continue
-        document_projection = evaluation.project(
-            evaluation.expand(document, document, document_rule.document),
-            document,
-            document_rule.document,
-        )
-        evaluation.projection.append(
-            {
-                "document": document_rule.document,
-                "path": (),
-                "present": True,
-                "types": sorted(document_projection.types),
-            }
-        )
-        if not document_projection.types.intersection(document_rule.types):
-            evaluation.issue(
-                "field_type",
-                document_rule.document,
-                expected="|".join(document_rule.types),
-                actual="|".join(sorted(document_projection.types)) or None,
+        document_shapes = evaluation.expand(document, document, document_rule.document)
+        for shape in document_shapes:
+            document_projection = evaluation._projection((_PathResult(shape),))
+            evaluation.projection.append(
+                {
+                    "document": document_rule.document,
+                    "path": (),
+                    "present": True,
+                    "types": sorted(document_projection.types),
+                }
             )
+            if not document_projection.types or not document_projection.types <= set(
+                document_rule.types
+            ):
+                evaluation.issue(
+                    "field_type",
+                    document_rule.document,
+                    expected="|".join(document_rule.types),
+                    actual="|".join(sorted(document_projection.types)) or None,
+                )
     groups: dict[str, bool] = {}
     for field_rule in rule.fields:
+        if field_rule in request_fields:
+            continue
         field_result = evaluation.field(field_rule)
         if field_rule.group is not None:
             groups[field_rule.group] = groups.get(field_rule.group, False) or field_result.present

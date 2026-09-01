@@ -24,7 +24,7 @@ from typing import Any, Final, Self
 from codex_session_manager.config import codex_binary, get_paths
 from codex_session_manager.hashing import canonical_json_bytes, fingerprint, hash_file, sha256_bytes
 from codex_session_manager.models import CapabilityMatrix
-from codex_session_manager.protocol_profiles import TRUSTED_WRITE_SCHEMAS
+from codex_session_manager.operation_contracts import evaluate_operation_contracts
 from codex_session_manager.version import __version__
 
 LOGGER = logging.getLogger(__name__)
@@ -34,6 +34,7 @@ BASELINE_METHODS: Final[frozenset[str]] = frozenset(
         "initialize",
         "thread/list",
         "thread/read",
+        "thread/loaded/list",
     }
 )
 ALL_SOURCE_KINDS: Final[tuple[str, ...]] = (
@@ -471,29 +472,33 @@ def _extract_methods(schema: Any) -> set[str]:
 
 def _generate_schema(
     executable: str, output: Path, *, experimental: bool
-) -> tuple[dict[str, Any], set[str], str]:
+) -> tuple[dict[str, dict[str, Any]], set[str], str]:
     command = [executable, "app-server", "generate-json-schema"]
     if experimental:
         command.append("--experimental")
     command.extend(["--out", str(output)])
     subprocess.run(command, check=True, capture_output=True, text=True, timeout=30)
-    client_schema_path = output / "ClientRequest.json"
-    if not client_schema_path.is_file():
-        raise ProtocolError("generated schema lacks ClientRequest.json")
-    schema = json.loads(client_schema_path.read_text(encoding="utf-8"))
-    methods = _extract_methods(schema)
+    documents: dict[str, dict[str, Any]] = {}
     digest_parts = bytearray()
     for path in sorted(output.rglob("*.json")):
-        digest_parts.extend(str(path.relative_to(output)).encode("utf-8"))
+        relative_path = path.relative_to(output).as_posix()
+        document = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(document, dict):
+            raise ProtocolError(f"generated schema document is not an object: {relative_path}")
+        documents[relative_path] = document
+        if relative_path == "ClientRequest.json":
+            methods = _extract_methods(document)
+        digest_parts.extend(relative_path.encode("utf-8"))
         digest_parts.extend(b"\0")
         # The generator may emit semantically identical object keys in a
         # different order between processes. Hash canonical JSON so a plan is
         # invalidated only by a real schema change.
-        digest_parts.extend(canonical_json_bytes(json.loads(path.read_text(encoding="utf-8"))))
+        digest_parts.extend(canonical_json_bytes(document))
         digest_parts.extend(b"\0")
-    if not isinstance(schema, dict):
-        raise ProtocolError("ClientRequest.json root must be an object")
-    return schema, methods, sha256_bytes(bytes(digest_parts))
+    if "ClientRequest.json" not in documents:
+        raise ProtocolError("generated schema lacks ClientRequest.json")
+    methods = _extract_methods(documents["ClientRequest.json"])
+    return documents, methods, sha256_bytes(bytes(digest_parts))
 
 
 def _definition_has_property(schema: dict[str, Any], definition: str, field: str) -> bool:
@@ -528,7 +533,7 @@ def probe_capabilities(
     initialize_result: dict[str, Any] | None = None,
     experimental_api: bool = False,
 ) -> CapabilityMatrix:
-    """Generate the exact local schema and derive a fail-closed capability set."""
+    """Generate local schemas and derive independently fail-closed contracts."""
 
     binary = executable or codex_binary()
     init_result = initialize_result or {}
@@ -540,49 +545,51 @@ def probe_capabilities(
             experimental_dir = root / "experimental"
             stable_dir.mkdir()
             experimental_dir.mkdir()
-            stable_schema, stable, stable_hash = _generate_schema(
+            stable_documents, stable_methods, stable_hash = _generate_schema(
                 binary, stable_dir, experimental=False
             )
-            _experimental_schema, all_methods, experimental_hash = _generate_schema(
+            experimental_documents, experimental_methods, experimental_hash = _generate_schema(
                 binary, experimental_dir, experimental=True
+            )
+            operation_capabilities = evaluate_operation_contracts(
+                stable_documents=stable_documents,
+                experimental_documents=experimental_documents,
+                stable_methods=stable_methods,
+                experimental_methods=experimental_methods,
+                experimental_api=experimental_api,
             )
         resolved_binary = Path(shutil.which(binary) or binary).resolve(strict=True)
         binary_sha256, _binary_size = hash_file(resolved_binary)
-        missing = sorted(BASELINE_METHODS - stable)
         codex_version = _codex_version(binary)
         schema_sha256 = sha256_bytes(f"{stable_hash}:{experimental_hash}".encode())
-        if missing:
-            read_only_reason = (
-                f"generated stable schema lacks required methods: {', '.join(missing)}"
-            )
-        elif codex_version is None or (codex_version, schema_sha256) not in TRUSTED_WRITE_SCHEMAS:
-            read_only_reason = (
-                "exact App Server schema is not in CSM's audited write allowlist; "
-                "read, backup, and planning remain available"
-            )
-        else:
-            read_only_reason = None
         return CapabilityMatrix(
             codex_version=codex_version,
             codex_binary_path=str(resolved_binary),
             codex_binary_sha256=binary_sha256,
             initialize_fingerprint=init_fingerprint,
             schema_sha256=schema_sha256,
-            stable_methods=tuple(sorted(stable)),
-            experimental_methods=tuple(sorted(all_methods - stable)),
+            stable_methods=tuple(sorted(stable_methods)),
+            experimental_methods=tuple(sorted(experimental_methods - stable_methods)),
             experimental_api=experimental_api,
             fork_supports_last_turn_id=_definition_has_property(
-                stable_schema, "ThreadForkParams", "lastTurnId"
+                stable_documents["ClientRequest.json"], "ThreadForkParams", "lastTurnId"
             ),
-            schema_complete=not missing,
-            read_only_reason=read_only_reason,
+            schema_complete=True,
+            operation_capabilities=operation_capabilities,
         )
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError, ProtocolError) as exc:
         return CapabilityMatrix(
             codex_version=_codex_version(binary),
             initialize_fingerprint=init_fingerprint,
             schema_complete=False,
-            read_only_reason=f"unable to establish exact App Server schema: {exc}",
+            operation_capabilities=evaluate_operation_contracts(
+                stable_documents={},
+                experimental_documents={},
+                stable_methods=set(),
+                experimental_methods=set(),
+                experimental_api=experimental_api,
+            ),
+            probe_error=str(exc),
         )
 
 

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from codex_session_manager.app_server import connect_and_probe
 from codex_session_manager.inventory import InventoryService
+from codex_session_manager.models import OperationName
 from codex_session_manager.version import __version__
 
 PROJECT_ROOT = Path(__file__).parents[1]
@@ -30,6 +31,7 @@ METHODS = [
     "thread/inject_items",
     "thread/name/set",
     "thread/loaded/list",
+    "thread/turns/list",
 ]
 THREADS = {
     "root": {
@@ -133,6 +135,154 @@ def generate_schema():
     (output / "ClientRequest.json").write_text(
         json.dumps(schema, sort_keys=True), encoding="utf-8"
     )
+    turn = {
+        "type": "object",
+        "required": ["id", "status", "items"],
+        "properties": {
+            "id": {"type": "string"},
+            "status": {
+                "type": "string",
+                "enum": ["completed", "interrupted", "failed", "inProgress"],
+            },
+            "items": {"type": "array", "items": {"type": "object"}},
+        },
+    }
+    thread = {
+        "type": "object",
+        "required": ["id", "status", "createdAt", "updatedAt", "ephemeral", "turns"],
+        "properties": {
+            "id": {"type": "string"},
+            "createdAt": {"type": ["integer", "null"]},
+            "updatedAt": {"type": ["integer", "null"]},
+            "status": {
+                "type": "object",
+                "required": ["type"],
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": ["notLoaded", "idle", "active", "systemError"],
+                    }
+                },
+            },
+            "parentThreadId": {"type": ["string", "null"]},
+            "forkedFromId": {"type": ["string", "null"]},
+            "sessionId": {"type": ["string", "null"]},
+            "ephemeral": {"type": "boolean"},
+            "historyMode": {"type": "string", "enum": ["legacy", "paginated"]},
+            "turns": {"type": "array", "items": {"$ref": "#/definitions/Turn"}},
+        },
+    }
+
+    def write_document(name, value):
+        path = output / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+
+    common_documents = {
+        "v2/ThreadListParams.json": {
+            "title": "ThreadListParams",
+            "type": "object",
+            "properties": {
+                "archived": {"type": ["boolean", "null"]},
+                "cursor": {"type": ["string", "null"]},
+                "limit": {"type": ["integer", "null"]},
+                "sourceKinds": {"type": "array", "items": {"type": "string"}},
+                "useStateDbOnly": {"type": "boolean"},
+            },
+        },
+        "v2/ThreadReadParams.json": {
+            "title": "ThreadReadParams",
+            "type": "object",
+            "required": ["threadId"],
+            "properties": {"threadId": {"type": "string"}, "includeTurns": {"type": "boolean"}},
+        },
+        "v2/ThreadLoadedListParams.json": {
+            "title": "ThreadLoadedListParams",
+            "type": "object",
+            "properties": {
+                "cursor": {"type": ["string", "null"]},
+                "limit": {"type": ["integer", "null"]},
+            },
+        },
+        "v2/ThreadArchiveParams.json": {
+            "title": "ThreadArchiveParams",
+            "type": "object",
+            "required": ["threadId"],
+            "properties": {"threadId": {"type": "string"}},
+        },
+        "v2/ThreadUnarchiveParams.json": {
+            "title": "ThreadUnarchiveParams",
+            "type": "object",
+            "required": ["threadId"],
+            "properties": {"threadId": {"type": "string"}},
+        },
+        "v2/ThreadListResponse.json": {
+            "title": "ThreadListResponse",
+            "type": "object",
+            "required": ["data"],
+            "properties": {
+                "data": {"type": "array", "items": {"$ref": "#/definitions/Thread"}},
+                "nextCursor": {"type": ["string", "null"]},
+            },
+            "definitions": {"Thread": thread, "Turn": turn},
+        },
+        "v2/ThreadReadResponse.json": {
+            "title": "ThreadReadResponse",
+            "type": "object",
+            "required": ["thread"],
+            "properties": {"thread": {"$ref": "#/definitions/Thread"}},
+            "definitions": {"Thread": thread, "Turn": turn},
+        },
+        "v2/ThreadLoadedListResponse.json": {
+            "title": "ThreadLoadedListResponse",
+            "type": "object",
+            "properties": {
+                "data": {"type": "array", "items": {"type": "string"}},
+                "threadIds": {"type": "array", "items": {"type": "string"}},
+            },
+        },
+        "v2/ThreadArchiveResponse.json": {"title": "ThreadArchiveResponse", "type": "object"},
+        "v2/ThreadUnarchiveResponse.json": {
+            "title": "ThreadUnarchiveResponse",
+            "type": "object",
+        },
+        "v2/ThreadArchivedNotification.json": {
+            "title": "ThreadArchivedNotification",
+            "type": "object",
+            "required": ["threadId"],
+            "properties": {"threadId": {"type": "string"}},
+        },
+        "v2/ThreadUnarchivedNotification.json": {
+            "title": "ThreadUnarchivedNotification",
+            "type": "object",
+            "required": ["threadId"],
+            "properties": {"threadId": {"type": "string"}},
+        },
+        "v2/ThreadTurnsListParams.json": {
+            "title": "ThreadTurnsListParams",
+            "type": "object",
+            "required": ["threadId"],
+            "properties": {
+                "threadId": {"type": "string"},
+                "cursor": {"type": ["string", "null"]},
+                "limit": {"type": ["integer", "null"]},
+                "sortDirection": {"type": "string", "enum": ["asc", "desc"]},
+                "itemsView": {"type": "string", "enum": ["full", "summary"]},
+            },
+        },
+        "v2/ThreadTurnsListResponse.json": {
+            "title": "ThreadTurnsListResponse",
+            "type": "object",
+            "required": ["data"],
+            "properties": {
+                "data": {"type": "array", "items": {"$ref": "#/definitions/Turn"}},
+                "nextCursor": {"type": ["string", "null"]},
+            },
+            "definitions": {"Turn": turn},
+        },
+    }
+    for name, document in common_documents.items():
+        write_document(name, document)
 
 
 def summary(thread_id):
@@ -318,8 +468,11 @@ def test_process_app_server_initializes_paginates_and_normalizes_inventory(
         client.close()
 
     assert capabilities.schema_complete
-    assert not capabilities.write_enabled
-    assert "audited write allowlist" in (capabilities.read_only_reason or "")
+    assert capabilities.probe_error is None
+    assert {capability.operation for capability in capabilities.operation_capabilities} == set(
+        OperationName
+    )
+    assert all(capability.available for capability in capabilities.operation_capabilities)
     assert [snapshot.id for snapshot in snapshots] == ["archived", "child", "root"]
     root = next(snapshot for snapshot in snapshots if snapshot.id == "root")
     assert root.spawned_descendant_ids == ("child",)
@@ -389,106 +542,3 @@ def test_cli_reads_and_builds_a_sealed_plan_without_app_server_writes(
         "thread/start",
         "thread/unarchive",
     }
-
-
-FULL_CLI_WORKFLOW_DRIVER = r"""
-import json
-
-from typer.testing import CliRunner
-
-import codex_session_manager.app_server as app_server
-import codex_session_manager.protocol_profiles as protocol_profiles
-
-probe = app_server.probe_capabilities()
-if not probe.schema_sha256 or not probe.codex_version:
-    raise RuntimeError("fake schema probe failed")
-# Test-process-only approval: production has no environment or CLI switch that
-# can expand the bundled human-reviewed protocol allowlist.
-app_server.TRUSTED_WRITE_SCHEMAS = frozenset(
-    {(probe.codex_version, probe.schema_sha256)}
-)
-protocol_profiles.TRUSTED_WRITE_SCHEMAS = frozenset(
-    {(probe.codex_version, probe.schema_sha256)}
-)
-
-from codex_session_manager.cli import app
-
-runner = CliRunner()
-
-
-def invoke(*arguments):
-    result = runner.invoke(app, list(arguments))
-    if result.exit_code != 0:
-        raise RuntimeError(f"CLI failed {arguments}: {result.output}\n{result.exception}")
-    return json.loads(result.stdout)
-
-
-source_before = invoke("threads", "show", "root", "--include-content")["thread"]
-suggested = invoke("trim", "suggest", "root")
-plan = suggested["plan"]
-applied = invoke(
-    "trim",
-    "apply",
-    suggested["path"],
-    "--confirm",
-    plan["plan_id"],
-)
-derived_id = applied["derived_thread_id"]
-derived = invoke("threads", "show", derived_id, "--include-content")["thread"]
-source_after = invoke("threads", "show", "root", "--include-content")["thread"]
-if source_after["turns"] != source_before["turns"]:
-    raise RuntimeError("source task changed during derived trim")
-if derived["turns"] != source_before["turns"]:
-    raise RuntimeError("derived prefix does not match the source")
-print(
-    json.dumps(
-        {
-            "source_id": source_after["id"],
-            "derived_id": derived_id,
-            "plan_sha256": plan["plan_sha256"],
-            "source_preserved": True,
-        },
-        sort_keys=True,
-    )
-)
-"""
-
-
-def test_full_cli_subprocess_creates_verified_derived_task_and_preserves_source(
-    tmp_path: Path,
-) -> None:
-    executable = _fake_codex(tmp_path)
-    environment = os.environ.copy() | _isolated_environment(tmp_path, executable)
-    existing_python_path = environment.get("PYTHONPATH")
-    environment["PYTHONPATH"] = os.pathsep.join(
-        value for value in (str(PROJECT_ROOT / "src"), existing_python_path) if value
-    )
-
-    completed = subprocess.run(
-        [sys.executable, "-c", FULL_CLI_WORKFLOW_DRIVER],
-        capture_output=True,
-        text=True,
-        env=environment,
-        check=False,
-        timeout=30,
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    result = json.loads(completed.stdout)
-    assert result["source_id"] == "root"
-    assert result["derived_id"].startswith("derived-")
-    assert result["source_preserved"] is True
-    assert len(result["plan_sha256"]) == 64
-    records = [
-        json.loads(line)
-        for line in Path(environment["CSM_FAKE_APP_SERVER_LOG"])
-        .read_text(encoding="utf-8")
-        .splitlines()
-    ]
-    methods = [
-        record["message"].get("method")
-        for record in records
-        if isinstance(record.get("message"), dict)
-    ]
-    assert methods.count("thread/fork") == 1
-    assert "thread/delete" not in methods

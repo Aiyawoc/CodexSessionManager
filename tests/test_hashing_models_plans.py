@@ -9,7 +9,6 @@ import pytest
 from codex_session_manager.hashing import canonical_json_bytes, fingerprint
 from codex_session_manager.models import (
     ActionPlan,
-    CapabilityMatrix,
     ContractIssue,
     OperationCapability,
     OperationName,
@@ -19,7 +18,6 @@ from codex_session_manager.models import (
     ThreadHistoryMode,
 )
 from codex_session_manager.plans import PlanStore
-from codex_session_manager.protocol_profiles import AUDITED_PROTOCOL_PROFILES
 
 
 def _rebuild(model, **updates):
@@ -173,23 +171,6 @@ def test_operation_capability_requires_evidence_for_available_methods(
     archive = operation_capabilities[3]
     with pytest.raises(ValueError, match="method_evidence"):
         _rebuild(archive, method_evidence=())
-
-
-def test_capability_matrix_rejects_unknown_version_even_with_known_schema() -> None:
-    profile = next(iter(AUDITED_PROTOCOL_PROFILES.values()))
-    unknown = CapabilityMatrix(
-        codex_version="0.149.1",
-        codex_binary_sha256="a" * 64,
-        schema_sha256=profile.schema_sha256,
-        initialize_fingerprint="init",
-        stable_methods=tuple(sorted(profile.stable_methods)),
-        experimental_methods=tuple(sorted(profile.experimental_methods)),
-        schema_complete=True,
-    )
-
-    assert not unknown.write_enabled
-    with pytest.raises(ValueError, match="write capability disabled"):
-        unknown.require_write("thread/archive")
 
 
 def test_plan_store_rejects_changed_bytes_for_same_identity(app_paths, capabilities) -> None:

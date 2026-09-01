@@ -1,22 +1,26 @@
 from __future__ import annotations
 
+import json
 import shutil
 import time
+from pathlib import Path
 
 import pytest
 
+import codex_session_manager.app_server as app_server
 from codex_session_manager.app_server import (
     ALL_SOURCE_KINDS,
-    TRUSTED_WRITE_SCHEMAS,
     AppServerError,
     ProtocolError,
     RequestTimeout,
     SubprocessAppServer,
     _definition_has_property,
     _extract_methods,
+    _generate_schema,
     connect_and_probe,
     probe_capabilities,
 )
+from codex_session_manager.models import OperationName
 
 
 def test_schema_walker_ignores_non_string_titles_and_detects_features() -> None:
@@ -32,6 +36,54 @@ def test_schema_walker_ignores_non_string_titles_and_detects_features() -> None:
     }
     assert _extract_methods(schema) == {"thread/read"}
     assert _definition_has_property(schema, "ThreadForkParams", "lastTurnId")
+
+
+def test_schema_generation_returns_every_json_document_and_canonical_hash(
+    tmp_path: Path, monkeypatch
+) -> None:
+    def generate(command, **_kwargs):
+        output = Path(command[command.index("--out") + 1])
+        output.mkdir(parents=True)
+        (output / "ClientRequest.json").write_text(
+            json.dumps(
+                {
+                    "definitions": {
+                        "ClientRequestMethod": {
+                            "title": "ClientRequestMethod",
+                            "enum": ["initialize"],
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        (output / "v2/Extra.json").parent.mkdir()
+        (output / "v2/Extra.json").write_text('{"title":"Extra"}', encoding="utf-8")
+
+    monkeypatch.setattr(app_server.subprocess, "run", generate)
+    documents, methods, digest = _generate_schema(
+        "fake-codex", tmp_path / "schema", experimental=False
+    )
+
+    assert set(documents) == {"ClientRequest.json", "v2/Extra.json"}
+    assert methods == {"initialize"}
+    assert len(digest) == 64
+
+
+def test_probe_generation_failure_returns_five_unavailable_contracts(monkeypatch) -> None:
+    def fail(*_args, **_kwargs):
+        raise ProtocolError("schema generation failed")
+
+    monkeypatch.setattr(app_server, "_generate_schema", fail)
+    monkeypatch.setattr(app_server, "_codex_version", lambda _binary: "test")
+
+    capabilities = probe_capabilities(executable="fake-codex")
+
+    assert capabilities.probe_error == "schema generation failed"
+    assert set(capability.operation for capability in capabilities.operation_capabilities) == set(
+        OperationName
+    )
+    assert all(not capability.available for capability in capabilities.operation_capabilities)
 
 
 def test_request_deadline_is_not_extended_by_notifications() -> None:
@@ -150,12 +202,12 @@ def test_app_server_rejects_mixed_codex_data_roots(tmp_path, monkeypatch) -> Non
 
 
 @pytest.mark.integration
-def test_local_codex_schema_probe_is_exact_and_fail_closed() -> None:
+def test_local_codex_schema_probe_reports_operation_contracts() -> None:
     if shutil.which("codex") is None:
         pytest.skip("Codex CLI is unavailable")
     capabilities = probe_capabilities()
     repeated = probe_capabilities()
-    assert capabilities.schema_complete, capabilities.read_only_reason
+    assert capabilities.schema_complete
     assert capabilities.codex_binary_sha256
     assert capabilities.schema_sha256
     assert repeated.schema_sha256 == capabilities.schema_sha256
@@ -163,11 +215,10 @@ def test_local_codex_schema_probe_is_exact_and_fail_closed() -> None:
     # Codex 0.142.1 has no lastTurnId field; CSM adapts through a derived-only
     # rollback and never sends an undocumented parameter.
     assert isinstance(capabilities.fork_supports_last_turn_id, bool)
-    if (capabilities.codex_version, capabilities.schema_sha256) in TRUSTED_WRITE_SCHEMAS:
-        assert capabilities.write_enabled
-    else:
-        assert not capabilities.write_enabled
-        assert "audited write allowlist" in (capabilities.read_only_reason or "")
+    assert capabilities.operation(OperationName.INVENTORY_COMMON).available
+    assert capabilities.operation(OperationName.HISTORY_LEGACY).available
+    assert capabilities.operation(OperationName.ARCHIVE).available
+    assert capabilities.operation(OperationName.UNARCHIVE).available
 
 
 @pytest.mark.integration

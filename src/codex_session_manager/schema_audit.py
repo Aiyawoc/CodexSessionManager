@@ -14,11 +14,6 @@ from codex_session_manager.app_server import BASELINE_METHODS, probe_capabilitie
 from codex_session_manager.config import private_atomic_create
 from codex_session_manager.hashing import canonical_json_bytes, sealed_fingerprint, utc_now
 from codex_session_manager.models import CapabilityMatrix, FrozenModel
-from codex_session_manager.protocol_profiles import (
-    AUDITED_PROTOCOL_PROFILES,
-    ProtocolProfile,
-    nearest_profile,
-)
 from codex_session_manager.version import __version__
 
 
@@ -91,78 +86,6 @@ def _critical_fields(capabilities: CapabilityMatrix) -> dict[str, bool]:
     return {"ThreadForkParams.lastTurnId": capabilities.fork_supports_last_turn_id}
 
 
-def _method_differences(
-    capabilities: CapabilityMatrix,
-    profile: ProtocolProfile | None,
-) -> tuple[SchemaDifference, ...]:
-    if profile is None:
-        return (
-            SchemaDifference(
-                kind=SchemaDifferenceKind.UNKNOWN_PROFILE,
-                subject="App Server schema",
-                actual=capabilities.schema_sha256,
-            ),
-        )
-    actual_stable = set(capabilities.stable_methods)
-    actual_experimental = set(capabilities.experimental_methods)
-    expected_stable = set(profile.stable_methods)
-    expected_experimental = set(profile.experimental_methods)
-    changed_to_experimental = expected_stable & actual_experimental
-    changed_to_stable = expected_experimental & actual_stable
-    changed = changed_to_experimental | changed_to_stable
-    expected_all = expected_stable | expected_experimental
-    actual_all = actual_stable | actual_experimental
-    differences: list[SchemaDifference] = []
-    differences.extend(
-        SchemaDifference(
-            kind=SchemaDifferenceKind.ADDED_METHOD,
-            subject=method,
-            expected="absent",
-            actual=("stable" if method in actual_stable else "experimental"),
-        )
-        for method in sorted(actual_all - expected_all)
-    )
-    differences.extend(
-        SchemaDifference(
-            kind=SchemaDifferenceKind.REMOVED_METHOD,
-            subject=method,
-            expected=("stable" if method in expected_stable else "experimental"),
-            actual="absent",
-        )
-        for method in sorted((expected_all - actual_all) - changed)
-    )
-    differences.extend(
-        SchemaDifference(
-            kind=SchemaDifferenceKind.METHOD_STABILITY_CHANGED,
-            subject=method,
-            expected="stable",
-            actual="experimental",
-        )
-        for method in sorted(changed_to_experimental)
-    )
-    differences.extend(
-        SchemaDifference(
-            kind=SchemaDifferenceKind.METHOD_STABILITY_CHANGED,
-            subject=method,
-            expected="experimental",
-            actual="stable",
-        )
-        for method in sorted(changed_to_stable)
-    )
-    actual_fields = _critical_fields(capabilities)
-    differences.extend(
-        SchemaDifference(
-            kind=SchemaDifferenceKind.CRITICAL_FIELD_CHANGED,
-            subject=field,
-            expected=str(expected).lower(),
-            actual=str(actual_fields.get(field, False)).lower(),
-        )
-        for field, expected in sorted(profile.critical_fields.items())
-        if actual_fields.get(field, False) is not expected
-    )
-    return tuple(differences)
-
-
 def build_schema_audit_report(
     capabilities: CapabilityMatrix,
     *,
@@ -172,30 +95,18 @@ def build_schema_audit_report(
 ) -> SchemaAuditReport:
     """Classify an already-probed capability matrix without any writes."""
 
-    exact_profile = (
-        AUDITED_PROTOCOL_PROFILES.get((capabilities.codex_version, capabilities.schema_sha256))
-        if capabilities.codex_version is not None and capabilities.schema_sha256 is not None
-        else None
-    )
-    comparison = exact_profile or nearest_profile(capabilities.codex_version)
-    method_differences = _method_differences(capabilities, comparison)
-    if exact_profile is None and comparison is not None:
-        profile_difference = SchemaDifference(
+    differences = (
+        SchemaDifference(
             kind=SchemaDifferenceKind.UNKNOWN_PROFILE,
             subject="App Server schema",
-            expected=comparison.schema_sha256,
             actual=capabilities.schema_sha256,
-        )
-        differences = (profile_difference, *method_differences)
-    else:
-        differences = method_differences
+        ),
+    )
     missing = tuple(sorted(BASELINE_METHODS - set(capabilities.stable_methods)))
     if capabilities.schema_sha256 is None or capabilities.codex_binary_sha256 is None:
         conclusion = SchemaAuditConclusion.UNAVAILABLE_READ_ONLY
     elif missing or not capabilities.schema_complete:
         conclusion = SchemaAuditConclusion.INCOMPLETE_SCHEMA_READ_ONLY
-    elif exact_profile is not None and not differences and capabilities.write_enabled:
-        conclusion = SchemaAuditConclusion.TRUSTED_WRITE
     else:
         conclusion = SchemaAuditConclusion.UNKNOWN_SCHEMA_READ_ONLY
     write_enabled = conclusion is SchemaAuditConclusion.TRUSTED_WRITE
@@ -206,7 +117,7 @@ def build_schema_audit_report(
     elif conclusion is SchemaAuditConclusion.INCOMPLETE_SCHEMA_READ_ONLY:
         read_only_reason = "generated schema lacks required stable methods"
     else:
-        read_only_reason = "exact schema is not in the human-approved write profiles"
+        read_only_reason = "operation contract results are available in the capability matrix"
     report = SchemaAuditReport(
         generated_at=generated_at or utc_now(),
         tool_version=__version__,
@@ -221,9 +132,9 @@ def build_schema_audit_report(
         required_methods=tuple(sorted(BASELINE_METHODS)),
         missing_required_methods=missing,
         critical_fields=_critical_fields(capabilities),
-        compared_profile_version=(comparison.codex_version if comparison else None),
-        compared_profile_schema_sha256=(comparison.schema_sha256 if comparison else None),
-        exact_profile_match=exact_profile is not None,
+        compared_profile_version=None,
+        compared_profile_schema_sha256=None,
+        exact_profile_match=False,
         differences=differences,
         conclusion=conclusion,
         write_enabled=write_enabled,

@@ -26,6 +26,20 @@ class ThreadStatus(StrEnum):
     UNKNOWN = "unknown"
 
 
+class OperationName(StrEnum):
+    INVENTORY_COMMON = "inventory.common"
+    HISTORY_LEGACY = "history.legacy"
+    HISTORY_PAGINATED = "history.paginated"
+    ARCHIVE = "archive"
+    UNARCHIVE = "unarchive"
+
+
+class ThreadHistoryMode(StrEnum):
+    LEGACY = "legacy"
+    PAGINATED = "paginated"
+    UNKNOWN = "unknown"
+
+
 SAFE_INACTIVE_STATUSES: Final[frozenset[ThreadStatus]] = frozenset(
     {ThreadStatus.IDLE, ThreadStatus.NOT_LOADED}
 )
@@ -72,6 +86,48 @@ class RiskLevel(StrEnum):
     BLOCKED = "blocked"
 
 
+class ContractIssue(FrozenModel):
+    code: str
+    subject: str
+    expected: str | None = None
+    actual: str | None = None
+
+
+class ContractMethodEvidence(FrozenModel):
+    method: str
+    stability: Literal["stable", "experimental"]
+    negotiated: bool
+
+
+class OperationCapability(FrozenModel):
+    operation: OperationName
+    contract_id: str
+    available: bool
+    contract_rule_fingerprint: str
+    runtime_contract_fingerprint: str | None = None
+    required_methods: tuple[str, ...] = ()
+    method_evidence: tuple[ContractMethodEvidence, ...] = ()
+    issues: tuple[ContractIssue, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_contract_evidence(self) -> Self:
+        evidence_methods = tuple(evidence.method for evidence in self.method_evidence)
+        if len(evidence_methods) != len(set(evidence_methods)):
+            raise ValueError("method_evidence must not contain duplicate methods")
+        missing = set(self.required_methods) - set(evidence_methods)
+        if self.available and missing:
+            raise ValueError(
+                "available operation is missing method_evidence for: " + ", ".join(sorted(missing))
+            )
+        if self.available and self.runtime_contract_fingerprint is None:
+            raise ValueError("available operation requires runtime_contract_fingerprint")
+        if self.available and self.issues:
+            raise ValueError("available operation must not contain issues")
+        if not self.available and not self.issues:
+            raise ValueError("unavailable operation requires at least one issue")
+        return self
+
+
 class ThreadItemSnapshot(FrozenModel):
     id: str
     turn_id: str
@@ -114,6 +170,7 @@ class ThreadSnapshot(FrozenModel):
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
     status: ThreadStatus = ThreadStatus.UNKNOWN
+    history_mode: ThreadHistoryMode = ThreadHistoryMode.UNKNOWN
     archived: bool = False
     pinned: bool = False
     ephemeral: bool = False
@@ -167,6 +224,7 @@ class ThreadSnapshot(FrozenModel):
                 "created_at": self.created_at,
                 "updated_at": self.updated_at,
                 "archived": self.archived,
+                "history_mode": self.history_mode,
                 "pinned": self.pinned,
                 "ephemeral": self.ephemeral,
                 "parent_id": self.parent_id,
@@ -197,6 +255,7 @@ class ThreadSnapshot(FrozenModel):
                 "created_at": self.created_at,
                 "updated_at": self.updated_at,
                 "pinned": self.pinned,
+                "history_mode": self.history_mode,
                 "ephemeral": self.ephemeral,
                 "parent_id": self.parent_id,
                 "session_id": self.session_id,
@@ -226,43 +285,49 @@ class CapabilityMatrix(FrozenModel):
     experimental_api: bool = False
     fork_supports_last_turn_id: bool = False
     schema_complete: bool = False
-    read_only_reason: str | None = None
+    operation_capabilities: tuple[OperationCapability, ...]
+    probe_error: str | None = None
+
+    @model_validator(mode="after")
+    def validate_operation_capabilities(self) -> Self:
+        names = tuple(capability.operation for capability in self.operation_capabilities)
+        if len(names) != len(OperationName) or set(names) != set(OperationName):
+            raise ValueError("operation_capabilities must contain each operation exactly once")
+        return self
 
     @property
     def fingerprint(self) -> str:
         return fingerprint(self)
 
-    @property
-    def write_enabled(self) -> bool:
-        if not self.schema_complete or self.read_only_reason is not None:
-            return False
-        if (
-            self.codex_binary_sha256 is None
-            or self.codex_version is None
-            or self.schema_sha256 is None
-        ):
-            return False
-
-        from codex_session_manager.protocol_profiles import TRUSTED_WRITE_SCHEMAS
-
-        return (self.codex_version, self.schema_sha256) in TRUSTED_WRITE_SCHEMAS
-
     def supports(self, method: str) -> bool:
         return method in self.stable_methods or method in self.experimental_methods
 
+    def operation(self, name: OperationName) -> OperationCapability:
+        for capability in self.operation_capabilities:
+            if capability.operation == name:
+                return capability
+        raise ValueError(f"operation capability is unavailable from matrix: {name.value}")
+
+    def supports_operation(self, name: OperationName) -> bool:
+        return self.operation(name).available
+
+    def require_operation(self, name: OperationName) -> None:
+        capability = self.operation(name)
+        if capability.available:
+            return
+        details = "; ".join(issue.subject for issue in capability.issues)
+        suffix = f": {details}" if details else ""
+        raise ValueError(f"operation unavailable: {name.value}{suffix}")
+
     def require_write(self, method: str) -> None:
-        if not self.write_enabled:
-            reason = self.read_only_reason or "App Server schema is not trusted"
-            raise ValueError(f"write capability disabled: {reason}")
-        if method in self.stable_methods:
-            return
-        if method in self.experimental_methods and self.experimental_api:
-            return
-        if method in self.experimental_methods:
-            raise ValueError(
-                f"experimental method requires an explicitly negotiated connection: {method}"
-            )
-        raise ValueError(f"required App Server method is unavailable: {method}")
+        operations = {
+            "thread/archive": OperationName.ARCHIVE,
+            "thread/unarchive": OperationName.UNARCHIVE,
+        }
+        operation = operations.get(method)
+        if operation is None:
+            raise ValueError("no approved operation contract for App Server write: " + method)
+        self.require_operation(operation)
 
 
 class PlanTarget(FrozenModel):

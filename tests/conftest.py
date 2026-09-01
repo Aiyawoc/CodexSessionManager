@@ -10,7 +10,11 @@ import pytest
 from codex_session_manager.config import AppPaths
 from codex_session_manager.models import (
     CapabilityMatrix,
+    ContractMethodEvidence,
     ItemKind,
+    OperationCapability,
+    OperationName,
+    ThreadHistoryMode,
     ThreadItemSnapshot,
     ThreadSnapshot,
     ThreadStatus,
@@ -38,7 +42,42 @@ def app_paths(tmp_path: Path) -> AppPaths:
 
 
 @pytest.fixture
-def capabilities() -> CapabilityMatrix:
+def operation_capabilities() -> tuple[OperationCapability, ...]:
+    methods = {
+        OperationName.INVENTORY_COMMON: (
+            "initialize",
+            "thread/list",
+            "thread/read",
+            "thread/loaded/list",
+        ),
+        OperationName.HISTORY_LEGACY: ("thread/read",),
+        OperationName.HISTORY_PAGINATED: ("thread/turns/list",),
+        OperationName.ARCHIVE: ("thread/archive",),
+        OperationName.UNARCHIVE: ("thread/unarchive",),
+    }
+    return tuple(
+        OperationCapability(
+            operation=operation,
+            contract_id=f"{operation.value}.v1",
+            available=True,
+            contract_rule_fingerprint=f"rule-{operation.value}",
+            runtime_contract_fingerprint=f"runtime-{operation.value}",
+            required_methods=required_methods,
+            method_evidence=tuple(
+                ContractMethodEvidence(
+                    method=method,
+                    stability="stable",
+                    negotiated=False,
+                )
+                for method in required_methods
+            ),
+        )
+        for operation, required_methods in methods.items()
+    )
+
+
+@pytest.fixture
+def capabilities(operation_capabilities) -> CapabilityMatrix:
     profile = next(iter(AUDITED_PROTOCOL_PROFILES.values()))
     return CapabilityMatrix(
         codex_version=profile.codex_version,
@@ -50,6 +89,7 @@ def capabilities() -> CapabilityMatrix:
         experimental_methods=tuple(sorted(profile.experimental_methods)),
         experimental_api=True,
         schema_complete=True,
+        operation_capabilities=operation_capabilities,
     )
 
 
@@ -66,6 +106,7 @@ def snapshot_factory() -> Callable[..., ThreadSnapshot]:
         turns: tuple[TurnSnapshot, ...] | None = None,
         content_complete: bool = True,
         ephemeral: bool = False,
+        history_mode: ThreadHistoryMode = ThreadHistoryMode.LEGACY,
     ) -> ThreadSnapshot:
         if turns is None:
             item = ThreadItemSnapshot(
@@ -90,6 +131,7 @@ def snapshot_factory() -> Callable[..., ThreadSnapshot]:
             parent_id=parent_id,
             turns=turns,
             content_complete=content_complete,
+            history_mode=history_mode,
         )
 
     return create

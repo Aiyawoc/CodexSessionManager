@@ -10,12 +10,22 @@ from codex_session_manager.hashing import canonical_json_bytes, fingerprint
 from codex_session_manager.models import (
     ActionPlan,
     CapabilityMatrix,
+    ContractIssue,
+    OperationCapability,
+    OperationName,
     PlanAction,
     PlanTarget,
     RiskLevel,
+    ThreadHistoryMode,
 )
 from codex_session_manager.plans import PlanStore
 from codex_session_manager.protocol_profiles import AUDITED_PROTOCOL_PROFILES
+
+
+def _rebuild(model, **updates):
+    values = model.model_dump(mode="python")
+    values.update(updates)
+    return type(model)(**values)
 
 
 def test_canonical_hash_is_order_independent() -> None:
@@ -52,22 +62,117 @@ def test_action_plan_tamper_and_immutable_store(app_paths, capabilities) -> None
         store.load_action(path)
 
 
-def test_capability_matrix_requires_explicit_experimental_negotiation() -> None:
-    profile = next(iter(AUDITED_PROTOCOL_PROFILES.values()))
-    base = CapabilityMatrix(
-        codex_version=profile.codex_version,
-        codex_binary_sha256="a" * 64,
-        schema_sha256=profile.schema_sha256,
-        initialize_fingerprint="init",
-        stable_methods=tuple(sorted(profile.stable_methods)),
-        experimental_methods=tuple(sorted(profile.experimental_methods)),
-        schema_complete=True,
+def test_capability_matrix_queries_each_operation(operation_capabilities, capabilities) -> None:
+    assert tuple(capabilities.operation(name).operation for name in OperationName) == tuple(
+        OperationName
     )
-    base.require_write("thread/read")
-    with pytest.raises(ValueError, match="explicitly negotiated"):
-        base.require_write("thread/backgroundTerminals/list")
-    enabled = base.model_copy(update={"experimental_api": True})
-    enabled.require_write("thread/backgroundTerminals/list")
+    assert all(capabilities.supports_operation(name) for name in OperationName)
+    assert all(
+        set(capability.required_methods)
+        <= {evidence.method for evidence in capability.method_evidence}
+        for capability in operation_capabilities
+    )
+
+
+def test_operation_capability_validates_availability_evidence(operation_capabilities) -> None:
+    available = operation_capabilities[0]
+    assert available.runtime_contract_fingerprint is not None
+    assert not available.issues
+
+    with pytest.raises(ValueError, match="runtime_contract_fingerprint"):
+        _rebuild(available, runtime_contract_fingerprint=None)
+
+    with pytest.raises(ValueError, match="at least one issue"):
+        OperationCapability(
+            operation=OperationName.ARCHIVE,
+            contract_id="archive.v1",
+            available=False,
+            contract_rule_fingerprint="rule",
+            runtime_contract_fingerprint="runtime",
+        )
+
+    blocked = OperationCapability(
+        operation=OperationName.ARCHIVE,
+        contract_id="archive.v1",
+        available=False,
+        contract_rule_fingerprint="rule",
+        issues=(ContractIssue(code="missing_method", subject="thread/archive"),),
+    )
+    assert not blocked.available
+
+
+def test_capability_matrix_requires_exactly_one_of_each_operation(
+    operation_capabilities, capabilities
+) -> None:
+    with pytest.raises(ValueError, match="exactly once"):
+        _rebuild(
+            capabilities,
+            operation_capabilities=operation_capabilities[:-1],
+        )
+    with pytest.raises(ValueError, match="exactly once"):
+        _rebuild(
+            capabilities,
+            operation_capabilities=(*operation_capabilities[:-1], operation_capabilities[0]),
+        )
+
+
+def test_capability_fingerprint_tracks_runtime_evidence_not_archive_support(
+    capabilities,
+) -> None:
+    assert capabilities.supports_operation(OperationName.ARCHIVE)
+    for field in ("codex_version", "codex_binary_sha256", "schema_sha256"):
+        changed = capabilities.model_copy(update={field: f"changed-{field}"})
+        assert changed.supports_operation(OperationName.ARCHIVE)
+        assert changed.fingerprint != capabilities.fingerprint
+
+
+def test_require_write_allows_only_approved_archive_operations(capabilities) -> None:
+    capabilities.require_write("thread/archive")
+    capabilities.require_write("thread/unarchive")
+    for method in (
+        "thread/start",
+        "thread/fork",
+        "thread/rollback",
+        "thread/inject_items",
+        "thread/name/set",
+    ):
+        with pytest.raises(
+            ValueError,
+            match=f"no approved operation contract for App Server write: {method}",
+        ):
+            capabilities.require_write(method)
+
+
+def test_unavailable_operation_is_rejected(operation_capabilities, capabilities) -> None:
+    blocked = operation_capabilities[3].model_copy(
+        update={
+            "available": False,
+            "runtime_contract_fingerprint": None,
+            "issues": (ContractIssue(code="missing_method", subject="thread/archive"),),
+        }
+    )
+    matrix = _rebuild(
+        capabilities,
+        operation_capabilities=(*operation_capabilities[:3], blocked, *operation_capabilities[4:]),
+    )
+    assert not matrix.supports_operation(OperationName.ARCHIVE)
+    with pytest.raises(ValueError, match="archive"):
+        matrix.require_write("thread/archive")
+
+
+def test_history_mode_is_bound_to_management_and_backup_fingerprints(snapshot_factory) -> None:
+    legacy = snapshot_factory(history_mode=ThreadHistoryMode.LEGACY)
+    paginated = legacy.model_copy(update={"history_mode": ThreadHistoryMode.PAGINATED})
+    assert legacy.management_fingerprint != paginated.management_fingerprint
+    assert legacy.backup_fingerprint != paginated.backup_fingerprint
+
+
+def test_operation_capability_requires_evidence_for_available_methods(
+    operation_capabilities,
+) -> None:
+    archive = operation_capabilities[3]
+    with pytest.raises(ValueError, match="method_evidence"):
+        _rebuild(archive, method_evidence=())
 
 
 def test_capability_matrix_rejects_unknown_version_even_with_known_schema() -> None:

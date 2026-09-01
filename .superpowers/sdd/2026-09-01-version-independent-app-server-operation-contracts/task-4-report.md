@@ -37,3 +37,18 @@ Success: no issues found in 4 source files
 ```
 
 未运行真实账号写入、bundle、签名、公证或发布验收；这些仍需目标环境门禁。
+
+## 主 Agent 干净提交复验
+
+- 主提交：`8898990 refactor(验收): 输出逐操作契约证据`。
+- 首次 `git archive HEAD` 复验为 `24 passed, 1 failed`；唯一失败是 doctor 测试错误地要求全局 `report["ok"]` 为真，而干净源码快照按预期找不到仅随 bundle 提供的 `age` 与 `age-keygen`。
+- 最小修复：`6704be6 test(验收): 隔离 doctor 环境依赖`，移除与该测试目标无关的环境总状态断言；仍明确断言公共盘点门禁成功，归档单项失败且 `required=False`。
+- 新的干净 `git archive HEAD` 复验：25 个聚焦测试全部通过，Ruff 通过，4 个源文件严格 mypy 通过。
+- 索引仅包含 Task 4 审核过的差异；同文件中的永久删除退役改动继续保留为未暂存用户工作。
+
+## Round 1 脱敏修复
+
+- 根因：原 POSIX/Windows 正则在空格处结束，导致已替换的路径前缀后仍暴露私有目录和文件名；`C:/` 还可能先命中 POSIX 分支。
+- RED：新增 8 个回归用例，覆盖 POSIX home/绝对路径的未加引号与加引号形式，以及 Windows 斜杠/反斜杠两种形式；基线结果为 8 failed。
+- GREEN：`_portable_probe_error()` 保留路径起点之前的诊断前缀；`<home>` 后缀和私有路径起点后的内容整体替换，安全偏向过度脱敏，继续限制 512 字符并在替换后复验 sealed report。
+- 验证：33 focused tests passed（7 个既有 DeprecationWarning）、Ruff passed、mypy passed；未执行真实账号、bundle、签名、公证或发布验收。

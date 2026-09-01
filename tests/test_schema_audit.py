@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -161,15 +162,66 @@ def test_schema_generation_failure_is_unavailable_and_report_remains_verifiable(
     report.verify()
 
 
+@pytest.mark.parametrize(
+    ("private_path", "private_fragments"),
+    (
+        (
+            str(Path.home() / "Private Folder" / "codex"),
+            ("Private Folder", "codex"),
+        ),
+        (
+            f'"{Path.home() / "Private Folder" / "codex"}"',
+            ("Private Folder", "codex"),
+        ),
+        (
+            "/private-test-user/Private Folder/codex",
+            ("private-test-user", "Private Folder", "codex"),
+        ),
+        (
+            '"/private-test-user/Private Folder/codex"',
+            ("private-test-user", "Private Folder", "codex"),
+        ),
+        (
+            r"C:\Users\private-test-user\Private Folder\codex.exe",
+            ("private-test-user", "Private Folder", "codex.exe"),
+        ),
+        (
+            r'"C:\Users\private-test-user\Private Folder\codex.exe"',
+            ("private-test-user", "Private Folder", "codex.exe"),
+        ),
+        (
+            r"C:/Users/private-test-user/Private Folder/codex.exe",
+            ("private-test-user", "Private Folder", "codex.exe"),
+        ),
+        (
+            r'"C:/Users/private-test-user/Private Folder/codex.exe"',
+            ("private-test-user", "Private Folder", "codex.exe"),
+        ),
+    ),
+)
+def test_probe_error_redacts_full_private_paths_with_spaces(
+    private_path: str, private_fragments: tuple[str, ...]
+) -> None:
+    prefix = "schema generation failed while opening "
+    error = prefix + private_path
+    report = build_schema_audit_report(_capabilities(available=frozenset(), probe_error=error))
+
+    assert report.probe_error is not None
+    assert report.probe_error.startswith(prefix)
+    for private_fragment in private_fragments:
+        assert private_fragment not in report.probe_error
+    report.verify()
+
+
 def test_probe_error_redacts_home_user_and_private_executable_path() -> None:
     error = (
-        "schema generation failed for /Users/ethen/private/codex/bin/codex "
+        "schema generation failed for /Users/private-test-user/private/codex/bin/codex "
         "at /private/account/bin/codex"
     )
     report = build_schema_audit_report(_capabilities(available=frozenset(), probe_error=error))
 
     assert report.probe_error is not None
-    assert "/Users/ethen" not in report.probe_error
+    assert "/Users/private-test-user" not in report.probe_error
     assert "/private/account" not in report.probe_error
     assert "schema generation failed" in report.probe_error
     report.verify()

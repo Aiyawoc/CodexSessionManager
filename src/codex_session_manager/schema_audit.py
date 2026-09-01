@@ -29,8 +29,8 @@ class SchemaAuditConclusion(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
-_ABSOLUTE_PATH = re.compile(r"(?<![\w])/(?:[^\s,;:()\]\}]+/)+[^\s,;:()\]\}]+")
-_WINDOWS_PATH = re.compile(r"(?<![\w])[A-Za-z]:[\\/](?:[^\s,;:()\]\}]+[\\/])*[^\s,;:()\]\}]+")
+_PRIVATE_PATH_START = re.compile(r"(?<![\w])['\"]?(?:[A-Za-z]:[\\/]|/(?=[^/\s,;:()\]\}]+/))")
+_HOME_PATH_SUFFIX = re.compile(r"<home>[\\/].*")
 
 
 def _portable_probe_error(error: str | None) -> str | None:
@@ -41,8 +41,10 @@ def _portable_probe_error(error: str | None) -> str | None:
     message = str(error).strip() or "unknown probe error"
     home = str(Path.home().resolve(strict=False))
     message = message.replace(home, "<home>")
-    message = _ABSOLUTE_PATH.sub("<private-path>", message)
-    message = _WINDOWS_PATH.sub("<private-path>", message)
+    message = _HOME_PATH_SUFFIX.sub("<home>", message)
+    path_start = _PRIVATE_PATH_START.search(message)
+    if path_start is not None:
+        message = f"{message[: path_start.start()]}<private-path>"
     username = Path.home().name
     if username:
         message = re.sub(rf"(?<![\w]){re.escape(username)}(?![\w])", "<user>", message)

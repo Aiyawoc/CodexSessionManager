@@ -634,6 +634,8 @@ class CleanupExecutor:
         confirmation: str | None = None,
     ) -> tuple[str, ...]:
         plan.verify()
+        if confirmation != plan.plan_id:
+            raise ValueError("cleanup confirmation must equal the exact plan id")
         self.audit.verify_chain()
         if plan.capability_fingerprint != self.capabilities.fingerprint:
             raise ValueError("App Server capability drift invalidated the plan")

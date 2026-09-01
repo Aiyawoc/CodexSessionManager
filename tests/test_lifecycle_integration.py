@@ -146,7 +146,7 @@ def test_real_age_backup_archive_and_unarchive_lifecycle(
             inventory=inventory,  # type: ignore[arg-type]
             capabilities=capabilities,
             audit=audit,
-        ).apply(archive_plan)
+        ).apply(archive_plan, confirmation=archive_plan.plan_id)
         assert archived == ("thread-1",)
         assert client.archived
 

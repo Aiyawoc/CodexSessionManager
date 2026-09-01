@@ -576,6 +576,9 @@ def test_cli_derived_trim_fails_closed_without_app_server_writes(tmp_path: Path)
         if isinstance(record.get("message"), dict)
     }
     assert not methods & {
+        "thread/archive",
+        "thread/unarchive",
+        "thread/delete",
         "thread/fork",
         "thread/rollback",
         "thread/start",

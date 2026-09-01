@@ -297,13 +297,16 @@ class _CleanupClient:
 
     def __init__(self, *, timeout: bool = False) -> None:
         self.timeout = timeout
+        self.calls = 0
         self.archive_calls = 0
 
     def loaded_thread_ids(self):
+        self.calls += 1
         return ()
 
     def archive_thread(self, thread_id: str) -> None:
         assert thread_id == "root"
+        self.calls += 1
         self.archive_calls += 1
         if self.timeout:
             raise RequestTimeout("thread/archive", 1.0)
@@ -318,6 +321,41 @@ class _CleanupInventory:
     def list(self, **_kwargs):
         self.calls += 1
         return (self.before,) if self.calls == 1 else (self.after,)
+
+
+@pytest.mark.parametrize(
+    "confirmation",
+    (None, "wrong-plan-id"),
+    ids=("missing-confirmation", "wrong-confirmation"),
+)
+def test_cleanup_apply_requires_exact_confirmation_before_side_effects(
+    tmp_path: Path,
+    app_paths,
+    capabilities,
+    snapshot_factory,
+    confirmation: str | None,
+) -> None:
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    before = snapshot_factory("root", updated_at=now - timedelta(days=120))
+    after = before.model_copy(update={"archived": True})
+    plan = CleanupPlanner().plan_archive((before,), capabilities, now=now)
+    client = _CleanupClient()
+    inventory = _CleanupInventory(before, after)
+
+    with AuditStore(app_paths) as audit:
+        _record_backup(audit, before, tmp_path / "confirmation.csmbackup")
+        with pytest.raises(ValueError, match="cleanup confirmation must equal the exact plan id"):
+            CleanupExecutor(
+                client=client,  # type: ignore[arg-type]
+                inventory=inventory,  # type: ignore[arg-type]
+                capabilities=capabilities,
+                audit=audit,
+            ).apply(plan, confirmation=confirmation)
+
+        assert client.calls == 0
+        assert inventory.calls == 0
+        assert audit.connection.execute("SELECT COUNT(*) FROM operations").fetchone()[0] == 0
+        assert [event.event_type for event in audit.iter_events(limit=10)] == ["backup.evidence"]
 
 
 def test_archive_apply_checks_backup_and_never_retries_ambiguous_timeout(
@@ -337,7 +375,7 @@ def test_archive_apply_checks_backup_and_never_retries_ambiguous_timeout(
             inventory=inventory,  # type: ignore[arg-type]
             capabilities=capabilities,
             audit=audit,
-        ).apply(plan)
+        ).apply(plan, confirmation=plan.plan_id)
         audit.verify_chain()
     assert completed == ("root",)
     assert client.archive_calls == 1
@@ -375,7 +413,7 @@ def test_archive_apply_reconciles_ambiguous_request_error(
             audit=audit,
         )
         if postcondition_satisfied:
-            assert executor.apply(plan) == ("root",)
+            assert executor.apply(plan, confirmation=plan.plan_id) == ("root",)
             event = next(
                 event
                 for event in audit.iter_events(limit=10)
@@ -389,7 +427,7 @@ def test_archive_apply_reconciles_ambiguous_request_error(
                 RuntimeError,
                 match=r"postcondition unresolved.*response failed after write",
             ):
-                executor.apply(plan)
+                executor.apply(plan, confirmation=plan.plan_id)
 
     assert client.archive_calls == 1
 
@@ -435,7 +473,7 @@ def test_unarchive_applies_only_archived_closure_members(
             inventory=Inventory(),  # type: ignore[arg-type]
             capabilities=capabilities,
             audit=audit,
-        ).apply(plan)
+        ).apply(plan, confirmation=plan.plan_id)
 
     assert completed == ("root",)
     assert client.calls == expected_calls
@@ -477,7 +515,7 @@ def test_historical_rename_plan_is_rejected_without_a_client_write(
             inventory=_CleanupInventory(snapshot, snapshot),  # type: ignore[arg-type]
             capabilities=capabilities,
             audit=audit,
-        ).apply(plan)
+        ).apply(plan, confirmation=plan.plan_id)
 
     assert client.archive_calls == 0
 
@@ -496,7 +534,7 @@ def test_archive_apply_rejects_task_history_drift_before_client_write(
             inventory=_CleanupInventory(drifted, drifted),  # type: ignore[arg-type]
             capabilities=capabilities,
             audit=audit,
-        ).apply(plan)
+        ).apply(plan, confirmation=plan.plan_id)
 
 
 def test_archive_apply_rejects_capability_drift_before_client_write(
@@ -514,7 +552,7 @@ def test_archive_apply_rejects_capability_drift_before_client_write(
             inventory=_CleanupInventory(snapshot, snapshot),  # type: ignore[arg-type]
             capabilities=drifted_capabilities,
             audit=audit,
-        ).apply(plan)
+        ).apply(plan, confirmation=plan.plan_id)
 
     assert client.archive_calls == 0
 
@@ -539,7 +577,7 @@ def test_replaced_backup_invalidates_cleanup_gate(
             audit=audit,
         )
         with pytest.raises(ValueError, match="verified encrypted backup"):
-            executor.apply(plan)
+            executor.apply(plan, confirmation=plan.plan_id)
 
 
 def test_audit_refuses_ciphertext_replaced_after_full_verification(

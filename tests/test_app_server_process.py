@@ -563,7 +563,7 @@ def test_cli_derived_trim_fails_closed_without_app_server_writes(tmp_path: Path)
     )
 
     assert applied.returncode != 0
-    assert "no approved operation contract" in (applied.stderr + applied.stdout)
+    assert "No such command 'apply'" in (applied.stderr + applied.stdout)
     records = [
         json.loads(line)
         for line in Path(environment["CSM_FAKE_APP_SERVER_LOG"])

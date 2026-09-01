@@ -7,6 +7,7 @@
 - 当前基线：`main` 当前提交；单项历史收口文档各自保留当时的精确基线。
 - 当前阶段：继续完成 v1.1 其它功能验收；2.4 上下文应用执行层不再强行推进。
 - 2.4 判定：`CLOSED_WITH_UPSTREAM_BLOCKER`
+- 2.5 判定：`CLOSED_WITH_UPSTREAM_BLOCKER`
 - 已证明：上下文审查与投影计划可生成；源任务在失败后保持完整。
 - 未证明：派生投影可以持久化；人工投影可以安装回原任务；敏感信息已经从 Codex 历史或活动上下文中删除。
 - 后续顺序：先完成 v1.1 其它验收；再优先实现敏感信息修改计划与受支持目标；最后研究其它官方上下文应用方向。
@@ -17,7 +18,7 @@
 - 应用到原任务：不可用；
 - 派生投影：当前真实 round-trip 失败，保持 `blocked_upstream`；
 - 敏感信息确定性 `Replace/Redact/Protect`：v1.1 其它验收完成后的下一优先级；
-- 2.5 永久删除：固定 14 天等待已取消；继续按用户主动单选、独立单根计划、CSM 可信归档证据、与归档事件绑定的当前有效备份、进程/loaded/后台终端复核和单次精确输入“确认删除”验收。只有完整备份仍不具备删除资格。
+- 2.5 永久删除：真实 `thread/delete` 出现根已删除但 descendant 保留的部分提交；资格盘点、不可变计划和审查可用，GUI/CLI 应用保持 `blocked_upstream`。原有单根、可信归档、archive-bound 当前备份、进程和确认门禁不降低。
 
 ## 现行入口
 
@@ -25,6 +26,7 @@
 
 - [`local-controlled-v1.1.0.md`](local-controlled-v1.1.0.md)：v1.1.0 本机两步受控验收主 Runbook。
 - [`v1.1.0-phase-2.4-context-projection-closure.md`](v1.1.0-phase-2.4-context-projection-closure.md)：2.4 上下文投影的正式结论、真实证据和停止边界。对 2.4 的冲突表述以该文件为准。
+- [`v1.1.0-phase-2.5-permanent-purge-closure.md`](v1.1.0-phase-2.5-permanent-purge-closure.md)：2.5 永久删除的部分提交证据、上游根因、执行停止边界和重新开放门禁。对 2.5 的冲突表述以该文件为准。
 
 ### 首次交付与正式发布
 

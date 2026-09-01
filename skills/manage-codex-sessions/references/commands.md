@@ -35,7 +35,7 @@ csm purge plan
 csm purge apply PLAN.json --confirm "确认删除"
 ```
 
-固定归档等待期已取消，但永久删除仍不能由备份直接解锁。目标必须先由 CSM 完成归档并留下绑定同一备份 manifest 的可信归档证据。GUI 中一次只单选一个已归档根并由用户主动点击“删除”；MCP、Hook 和自动清理没有永久删除入口。
+固定归档等待期已取消，但永久删除仍不能由备份直接解锁。目标必须先由 CSM 完成归档并留下绑定同一备份 manifest 的可信归档证据。当前 `csm purge apply` 和 GUI 删除按钮因真实部分提交证据按 `CLOSED_WITH_UPSTREAM_BLOCKER` 关闭；只能使用 `csm purge plan` 审查资格和范围。MCP、Hook 和自动清理没有永久删除入口。
 
 `reconcile` 只在 Codex App 原生任务工具已完成归档后使用；它不执行 Codex 写入。
 

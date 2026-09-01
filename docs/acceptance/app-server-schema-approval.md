@@ -25,7 +25,7 @@ codex app-server generate-json-schema --experimental --out "$SCHEMA_REVIEW_ROOT/
 至少逐项审查：
 
 - `thread/list`、`thread/read`、`thread/loaded/list` 的分页、状态和内容字段；
-- `thread/archive`、`thread/unarchive`、`thread/delete`、`thread/name/set` 的请求与响应；
+- `thread/archive`、`thread/unarchive`、`thread/delete`、`thread/name/set` 的请求与响应；`thread/delete` 还必须使用由同一候选支持的迁移状态库验证根与完整 descendants、错误后回读、App Server 重启和 Desktop 重启，禁止只凭根 ID 消失批准；
 - `thread/fork`、`thread/rollback`、`thread/start`、`thread/inject_items` 的写入、持久化和后置条件；上下文投影还必须单独完成写后读取、服务重启、Codex Desktop 重启、后续模型可见和 reconcile 的完整 round-trip probe；
 - `ThreadForkParams.lastTurnId` 等由 CSM 分支选择依赖的关键字段；
 - 方法新增、移除、稳定/实验迁移，以及未知字段的保留语义。

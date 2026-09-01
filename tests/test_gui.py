@@ -368,7 +368,8 @@ def test_archived_task_does_not_offer_archive_action(qtbot, app_paths, snapshot_
 
     window._select_task_in_list("archived")
     assert not window.ui.taskArchiveButton.isEnabled()
-    assert window.ui.taskDeleteButton.isEnabled()
+    assert not window.ui.taskDeleteButton.isEnabled()
+    assert "上游" in window.ui.taskDeleteButton.toolTip()
 
     window._select_task_in_list("active")
     assert window.ui.taskArchiveButton.isEnabled()
@@ -377,6 +378,18 @@ def test_archived_task_does_not_offer_archive_action(qtbot, app_paths, snapshot_
     window._select_task_in_list("running")
     assert not window.ui.taskArchiveButton.isEnabled()
     assert not window.ui.taskDeleteButton.isEnabled()
+
+
+def test_failed_task_operation_refreshes_inventory(qtbot, app_paths) -> None:
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+    refreshes: list[bool] = []
+    window.load_task_list = lambda: refreshes.append(True)  # type: ignore[method-assign]
+    window._task_write_in_progress = True
+
+    window._finish_task_operation({"error": "write result is ambiguous"}, lambda _value: None)
+
+    assert refreshes == [True]
 
 
 def test_message_box_message_label_uses_application_text_color(qtbot) -> None:

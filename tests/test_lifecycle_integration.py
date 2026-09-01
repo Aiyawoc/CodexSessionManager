@@ -169,6 +169,7 @@ def test_real_age_backup_archive_and_purge_lifecycle(
             "assert_no_other_codex_processes",
             staticmethod(lambda *, controlled_pid: None),
         )
+        monkeypatch.setattr("codex_session_manager.cleanup.PURGE_EXECUTION_ENABLED", True)
         purged = CleanupExecutor(
             client=client,  # type: ignore[arg-type]
             inventory=inventory,  # type: ignore[arg-type]

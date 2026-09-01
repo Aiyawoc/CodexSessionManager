@@ -5,7 +5,7 @@
 
 1. 只读盘点、协议审计和 MCP/GUI 请求链检查；
 2. 在停止 Codex、完成并复验排除认证文件的 .codex 数据加密回滚快照后，只对已经确认属于本项目的
-   少量任务执行真实归档、对话标题修改、记忆文件修改，以及用户明确单选的一个已归档根的永久删除；上下文只验收审查、投影计划和源任务保护，跳过应用执行。
+   少量任务执行真实归档、对话标题修改和记忆文件修改；上下文只验收审查、投影计划和源任务保护，永久删除与上下文应用均跳过执行。
 
 本计划不是生产发布，也不是把 .codex 打包给其他机器。.codex 快照仍可能包含真实对话
 和其他敏感数据，但脚本会排除根目录认证文件（`auth.json`、`credentials*.json`、
@@ -387,9 +387,9 @@ Codex desktop 只能准备建议：
 不要调用不存在的写入工具，也不要声称已经写入记忆文件。
 ~~~
 
-### 2.5 永久删除：即时但独立的人工子步骤
+### 2.5 永久删除：`CLOSED_WITH_UPSTREAM_BLOCKER`
 
-固定 14 天等待期已取消；同一轮由 CSM 成功归档的任务可以立即进入人工永久删除验收。但完整备份本身不能解锁删除，CSM 的 purge 计划仍要求：
+固定 14 天等待期已取消，但本轮真实写入发生部分提交，当前不得再执行永久删除。以下条件保留为未来重新开放门禁，而不是当前操作步骤：
 
 - 根和完整 descendants 已归档、inactive、非 pinned/ephemeral；
 - 每个受影响任务都有 archive-bound 的已验证加密逻辑备份；
@@ -399,13 +399,7 @@ Codex desktop 只能准备建议：
 - 只选择一个已经确认属于 CSM_PROJECT_ROOT 的根；
 - 计划 ID 只读展示，人工只需单次精确输入“确认删除”。
 
-完成 2.3 并确认归档与审计证据后，从同一个精确根 ID 打开：
-
-~~~bash
-"$CSM_CLI" gui open --thread "$ARCHIVE_THREAD_ID"
-~~~
-
-关闭其它 Codex Desktop/CLI 进程，确保该任务未在其它窗口加载。随后在 GUI 中单选该已归档根并点击“删除”，确认：
+未来只有在批准与当前状态迁移匹配的 App Server，并先于临时隔离数据根完成完整 round-trip 后，才能重新编写实体操作步骤。重新开放验收仍必须确认：
 
 1. 计划只有这个根及其完整 descendants；
 2. CSM 可信归档记录和 archive-bound 当前 backup evidence 均满足；
@@ -413,10 +407,9 @@ Codex desktop 只能准备建议：
 4. 计划 ID 与单根/完整 descendants 范围只读显示正确；
 5. 唯一一处确认输入精确短语“确认删除”。
 
-删除后重新运行 `threads show` 和 `audit verify`，保存“目标已不存在”的回读结果、purge plan SHA-256、审计事件和备份 manifest SHA-256；不保存正文。该证据层级必须标记为“真实本机 App Server 永久删除”，不能由 fixture、offscreen GUI 或只有计划的结果替代。
+重新开放后的删除必须运行 `threads show` 和 `audit verify`，同时保存根和全部 descendants 均不存在的回读结果、purge plan SHA-256、审计事件和备份 manifest SHA-256；不保存正文。只证明根不存在不再构成通过证据，fixture、offscreen GUI 或只有计划的结果也不能替代。
 
-任何不满足项都应取消。不得用 App Server 原始方法、MCP 工具、脚本或直接文件删除
-绕过 purge 计划。
+当前 GUI/CLI 应用均失败关闭。不得用 App Server 原始方法、MCP 工具、脚本或直接文件删除绕过 blocker 或 purge 计划。
 
 #### 2026-09-01 本轮门禁记录
 
@@ -426,7 +419,10 @@ Codex desktop 只能准备建议：
 - 首次实体 GUI 永久删除尝试在任何 `thread/delete` 之前被 `thread/backgroundTerminals/list` 的 `-32600 thread not found` 停止。根因是该接口无法寻址 `archived + notLoaded` 任务；实现仅对同一任务的这一精确错误组合归一化为空终端结果，其它状态、错误码或 ID 继续失败关闭。
 - 第二次实体 GUI 尝试通过后台终端复核后，又在任何 `thread/delete` 之前被进程门禁停止。只读复现确认 `SubprocessAppServer.pid` 是 Codex JavaScript 启动包装器，而 `ps` 同时显示它拉起的原生 `codex app-server` 子进程；旧门禁只排除包装器 PID，因而把同一受控 App Server 的子进程误判为“其它 Codex”。修复改为只排除该精确受控 PID 的完整后代进程树，任何无关 Codex 进程仍失败关闭。失败后官方 App Server 再次确认闭包 2 个任务均存在、已归档且为 `notLoaded`，因此两次尝试都不能记为真实永久删除通过。
 - 等待时间定位：真实账号只读计时中，连接与协议探测为 0.821 秒；1127 个任务的完整谱系摘要复核为 8.555 秒；目标根和一个 descendant 的内容深读为 0.029 秒。旧删除执行会在初次检查和最终复核中各把全账号 1127 个任务的完整内容深读一遍；修复复用现有 `list_for_targets`，两轮仍各自重建完整摘要谱系、复核闭包并深读目标内容，但不再深读无关任务。
-- 下一步：完成本次回归、fresh bundle 验收后，在实体 GUI 中再次单选该已归档根，确认只出现一次输入并精确填写“确认删除”；随后回读目标不存在状态、purge 审计事件和既有备份证据。
+- 第三次实体 GUI 尝试首次真正调用 `thread/delete`，App Server 返回 `-32603` 和 `no such table: agent_jobs`。写后回读确认根已不存在，但一个 descendant 仍存在、已归档、`notLoaded` 且完整历史可读，因此这是部分提交而不是失败前零写入。审计中只有这一次 purge 写入事件。
+- 用户第二次点击删除时，GUI 仍持有陈旧根并在新计划阶段报“任务已不存在”；没有再次调用 `thread/delete`。CSM 现改为任何写错误后自动刷新任务列表，且不重试可能已提交的 JSON-RPC 写错误。
+- 上游根因：批准的全局 Codex `0.142.1` 删除实现仍访问 `agent_jobs`，而本机较新 bundled Codex `0.151.0-alpha.7.2` 包含删除该表的迁移；0.142.1 又会先删 rollout、后清理状态库。官方删除闭包同时没有覆盖 CSM 从 `thread/read` 恢复出的 descendant。未直接读取 SQLite；结论来自官方源码、二进制静态字符串、错误和写后 App Server 回读。
+- 阶段结论：2.5 按 [`CLOSED_WITH_UPSTREAM_BLOCKER`](v1.1.0-phase-2.5-permanent-purge-closure.md) 关闭。当前只保留永久删除资格盘点、计划和审查，GUI/CLI 应用失败关闭；残留 descendant 不重试、不直接修补 Codex 存储。重新开放前必须批准与当前数据迁移匹配的 App Server，并在隔离数据根完成根和 descendant 的重启后完整 round-trip。
 
 ## 3. 回滚和收尾
 

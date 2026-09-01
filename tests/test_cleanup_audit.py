@@ -17,6 +17,7 @@ from codex_session_manager.models import (
     BackupManifest,
     BackupVerification,
     PlanAction,
+    PlanTarget,
     ThreadSnapshot,
     ThreadStatus,
 )
@@ -179,6 +180,90 @@ def test_archive_apply_checks_backup_and_never_retries_ambiguous_timeout(
         audit.verify_chain()
     assert completed == ("root",)
     assert client.archive_calls == 1
+
+
+@pytest.mark.parametrize("postcondition_satisfied", (True, False))
+def test_archive_apply_reconciles_ambiguous_request_error(
+    tmp_path: Path,
+    app_paths,
+    capabilities,
+    snapshot_factory,
+    postcondition_satisfied: bool,
+) -> None:
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    before = snapshot_factory("root", updated_at=now - timedelta(days=120))
+    after = before.model_copy(update={"archived": postcondition_satisfied})
+    plan = CleanupPlanner().plan_archive((before,), capabilities, now=now)
+
+    class Client(_CleanupClient):
+        def archive_thread(self, thread_id: str) -> None:
+            super().archive_thread(thread_id)
+            raise RequestError(
+                "thread/archive",
+                {"code": -32603, "message": "response failed after write"},
+            )
+
+    client = Client()
+    inventory = _CleanupInventory(before, after)
+    with AuditStore(app_paths) as audit:
+        _record_backup(audit, before, tmp_path / "request-error.csmbackup")
+        executor = CleanupExecutor(
+            client=client,  # type: ignore[arg-type]
+            inventory=inventory,  # type: ignore[arg-type]
+            capabilities=capabilities,
+            audit=audit,
+        )
+        if postcondition_satisfied:
+            assert executor.apply(plan) == ("root",)
+            event = next(
+                event
+                for event in audit.iter_events(limit=10)
+                if event.event_type == "archive.apply"
+            )
+            assert event.details["reconciled_app_server_errors"] == [
+                "thread/archive failed (-32603): response failed after write"
+            ]
+        else:
+            with pytest.raises(
+                RuntimeError,
+                match=r"postcondition unresolved.*response failed after write",
+            ):
+                executor.apply(plan)
+
+    assert client.archive_calls == 1
+
+
+def test_purge_apply_is_closed_before_inventory_or_app_server(
+    app_paths,
+    capabilities,
+) -> None:
+    plan = ActionPlan.create(
+        action=PlanAction.PURGE,
+        capability_fingerprint=capabilities.fingerprint,
+        targets=(
+            PlanTarget(
+                root_thread_id="root",
+                affected_thread_ids=("root",),
+                snapshot_fingerprints={"root": "f" * 64},
+            ),
+        ),
+        options={"manual_only": True, "trusted_archive_required": True},
+    )
+
+    class UnexpectedCall:
+        def __getattr__(self, name: str):
+            raise AssertionError(f"unexpected call while purge is blocked: {name}")
+
+    with (
+        AuditStore(app_paths) as audit,
+        pytest.raises(RuntimeError, match="CLOSED_WITH_UPSTREAM_BLOCKER"),
+    ):
+        CleanupExecutor(
+            client=UnexpectedCall(),  # type: ignore[arg-type]
+            inventory=UnexpectedCall(),  # type: ignore[arg-type]
+            capabilities=capabilities,
+            audit=audit,
+        ).apply(plan, confirmation="确认删除")
 
 
 @pytest.mark.parametrize(
@@ -504,6 +589,7 @@ def test_archived_not_loaded_purge_accepts_terminal_thread_not_found(
             "codex_session_manager.cleanup.ProcessGuard.assert_no_other_codex_processes",
             lambda *, controlled_pid: None,
         )
+        monkeypatch.setattr("codex_session_manager.cleanup.PURGE_EXECUTION_ENABLED", True)
 
         completed = CleanupExecutor(
             client=client,  # type: ignore[arg-type]

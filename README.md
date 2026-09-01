@@ -17,7 +17,7 @@ Long-running Codex work spreads conversations across projects and lets context g
 - Group and search Codex conversations by project, activity, source, and relationship.
 - Create streaming, age-encrypted `.csmbackup` archives with full integrity verification.
 - On the first GUI backup, generate one locally managed age identity and automatically reuse it for selected tasks and their complete derived closures.
-- Plan archive, restore, import, cleanup, and purge writes before execution; context projection currently remains plan-only.
+- Plan archive, restore, import, cleanup, and purge operations before execution; context projection and purge application are currently blocked while their review/plan layers remain available.
 - Generate redacted App Server schema audits; unknown profiles stay read-only and are never trusted automatically.
 - Create and review Keep/Exclude/Summary/Protect context projection plans; current plans are not applied to source or derived tasks.
 - Review model-visible content, Markdown, hidden tags, dependencies, and estimated token savings.
@@ -144,7 +144,7 @@ The primary audience is developers and maintainers who use Codex across multiple
 - Unknown, incomplete, or unaudited protocol capabilities disable writes and leave inventory, backup, verification, and planning available.
 - Schema audits classify stable/experimental additions, removals, stability changes, and critical fields. Writes require an exact version and schema-hash match to a human-approved profile.
 - Every write consumes a SHA-256-bound plan and re-checks state, content fingerprints, capabilities, expiry, and spawned descendants.
-- Automatic operations stop at archive. Permanent purge has no fixed waiting period, but the user must explicitly target one archived root and pass a separate plan, current archive-bound backup evidence, trusted archive evidence, process checks, and one exact `确认删除` confirmation.
+- Automatic operations stop at archive. Purge eligibility still requires one archived root, a separate plan, current archive-bound backup and trusted-archive evidence, process checks, and exact confirmation. A real round trip proved that App Server version/state-migration skew can partially commit deletion, so only eligibility inspection, planning, and review remain available; GUI/CLI application is `CLOSED_WITH_UPSTREAM_BLOCKER`.
 - Context review and projection planning do not modify Codex. Source-task application is unavailable, and derived projection remains blocked until a complete real round-trip probe passes.
 - Tool calls/results and file changes/verifications are retained or summarized as groups, not split into unsafe fragments.
 - Hook failures are fail-open: timeout, close, crash, or launch failure continues native compaction.
@@ -177,7 +177,7 @@ Launching CodexSessionManager opens the existing Projects & Tasks, Timeline, Con
 3. **Context** is editable when source mapping is complete and supports hidden-tag display, segmented source rendering, Markdown preview, and local sensitive-range highlighting. Incomplete mapping still loads the timeline and source for read-only review but cannot create a projection plan.
 4. **Projection actions** support `keep`, `exclude`, `summary`, or `protect`. Hard-protected requests, active turns, goals, unresolved errors, and unknown items cannot be silently removed; these actions currently produce plans only.
 5. **Cleanup supplementation** distinguishes LLM suggestions from current local safe roots: LLM suggestions are preselected, safe additions are not, and both are rechecked against the complete descendant closure before planning and backup.
-6. **Purge eligibility** is read-only and includes archived roots with trusted CSM archive evidence and a current verified backup; there is no fixed waiting period. Actual deletion requires the user to select one archived root and click Delete, then pass the single-root plan, complete descendant closure, process/loaded/background-terminal checks, and enter `确认删除` exactly once. The plan ID remains visible but does not need to be copied manually.
+6. **Purge eligibility** is read-only and includes archived roots with trusted CSM archive evidence and a current verified backup; there is no fixed waiting period. A real `thread/delete` partially committed by removing the root while leaving a descendant, so the Delete button is currently disabled and CLI application fails closed. The single-root plan, complete descendant closure, process/loaded/background-terminal checks, and exact confirmation remain reopening gates.
 7. **External suggestion injection** only accepts locally rebound conversation, turn, or item IDs with current fingerprints; hard protection and `validate_selections` retain final veto power.
 8. **Memory Management** uses the second left-rail button and the same window shell. Only registered sources are visible. LLM suggestions are rebound to current segment IDs and content SHA-256 values; headings, front matter, fenced code, and structural whitespace retain local hard protection. Confirmed writes create a version before atomic replacement and reread verification.
 9. **Backup & archive** uses one native age identity generated on first use in the app's private data directory. The GUI derives its recipient automatically and reuses the same identity for full decryption verification. The private key is never written to backups or logs; a missing, corrupt, or weakly permissioned existing key fails closed and is never silently replaced. State, suggestion fingerprints, and the descendant closure are then re-read before archiving. The CLI retains its explicit `--recipient`/`--identity` workflow.
@@ -190,7 +190,7 @@ Current context capability boundary:
 - Apply to the source task: unavailable.
 - Derived projection: current real round-trip failed; blocked.
 - Deterministic sensitive-data edits: next priority.
-- 2.5 permanent purge: continues under its separate acceptance gates.
+- 2.5 permanent purge: a real write partially committed and the phase is `CLOSED_WITH_UPSTREAM_BLOCKER`; eligibility inspection, planning, and review are available, while application is unavailable.
 
 ### CLI workflows
 
@@ -232,7 +232,7 @@ Important command groups:
 | `csm backup create\|verify` | Streaming age-encrypted backup and full verification |
 | `csm cleanup review` | Create sealed cleanup suggestions and inject them into the original task GUI for final user selection |
 | `csm cleanup plan\|apply` | Plan-based archive/unarchive workflow |
-| `csm purge plan\|apply` | Separately gated permanent deletion workflow |
+| `csm purge plan\|apply` | Purge eligibility and planning; `apply` currently fails closed on an upstream blocker |
 | `csm restore plan\|apply` | Logical restore with new conversation IDs |
 | `csm import {chatgpt\|codex} ...` | Plan and apply imports from official ChatGPT exports or Codex rollout data |
 | `csm trim review\|suggest` | GUI/manual review and local projection suggestions |
@@ -461,7 +461,7 @@ Run `csm doctor`. A macOS standalone build checks explicit `CSM_CODEX_BIN`, then
 <details>
 <summary><strong>Can CSM permanently delete conversations?</strong></summary>
 
-Yes, but never automatically. Purge requires a separate immutable plan, a verified encrypted backup, trusted archive evidence, waiting-period checks, descendant expansion, and explicit human confirmation. Archive is the maximum automatic action.
+Not in the current baseline. Eligibility inspection, immutable planning, and human review remain available, but a real App Server deletion removed the root while leaving a descendant, so phase 2.5 is `CLOSED_WITH_UPSTREAM_BLOCKER`. Reopening requires an approved App Server that matches the migrated state store plus an isolated, restart-persistent round trip covering the root and every descendant; existing backup, trusted-archive, process, and confirmation gates remain mandatory.
 </details>
 
 <details>

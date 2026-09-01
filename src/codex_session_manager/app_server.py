@@ -70,13 +70,18 @@ class ProtocolError(AppServerError):
 
 
 class RequestError(AppServerError):
-    """A JSON-RPC response contained an error object."""
+    """A JSON-RPC response contained an error object.
+
+    Write handlers may return an error after mutating an earlier persistence
+    layer, so callers must reconcile actual state before deciding to retry.
+    """
 
     def __init__(self, method: str, error: dict[str, Any]) -> None:
         self.method = method
         self.code = error.get("code")
         self.data = error.get("data")
         self.message = str(error.get("message", "unknown App Server error"))
+        self.may_have_committed = method in WRITE_METHODS
         super().__init__(f"{method} failed ({self.code}): {self.message}")
 
 

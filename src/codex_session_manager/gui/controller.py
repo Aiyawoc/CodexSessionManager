@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
 )
 
-from codex_session_manager.cleanup import PURGE_CONFIRMATION_PHRASE
+from codex_session_manager.cleanup import PURGE_CONFIRMATION_PHRASE, PURGE_EXECUTION_ENABLED
 from codex_session_manager.cleanup_review import prepare_cleanup_action_plan
 from codex_session_manager.config import AppPaths, get_paths
 from codex_session_manager.gui.i18n import (
@@ -435,6 +435,12 @@ class TrimReviewWindow(QMainWindow):
         self.ui.taskBackupButton.setAccessibleName(self._t("backup"))
         self.ui.taskArchiveButton.setText(self._t("archive"))
         self.ui.taskDeleteButton.setText(self._t("delete"))
+        purge_tooltip = self._t(
+            "purge_blocked_upstream" if not PURGE_EXECUTION_ENABLED else "delete_selected",
+            count=1,
+        )
+        self.ui.taskDeleteButton.setToolTip(purge_tooltip)
+        self.ui.taskDeleteButton.setAccessibleName(purge_tooltip)
 
         self.ui.timelineTitle.setText(self._t("timeline"))
         self.ui.timelineHelp.setToolTip(self._t("timeline_usage_tooltip"))
@@ -1487,6 +1493,8 @@ class TrimReviewWindow(QMainWindow):
         return all(self._can_archive_root(thread_id, by_id) for thread_id in selected_ids)
 
     def _can_purge_selected_task(self) -> bool:
+        if not PURGE_EXECUTION_ENABLED:
+            return False
         selected_ids = self._selected_task_ids()
         if len(selected_ids) != 1:
             return False
@@ -1587,6 +1595,9 @@ class TrimReviewWindow(QMainWindow):
         delete_action.setEnabled(
             not self._task_write_in_progress and self._can_purge_selected_task()
         )
+        if not PURGE_EXECUTION_ENABLED:
+            delete_action.setToolTip(self._t("purge_blocked_upstream"))
+            delete_action.setStatusTip(self._t("purge_blocked_upstream"))
         rename_action.triggered.connect(lambda _checked=False: self._rename_task(thread_id))
         copy_action.triggered.connect(lambda _checked=False: self._copy_conversation_id(thread_id))
         backup_action.triggered.connect(self._task_backup_clicked)
@@ -1896,6 +1907,9 @@ class TrimReviewWindow(QMainWindow):
 
     @Slot()
     def _delete_selected_tasks(self) -> None:
+        if not PURGE_EXECUTION_ENABLED:
+            self._show_error(self._t("purge_blocked_upstream"))
+            return
         selected_ids = self._selected_task_ids()
         if not selected_ids:
             self._show_error(self._t("select_task"))
@@ -2010,6 +2024,7 @@ class TrimReviewWindow(QMainWindow):
         if isinstance(error, str):
             self.ui.taskListStatusLabel.setText(self._t("task_operation_not_run"))
             self._show_error(self._t("task_operation_failed", error=error))
+            self.load_task_list()
             return
         if "value" not in outcome:
             self._show_error(self._t("task_operation_no_result"))

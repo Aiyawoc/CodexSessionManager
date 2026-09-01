@@ -33,6 +33,12 @@ from codex_session_manager.models import (
 DEFAULT_STALE_DAYS: Final[int] = 90
 MAX_ROOTS: Final[int] = 100
 PURGE_CONFIRMATION_PHRASE: Final[str] = "确认删除"
+PURGE_EXECUTION_ENABLED: Final[bool] = False
+PURGE_EXECUTION_BLOCKED_REASON: Final[str] = (
+    "permanent deletion application is CLOSED_WITH_UPSTREAM_BLOCKER: "
+    "the approved Codex App Server 0.142.1 can partially commit thread/delete "
+    "against state migrated by a newer Codex; planning and review remain available"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -784,6 +790,8 @@ class CleanupExecutor:
         plan.verify()
         if plan.action is PlanAction.PURGE and len(plan.targets) != 1:
             raise ValueError("permanent-deletion plans must contain exactly one root")
+        if plan.action is PlanAction.PURGE and not PURGE_EXECUTION_ENABLED:
+            raise RuntimeError(PURGE_EXECUTION_BLOCKED_REASON)
         self.audit.verify_chain()
         if plan.capability_fingerprint != self.capabilities.fingerprint:
             raise ValueError("App Server capability drift invalidated the plan")
@@ -846,6 +854,7 @@ class CleanupExecutor:
 
         self.audit.begin_operation(plan_sha256=plan.plan_sha256, action=plan.action.value)
         completed: list[str] = []
+        ambiguous_write_errors: list[RequestError | RequestTimeout] = []
         try:
             if plan.action is PlanAction.UNARCHIVE:
                 for thread_id in sorted(affected):
@@ -901,19 +910,32 @@ class CleanupExecutor:
                         and not current_by_id[thread_id].archived
                     ):
                         continue
-                    self._apply_root(plan, thread_id)
+                    write_error = self._apply_root(plan, thread_id)
+                    if write_error is not None:
+                        ambiguous_write_errors.append(write_error)
                 completed.append(target.root_thread_id)
-            self._verify_result(plan, affected)
+            try:
+                self._verify_result(plan, affected)
+            except RuntimeError as exc:
+                if ambiguous_write_errors:
+                    reported = "; ".join(str(error) for error in ambiguous_write_errors)
+                    raise RuntimeError(f"{exc}; App Server reported: {reported}") from exc
+                raise
             if plan.action is PlanAction.ARCHIVE:
                 self._record_archives(plan, current_by_id)
             self.audit.finish_operation(plan_sha256=plan.plan_sha256, status="succeeded")
+            details: dict[str, object] = {"root_count": len(plan.targets)}
+            if ambiguous_write_errors:
+                details["reconciled_app_server_errors"] = [
+                    str(error) for error in ambiguous_write_errors
+                ]
             self.audit.append(
                 event_type=f"{plan.action.value}.apply",
                 actor="human",
                 result="succeeded",
                 plan_sha256=plan.plan_sha256,
                 target_ids=tuple(sorted(affected)),
-                details={"root_count": len(plan.targets)},
+                details=details,
             )
             return tuple(completed)
         except BaseException as exc:
@@ -993,7 +1015,7 @@ class CleanupExecutor:
         )
         return tuple(target.root_thread_id for target in plan.targets)
 
-    def _apply_root(self, plan: ActionPlan, thread_id: str) -> None:
+    def _apply_root(self, plan: ActionPlan, thread_id: str) -> RequestError | RequestTimeout | None:
         try:
             if plan.action is PlanAction.ARCHIVE:
                 self.client.archive_thread(thread_id)
@@ -1006,11 +1028,13 @@ class CleanupExecutor:
                 if not isinstance(new_name, str) or not new_name:
                     raise ValueError("rename plan lacks a non-empty new_name")
                 self.client.rename_thread(thread_id, new_name)
-        except RequestTimeout as exc:
+        except (RequestError, RequestTimeout) as exc:
             # Never retry.  The postcondition query in _verify_result determines
             # whether the operation committed; an unresolved state stays failed.
             if not exc.may_have_committed:
                 raise
+            return exc
+        return None
 
     @staticmethod
     def _verify_snapshot_drift(

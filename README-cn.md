@@ -144,7 +144,7 @@ uv run CodexSessionManager
 - 协议能力未知、不完整或未经审计时停止写入，但仍开放盘点、备份、验证和计划。
 - 协议审计比较稳定/实验方法、方法新增/移除/稳定性变化和关键字段；只有版本与 schema 哈希精确命中人工批准画像才开放写入。
 - 每个写操作都消费绑定 SHA-256 的计划，并重新校验状态、内容指纹、协议能力、有效期和 spawned descendants。
-- 自动操作最多归档。永久清除不再设置固定等待天数，但必须由用户对单个已归档根主动触发，并通过独立计划、与归档事件绑定的当前有效备份、可信归档证据、进程复核和单次精确短语“确认删除”。
+- 自动操作最多归档。永久删除资格仍要求单根、独立计划、archive-bound 当前备份、可信归档证据、进程复核和精确短语；但真实 round-trip 已证明 App Server 版本/状态迁移不兼容会产生部分提交，当前只开放资格盘点、计划和审查，GUI/CLI 应用按 `CLOSED_WITH_UPSTREAM_BLOCKER` 关闭。
 - 上下文审查与投影计划不修改 Codex；原任务应用当前不可用，派生投影在完整真实 round-trip probe 通过前保持阻塞。
 - 工具调用与结果、文件变更与验证按组保留或摘要，不拆成不安全的片段。
 - Hook 采用 fail-open：超时、关闭、崩溃或启动失败时继续 Codex 原生压缩。
@@ -177,7 +177,7 @@ scripts/install_user.sh /absolute/path/to/CodexSessionManager.app
 3. **上下文**在来源映射完整时可编辑，支持显示隐藏标签、分段渲染、Markdown 预览和本地敏感命中高亮；映射不完整时仍加载时间线与原文，但只允许浏览，不生成投影计划。
 4. **投影动作**支持 `keep`、`exclude`、`summary` 和 `protect`。当前请求、进行中 turn、有效目标、未解决错误和未知 item 等硬保护内容不能被静默删除；这些动作当前只生成投影计划。
 5. **清理候选补选**把 LLM 建议与本地当前安全候选清晰区分：LLM 建议默认预选，本地补选默认不选；两者在最终计划和备份前都重新检查完整后代闭包。
-6. **永久删除资格**只读展示具有 CSM 可信归档证据和当前有效备份的已归档根候选，不再要求固定等待天数。实际删除只能由用户单选已归档根后主动点击“删除”，并继续通过单根计划、完整后代闭包、进程/loaded/后台终端复核，再单次精确输入“确认删除”；计划 ID 只读展示，不要求手工抄写。
+6. **永久删除资格**只读展示具有 CSM 可信归档证据和当前有效备份的已归档根候选，不再要求固定等待天数。真实 `thread/delete` 已出现根删除但 descendant 保留的部分提交，因此当前删除按钮禁用，CLI 应用失败关闭；单根计划、完整后代闭包、进程/loaded/后台终端和确认短语规则保留为重新开放门禁。
 7. **外部建议灌入**只接受本地重新绑定的对话、turn 或 item ID 与当前指纹；硬保护和 `validate_selections` 始终拥有最终否决权。
 8. **记忆管理**通过左侧第二按钮进入同一窗口壳。只有已登记来源可见；LLM 建议会先绑定当前 segment ID 与内容 SHA-256，标题、front matter、代码块和结构空白仍受本地硬保护。用户确认后先创建版本，再原子写入并重读验证。
 9. **备份并归档**的 GUI 首次生成一个本机托管的原生 age identity，以后自动从同一私钥派生 recipient 用于加密和完整解密复验。私钥不写入备份或日志；已有私钥丢失、损坏或权限异常时拒绝继续，不会静默替换。备份后再重读状态、建议指纹和后代闭包；任一门禁失败都停止归档。CLI 仍保留显式 `--recipient`/`--identity` 分步路径。
@@ -190,7 +190,7 @@ scripts/install_user.sh /absolute/path/to/CodexSessionManager.app
 - 应用到原任务：不可用；
 - 派生投影：当前真实 round-trip 失败，保持阻塞；
 - 敏感信息确定性修改：后续优先开发；
-- 2.5 永久删除：继续按独立门禁验收。
+- 2.5 永久删除：真实写入发生部分提交，已按 `CLOSED_WITH_UPSTREAM_BLOCKER` 关闭；资格盘点、计划与审查可用，应用不可用。
 
 ### CLI 工作流
 
@@ -232,7 +232,7 @@ csm cleanup apply PLAN.json --confirm PLAN_ID
 | `csm backup create\|verify` | 流式 age 加密备份与完整复验 |
 | `csm cleanup review` | 生成密封清理建议并灌入原项目/任务 GUI，由用户最终选择 |
 | `csm cleanup plan\|apply` | 计划式归档/反归档工作流 |
-| `csm purge plan\|apply` | 独立门禁的永久删除工作流 |
+| `csm purge plan\|apply` | 永久删除资格与计划；`apply` 当前按上游 blocker 失败关闭 |
 | `csm restore plan\|apply` | 使用新对话 ID 进行逻辑恢复 |
 | `csm import {chatgpt\|codex} ...` | 规划并应用官方 ChatGPT 导出或 Codex rollout 数据导入 |
 | `csm trim review\|suggest` | GUI/人工审查与本地投影建议 |
@@ -462,7 +462,7 @@ scripts/package_macos_release.sh --app dist/CodexSessionManager.app
 <details>
 <summary><strong>CSM 能永久删除对话吗？</strong></summary>
 
-可以，但绝不会自动执行，也不能直接删除活跃任务。用户先通过 CSM 完成并验证备份与归档，再单选该已归档根主动点击“删除”；程序会复核同一归档事件绑定的当前有效备份、完整后代闭包、状态、能力、loaded/后台终端和其它 Codex 进程，并要求单次精确输入“确认删除”。固定 14 天等待已取消，但可信归档证据不能由“只有完整备份”替代。
+当前不能执行。资格盘点、不可变计划和人工审查仍可用，但一次真实 App Server 删除发生了“根已删除、descendant 仍存在”的部分提交，2.5 已按 `CLOSED_WITH_UPSTREAM_BLOCKER` 关闭。重新开放前必须批准与当前状态迁移匹配的 App Server，并在隔离数据根完成根和全部 descendants 的完整重启后 round-trip；原有备份、可信归档、进程和精确确认门禁不会降低。
 </details>
 
 <details>

@@ -16,6 +16,10 @@ from PySide6.QtCore import QLibraryInfo, qVersion
 
 from codex_session_manager.app_server import connect_and_probe
 from codex_session_manager.backup import EXPECTED_AGE_VERSION, AgeBackend, AgeKeygenBackend
+from codex_session_manager.cleanup import (
+    PURGE_EXECUTION_BLOCKED_REASON,
+    PURGE_EXECUTION_ENABLED,
+)
 from codex_session_manager.config import (
     AppPaths,
     bundled_age_keygen_path,
@@ -182,6 +186,7 @@ def run_doctor(paths: AppPaths, *, probe_app_server: bool = True) -> dict[str, A
                 capability_data = capabilities.model_dump(mode="json") | {
                     "fingerprint": capabilities.fingerprint,
                     "write_enabled": capabilities.write_enabled,
+                    "purge_execution_enabled": PURGE_EXECUTION_ENABLED,
                 }
                 checks.append(
                     Check(
@@ -200,6 +205,14 @@ def run_doctor(paths: AppPaths, *, probe_app_server: bool = True) -> dict[str, A
                             if capabilities.write_enabled
                             else capabilities.read_only_reason or "write capability unavailable"
                         ),
+                        required=False,
+                    )
+                )
+                checks.append(
+                    Check(
+                        "permanent purge application",
+                        PURGE_EXECUTION_ENABLED,
+                        ("enabled" if PURGE_EXECUTION_ENABLED else PURGE_EXECUTION_BLOCKED_REASON),
                         required=False,
                     )
                 )

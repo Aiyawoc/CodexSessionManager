@@ -41,3 +41,17 @@ env UV_CACHE_DIR=/private/tmp/csm-uv-cache uv run --locked pytest \
 - Attempt 2 聚焦测试结果：trim/import `23 passed`，inventory/cleanup/workflows/lifecycle/hooks `60 passed`，合计 `83 passed`；Ruff format/check 与目标源码 mypy 作为收尾门禁执行。
 - 本次提交的 cached scope 仅包含 Task 3 的 9 个源码/测试文件与本报告；purge retirement、GUI、文档及其他 working-tree/index 用户改动均保留在提交外。
 - 未运行真实账号归档/反归档、真实用户输入、bundle、签名、公证或发布验收。
+
+## Fix round 1（2026-09-01）
+
+- 纳入 Hook 的自包含 `return False`；summary hydration 在 capability 过滤后再应用 `maximum_roots`，并保留无能力参数的只读调用兼容性。
+- TDD RED：新增 archive/unarchive root-ceiling 回归先以 `TypeError` 失败；GREEN：两项回归通过。
+- dirty checkout 聚焦 suite：trim/import `23 passed`；inventory/cleanup/workflows/lifecycle/hooks `62 passed`。
+- dirty checkout `ruff format --check` 与目标源码 mypy 通过；完整 dirty `ruff check` 仅被既有 purge retirement 用户 hunk 删除后遗留的未使用导入阻塞，未修改该无关 hunk。
+- 已用非交互精确 index patch 暂存本轮 hunk；clean archive HEAD 验证结果已补录如下。
+
+### 提交后 clean archive HEAD 验证
+
+- `git archive HEAD` 解包至 `/private/tmp/csm-task3fix1-qjr6De/repo` 后，`pytest tests/test_trim.py tests/test_importing.py -q`：`23 passed`。
+- 同一快照的 Task 3 集合使用 `pytest tests/test_inventory.py tests/test_cleanup_audit.py tests/test_workflows.py tests/test_lifecycle_integration.py tests/test_hooks.py -q -k 'not purge'`：`64 passed, 9 deselected`。未过滤的同路径集合为 `71 passed, 1 failed, 1 skipped`；失败是 route 排除的历史 purge `thread/delete` 成功路径。
+- clean snapshot 目标文件 `ruff format --check`、`ruff check` 与目标源码 mypy 均通过；`ruff check .` 通过。仓库级 format check 仍报告既有 `operation_contracts.py`、`tests/test_operation_contracts.py`、`tests/test_workflows.py` 三个无关文件格式差异。

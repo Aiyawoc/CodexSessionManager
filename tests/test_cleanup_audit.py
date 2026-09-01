@@ -11,6 +11,7 @@ from codex_session_manager.audit import AuditStore
 from codex_session_manager.cleanup import (
     CleanupExecutor,
     CleanupPlanner,
+    CleanupPolicy,
     ProcessGuard,
     selected_root_block_reason,
 )
@@ -154,6 +155,53 @@ def test_archive_planner_keeps_legacy_when_paginated_contract_is_blocked(
     )
 
     assert tuple(target.root_thread_id for target in plan.targets) == ("legacy",)
+
+
+@pytest.mark.parametrize(
+    ("action", "archived"),
+    ((PlanAction.ARCHIVE, False), (PlanAction.UNARCHIVE, True)),
+)
+def test_hydration_filters_blocked_roots_before_root_ceiling(
+    capabilities, snapshot_factory, action: PlanAction, archived: bool
+) -> None:
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    snapshots = attach_descendant_closures(
+        tuple(
+            snapshot_factory(
+                thread_id,
+                archived=archived,
+                content_complete=False,
+                history_mode=(
+                    ThreadHistoryMode.PAGINATED
+                    if thread_id.startswith("blocked")
+                    else ThreadHistoryMode.LEGACY
+                ),
+                updated_at=now - timedelta(days=200 - index),
+            )
+            for index, thread_id in enumerate(
+                ("blocked-0", "blocked-1", "eligible-1", "eligible-2")
+            )
+        )
+    )
+    policy = CleanupPolicy(stale_after=timedelta(days=90), maximum_roots=2)
+    planner = CleanupPlanner(policy)
+    blocked_capabilities = _block_operation(capabilities, OperationName.HISTORY_PAGINATED)
+
+    hydration_ids = (
+        planner.archive_hydration_ids(
+            snapshots,
+            now=now,
+            capabilities=blocked_capabilities,
+        )
+        if action is PlanAction.ARCHIVE
+        else planner.unarchive_hydration_ids(
+            snapshots,
+            capabilities=blocked_capabilities,
+        )
+    )
+
+    assert hydration_ids == ("eligible-1", "eligible-2")
+    assert len(hydration_ids) <= policy.maximum_roots
 
 
 def test_archive_plan_requires_complete_old_descendant_closure(

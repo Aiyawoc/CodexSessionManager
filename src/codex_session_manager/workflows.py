@@ -394,9 +394,17 @@ class ApplicationWorkflows:
             planner = CleanupPlanner(policy)
             summaries = inventory.list(include_turns=False)
             if action is PlanAction.ARCHIVE:
-                hydration_ids = planner.archive_hydration_ids(summaries, criteria=criteria)
+                hydration_ids = planner.archive_hydration_ids(
+                    summaries,
+                    criteria=criteria,
+                    capabilities=capabilities,
+                )
             else:
-                hydration_ids = planner.unarchive_hydration_ids(summaries, criteria=criteria)
+                hydration_ids = planner.unarchive_hydration_ids(
+                    summaries,
+                    criteria=criteria,
+                    capabilities=capabilities,
+                )
             snapshots = inventory.hydrate(summaries, hydration_ids) if hydration_ids else summaries
             plan = (
                 planner.plan_archive(snapshots, capabilities, criteria=criteria)

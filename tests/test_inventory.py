@@ -109,7 +109,7 @@ def test_unknown_optional_top_level_thread_field_does_not_disable_mapping() -> N
             "id": "future-thread",
             "status": {"type": "idle"},
             "turns": [],
-            "agentNickname": "reviewer",
+            "futureOptionalMetadata": {"reviewer": True},
         },
         content_complete=True,
     )
@@ -155,7 +155,12 @@ def test_unknown_history_status_and_relationship_disable_mapping() -> None:
         content_complete=True,
     )
     invalid_parent = normalize_thread(
-        {"id": "parent", "parentThreadId": 123, "turns": []},
+        {
+            "id": "parent",
+            "parentThreadId": 123,
+            "status": {"type": "idle"},
+            "turns": [],
+        },
         content_complete=True,
     )
 

@@ -381,6 +381,7 @@ def test_projection_apply_rejects_source_id_before_any_write(app_paths, capabili
         ).apply(_non_prefix_plan(source, capabilities))
 
     assert client.items == []
+    assert client.start_calls == 0
 
 
 def test_projection_apply_rejects_missing_target_id_before_any_write(
@@ -401,6 +402,7 @@ def test_projection_apply_rejects_missing_target_id_before_any_write(
         ).apply(_non_prefix_plan(source, capabilities))
 
     assert client.items == []
+    assert client.start_calls == 0
 
 
 def test_trim_apply_requires_explicit_idle_state(app_paths, capabilities, snapshot_factory) -> None:

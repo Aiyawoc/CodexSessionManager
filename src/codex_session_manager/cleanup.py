@@ -176,6 +176,7 @@ class CleanupPlanner:
             cutoff=cutoff,
             criteria=criteria,
             require_content=True,
+            maximum_roots=self.policy.maximum_roots,
         )
         roots = [
             root
@@ -249,16 +250,33 @@ class CleanupPlanner:
         *,
         now: datetime | None = None,
         criteria: InventoryFilter | None = None,
+        capabilities: CapabilityMatrix | None = None,
     ) -> tuple[str, ...]:
         """Select summary-only archive candidates before any content reads."""
 
         effective_now = (now or utc_now()).astimezone(UTC)
+        all_snapshots = {snapshot.id: snapshot for snapshot in summaries}
         roots = self._archive_roots(
             summaries,
             cutoff=effective_now - self.policy.stale_after,
             criteria=criteria,
             require_content=False,
+            maximum_roots=None,
         )
+        if capabilities is not None:
+            roots = [
+                root
+                for root in roots
+                if selected_root_block_reason(
+                    action=PlanAction.ARCHIVE,
+                    thread_id=root.id,
+                    snapshots=all_snapshots,
+                    capabilities=capabilities,
+                    require_content_complete=False,
+                )
+                is None
+            ]
+        roots = roots[: self.policy.maximum_roots]
         if not roots:
             return ()
         return target_closure_ids(summaries, tuple(root.id for root in roots))
@@ -335,6 +353,7 @@ class CleanupPlanner:
         cutoff: datetime,
         criteria: InventoryFilter | None,
         require_content: bool,
+        maximum_roots: int | None,
     ) -> list[ThreadSnapshot]:
         all_snapshots = {snapshot.id: snapshot for snapshot in snapshots}
         candidates = [
@@ -358,10 +377,11 @@ class CleanupPlanner:
                 and (criteria is None or matches_filter(root, criteria))
             ]
         )
-        return sorted(
+        roots = sorted(
             roots,
             key=lambda item: item.updated_at or datetime.min.replace(tzinfo=UTC),
-        )[: self.policy.maximum_roots]
+        )
+        return roots if maximum_roots is None else roots[:maximum_roots]
 
     def plan_selected_archive(
         self,
@@ -483,6 +503,7 @@ class CleanupPlanner:
         summaries: tuple[ThreadSnapshot, ...],
         *,
         criteria: InventoryFilter | None = None,
+        capabilities: CapabilityMatrix | None = None,
     ) -> tuple[str, ...]:
         """Select summary-only unarchive roots before content hydration."""
 
@@ -495,6 +516,19 @@ class CleanupPlanner:
         roots = _non_overlapping_roots(_top_level_candidates(selected, all_snapshots))
         if criteria is not None:
             roots = [snapshot for snapshot in roots if matches_filter(snapshot, criteria)]
+        if capabilities is not None:
+            roots = [
+                root
+                for root in roots
+                if selected_root_block_reason(
+                    action=PlanAction.UNARCHIVE,
+                    thread_id=root.id,
+                    snapshots=all_snapshots,
+                    capabilities=capabilities,
+                    require_content_complete=False,
+                )
+                is None
+            ]
         roots = roots[: self.policy.maximum_roots]
         if not roots:
             return ()

@@ -125,32 +125,9 @@ def _release_file_lock(stream: TextIOWrapper) -> None:
 
 
 def _plan_has_current_write_capability(plan: TrimPlan) -> bool:
-    """Re-probe and dry-validate a plan before suppressing native compaction."""
+    """Trim application is not an approved App Server operation."""
 
-    from codex_session_manager.trim import prefix_fork_turn, validate_selections
-    from codex_session_manager.workflows import ApplicationWorkflows
-
-    workflows = ApplicationWorkflows(request_timeout=45)
-    with workflows.session() as session:
-        _client, capabilities, inventory = session.services()
-        if (
-            not capabilities.write_enabled
-            or capabilities.fingerprint != plan.capability_fingerprint
-        ):
-            return False
-        source = inventory.read(plan.source_thread_id, include_turns=True)
-        if source.trim_fingerprint != plan.source_thread_fingerprint:
-            return False
-        validate_selections(source, plan.selections)
-        cutoff = prefix_fork_turn(source, plan)
-        if cutoff:
-            capabilities.require_write("thread/fork")
-            if not capabilities.fork_supports_last_turn_id:
-                capabilities.require_write("thread/rollback")
-        else:
-            for method in ("thread/start", "thread/inject_items", "thread/name/set"):
-                capabilities.require_write(method)
-        return True
+    return False
 
 
 def _continue(message: str | None = None) -> HookOutput:

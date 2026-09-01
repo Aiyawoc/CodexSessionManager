@@ -217,8 +217,10 @@ def test_inventory_filter_combines_project_remote_time_and_state(snapshot_factor
 class _InventoryClient:
     def __init__(self) -> None:
         self.reads: list[tuple[str, bool]] = []
+        self.limits: list[tuple[bool, int]] = []
 
-    def list_threads(self, *, archived: bool = False):
+    def list_threads(self, *, archived: bool = False, limit: int = 0):
+        self.limits.append((archived, limit))
         if archived:
             yield {"id": "archived", "archived": True, "parentThreadId": "active"}
         else:
@@ -241,13 +243,14 @@ def test_inventory_service_deep_read_preserves_archive_graph() -> None:
     assert by_id["active"].spawned_descendant_ids == ("archived",)
     assert all(item.content_complete for item in snapshots)
     assert client.reads == [("active", True), ("archived", True)]
+    assert client.limits == [(False, 1000), (True, 1000)]
 
 
 class _TargetedInventoryClient:
     def __init__(self) -> None:
         self.reads: list[str] = []
 
-    def list_threads(self, *, archived: bool = False):
+    def list_threads(self, *, archived: bool = False, limit: int = 0):
         if archived:
             return iter(())
         return iter(
@@ -276,7 +279,7 @@ class _SummaryLineageClient:
         self.reads: list[tuple[str, bool]] = []
         self.parent_id = parent_id
 
-    def list_threads(self, *, archived: bool = False):
+    def list_threads(self, *, archived: bool = False, limit: int = 0):
         if archived:
             return iter(())
         return iter(

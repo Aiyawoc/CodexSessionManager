@@ -23,7 +23,7 @@ description: 安全管理 Codex App 中的任务，包括按项目与时间盘�
 
 ## 盘点与清理
 
-1. 用项目 cwd、Git remote、时间、状态、来源、归档、固定和父子关系筛选。
+1. 用项目 cwd、Git remote、时间、状态、来源、归档、固定和父子关系筛选。`csm threads list` 默认读取全部可见任务；使用 `--older-than-days N` 时由 CSM 工具按更新时间计算 UTC 截止值并筛选，GUI 上下文审查页的“更新时间”控件复用同一逻辑，不由 LLM 手工读取或筛选。
 2. 需要桌面审查时先运行 `csm cleanup review --older-than-days 90`。该命令只生成密封的 `SuggestionBundle`/`ReviewRequest`，并把 LLM/本地初筛候选按项目灌入原有项目/任务 GUI；它不创建 ActionPlan，也不执行归档。
 3. GUI 会预选建议归档的根对话，并在每个根下展示全部已知派生后代、总大小、风险、建议理由和当前备份覆盖。当前真实盘点中的其他安全根目标作为“可补选”项显示，默认不选中；用户必须在原任务列表中取消或调整最终选择。
 4. 用户点击“备份并归档”后只选择输出路径。首次确认后，GUI 在 CSM 私有数据目录生成一个原生 age identity，以后自动派生 recipient 并复用同一私钥完整解密复验。程序再重读 App Server 状态、复核建议指纹与后代闭包、生成最终 ActionPlan 并归档。任一步失败都停止。

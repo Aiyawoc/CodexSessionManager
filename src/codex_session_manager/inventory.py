@@ -5,14 +5,14 @@ from __future__ import annotations
 import json
 from collections import defaultdict, deque
 from collections.abc import Iterable, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
 from codex_session_manager.app_server import SubprocessAppServer
-from codex_session_manager.hashing import estimate_tokens, fingerprint
+from codex_session_manager.hashing import estimate_tokens, fingerprint, utc_now
 from codex_session_manager.models import (
     ItemKind,
     ThreadItemSnapshot,
@@ -76,6 +76,20 @@ class InventoryFilter(BaseModel):
     maximum_size: int | None = None
     parent_id: str | None = None
     search: str | None = None
+
+
+def older_than_cutoff(
+    older_than_days: int | None,
+    *,
+    now: datetime | None = None,
+) -> datetime | None:
+    """Return the UTC cutoff for a CSM-owned age filter."""
+
+    if older_than_days is None:
+        return None
+    if older_than_days < 1:
+        raise ValueError("older_than_days must be at least 1")
+    return (now or utc_now()).astimezone(UTC) - timedelta(days=older_than_days)
 
 
 def _timestamp(value: Any) -> datetime | None:
@@ -629,7 +643,7 @@ class InventoryService:
         ):
             if not enabled:
                 continue
-            for raw in self.client.list_threads(archived=archived):
+            for raw in self.client.list_threads(archived=archived, limit=1000):
                 summary = normalize_thread(raw, archived=archived)
                 source = raw.get("sourceKind") or raw.get("source")
                 is_subagent = (isinstance(source, str) and source.startswith("subAgent")) or (

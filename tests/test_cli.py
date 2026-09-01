@@ -7,12 +7,14 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
+import codex_session_manager.cli as cli
 from codex_session_manager.acceptance import AcceptanceReport
 from codex_session_manager.cli import _aware_datetime, _jsonable, app
 from codex_session_manager.doctor import _qt_plugin_directory
 from codex_session_manager.models import CapabilityMatrix
 from codex_session_manager.protocol_profiles import AUDITED_PROTOCOL_PROFILES
 from codex_session_manager.schema_audit import SchemaAuditReport, build_schema_audit_report
+from codex_session_manager.workflows import InventoryResult
 
 
 def test_cli_exposes_planned_command_surface() -> None:
@@ -179,6 +181,46 @@ def test_inventory_time_filter_requires_explicit_timezone() -> None:
     )
     with pytest.raises(typer.BadParameter, match="必须包含时区"):
         _aware_datetime("2026-08-11T08:00:00", "--updated-before")
+
+
+def test_threads_list_builds_csm_age_filter(monkeypatch, capabilities) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeWorkflows:
+        def list_threads(self, *, criteria=None, include_active=True, include_archived=True):
+            captured["criteria"] = criteria
+            return InventoryResult(capabilities, ())
+
+    monkeypatch.setattr(cli, "_workflows", lambda: FakeWorkflows())
+    result = CliRunner().invoke(app, ["threads", "list", "--older-than-days", "10"])
+
+    assert result.exit_code == 0, result.output
+    criteria = captured["criteria"]
+    assert criteria.updated_before is not None
+    age = datetime.now(UTC) - criteria.updated_before
+    assert 9 * 86_400 < age.total_seconds() < 11 * 86_400
+
+
+def test_threads_list_rejects_ambiguous_age_filters(monkeypatch, capabilities) -> None:
+    class NoCallWorkflows:
+        def list_threads(self, **_kwargs):
+            raise AssertionError("ambiguous filters must be rejected before App Server access")
+
+    monkeypatch.setattr(cli, "_workflows", lambda: NoCallWorkflows())
+    result = CliRunner().invoke(
+        app,
+        [
+            "threads",
+            "list",
+            "--older-than-days",
+            "10",
+            "--updated-before",
+            "2026-08-11T08:00:00+08:00",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "不能同时" in result.output
 
 
 def test_cli_jsonable_serializes_raw_dates_in_app_server_payloads() -> None:

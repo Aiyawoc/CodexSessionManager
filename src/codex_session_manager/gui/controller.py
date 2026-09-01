@@ -57,6 +57,7 @@ from codex_session_manager.gui.theme import DANGER, ON_DANGER, PANEL, PANEL_MUTE
 from codex_session_manager.gui.timeline_model import TurnTimelineModel
 from codex_session_manager.gui.ui_main_window import Ui_MainWindow
 from codex_session_manager.gui.worker import FunctionWorker
+from codex_session_manager.inventory import InventoryFilter, older_than_cutoff
 from codex_session_manager.memory import (
     MemoryAction,
     MemoryApplyResult,
@@ -130,6 +131,7 @@ MEMORY_ACTION_BY_INDEX = {
 }
 INDEX_BY_MEMORY_ACTION = {value: key for key, value in MEMORY_ACTION_BY_INDEX.items()}
 MAX_PREVIEW_CHARS = 200_000
+FOOTER_ACTION_BUTTON_WIDTH = 136
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,9 +276,23 @@ class TrimReviewWindow(QMainWindow):
         self.ui.heroLayout.setAlignment(self.ui.headerBadge, Qt.AlignmentFlag.AlignVCenter)
         self.ui.heroLayout.setAlignment(self.ui.languageCombo, Qt.AlignmentFlag.AlignVCenter)
         self.ui.heroTextLayout.setSpacing(0)
+        self.ui.footerMainLayout.setStretch(1, 1)
         self.ui.footerMainLayout.setStretch(2, 1)
+        self.ui.footerMainLayout.setAlignment(
+            self.ui.buttonLayout,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
+        self.ui.buttonLayout.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        for index in range(self.ui.buttonLayout.count()):
+            item = self.ui.buttonLayout.itemAt(index)
+            if item is None:
+                continue
+            button = item.widget()
+            if button is not None:
+                button.setFixedWidth(FOOTER_ACTION_BUTTON_WIDTH)
         self.ui.footerLayout.setAlignment(self.ui.footerMainLayout, Qt.AlignmentFlag.AlignVCenter)
-        self.ui.footerMainLayout.setAlignment(self.ui.buttonLayout, Qt.AlignmentFlag.AlignVCenter)
         task_header = self.ui.taskListView.header()
         task_header.setStretchLastSection(False)
         task_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -317,6 +333,7 @@ class TrimReviewWindow(QMainWindow):
         self.ui.taskListView.itemClicked.connect(self._task_clicked)
         self.ui.taskListView.customContextMenuRequested.connect(self._show_task_context_menu)
         self.ui.taskRefreshButton.clicked.connect(self.load_task_list)
+        self.ui.olderThanDaysSpinBox.valueChanged.connect(self._task_age_filter_changed)
         self.ui.taskBackupButton.clicked.connect(self._task_backup_clicked)
         self.ui.taskArchiveButton.clicked.connect(self._archive_selected_tasks)
         self.ui.taskDeleteButton.clicked.connect(self._delete_selected_tasks)
@@ -372,6 +389,11 @@ class TrimReviewWindow(QMainWindow):
         self.ui.threadIdEdit.setPlaceholderText(self._t("task_search_placeholder"))
         self.ui.threadIdEdit.setAccessibleName(self._t("task_search_accessible"))
         self.ui.loadButton.setText(self._t("load_id"))
+        self.ui.olderThanDaysLabel.setText(self._t("older_than_days_label"))
+        self.ui.olderThanDaysSpinBox.setPrefix(self._t("older_than_days_prefix"))
+        self.ui.olderThanDaysSpinBox.setSuffix(self._t("older_than_days_suffix"))
+        self.ui.olderThanDaysSpinBox.setSpecialValueText(self._t("older_than_days_all"))
+        self.ui.olderThanDaysSpinBox.setAccessibleName(self._t("older_than_days_accessible"))
         self.ui.taskListView.setAccessibleName(self._t("task_list_accessible"))
         task_header = self.ui.taskListView.headerItem()
         task_header.setText(0, self._t("task_name"))
@@ -588,6 +610,8 @@ class TrimReviewWindow(QMainWindow):
         self.ui.taskArchiveButton.setVisible(context_mode)
         self.ui.sensitiveScanButton.setVisible(not memory_mode)
         self.ui.loadButton.setVisible(not memory_mode)
+        self.ui.olderThanDaysLabel.setVisible(context_mode)
+        self.ui.olderThanDaysSpinBox.setVisible(context_mode)
         self.ui.contentTagsButton.setVisible(not memory_mode)
         self.ui.contentMarkdownButton.setVisible(not memory_mode)
         self.ui.actionCombo.setVisible(not cleanup_mode)
@@ -759,6 +783,7 @@ class TrimReviewWindow(QMainWindow):
         self.ui.sensitiveScanButton.setChecked(False)
         self.ui.sensitiveScanButton.blockSignals(False)
         generation = self._task_generation
+        criteria = self._task_inventory_filter()
         self.ui.taskRefreshButton.setEnabled(False)
         self.ui.taskListStatusLabel.setText(self._t("task_list_loading"))
 
@@ -773,6 +798,7 @@ class TrimReviewWindow(QMainWindow):
                 )
                 return self.workflows.inspect_cleanup_candidates(root_ids)
             return self.workflows.list_threads(
+                criteria=criteria,
                 include_active=True,
                 include_archived=True,
             ).snapshots
@@ -872,6 +898,18 @@ class TrimReviewWindow(QMainWindow):
             self._populate_memory_sources()
         else:
             self._populate_task_list(self.task_snapshots)
+
+    @Slot(int)
+    def _task_age_filter_changed(self, _value: int) -> None:
+        if self.review_mode is ReviewMode.CONTEXT_TRIM and not self._closing:
+            self.load_task_list()
+
+    def _task_inventory_filter(self) -> InventoryFilter | None:
+        """Build the CSM-owned age filter used by the normal task inventory."""
+
+        older_than_days = self.ui.olderThanDaysSpinBox.value()
+        cutoff = older_than_cutoff(older_than_days or None)
+        return InventoryFilter(updated_before=cutoff) if cutoff is not None else None
 
     @Slot()
     def _task_selection_changed(self) -> None:

@@ -198,6 +198,7 @@ Current context capability boundary:
 csm doctor
 csm schema audit --output schema-audit-v1.json
 csm threads list
+csm threads list --older-than-days 90
 csm threads show CONVERSATION_ID --include-content
 csm gui open --page pending
 csm trim review CONVERSATION_ID
@@ -220,6 +221,8 @@ csm cleanup apply PLAN.json --confirm PLAN_ID
 ```
 
 Important command groups:
+
+`csm threads list` reads all visible active and archived tasks through the official App Server by default, then CSM performs search, project, and time filtering itself. `--older-than-days N` computes a UTC cutoff from `updated_at` and returns only tasks not updated within N days. The GUI context-review page's “Updated” control uses the same tool-side logic and defaults to “All”; the LLM does not manually read or filter the task data. `csm cleanup review --older-than-days N` remains a separate sealed cleanup-candidate workflow.
 
 | Command | Purpose |
 | --- | --- |
@@ -346,6 +349,7 @@ CSM uses platform-native user directories by default. Environment variables are 
 | `CSM_CODEX_HOME` | Explicit Codex data root used by CSM |
 | `CODEX_HOME` | Codex's official data-root override; if both home variables are set, they must resolve to the same path |
 | `CSM_CODEX_BIN` | Absolute path or command name for the Codex CLI/App Server launcher |
+| `CODEX_CLI_PATH` | Optional executable Codex CLI path for desktop launches |
 | `CSM_APP_PATH` | Stable installed App root or executable used when generating Hook commands |
 | `CSM_DATA_DIR` | Plans, imports, backups, and audit database root |
 | `CSM_CONFIG_DIR` | CSM configuration root |
@@ -446,7 +450,7 @@ No for standalone builds. The macOS and Windows bundles carry their own runtime 
 <details>
 <summary><strong>Why is the conversation list empty or App Server unavailable?</strong></summary>
 
-Run `csm doctor`. Confirm the Codex CLI is installed and reachable, or set `CSM_CODEX_BIN` to its absolute path. Also verify that `CODEX_HOME` and `CSM_CODEX_HOME` refer to the intended, identical data root.
+Run `csm doctor`. A macOS standalone build checks explicit `CSM_CODEX_BIN`, then `CODEX_CLI_PATH`, the current PATH, and finally the CLI bundled inside ChatGPT.app. If it is still unavailable, set `CSM_CODEX_BIN` to its absolute path. Also verify that `CODEX_HOME` and `CSM_CODEX_HOME` refer to the intended, identical data root.
 </details>
 
 <details>

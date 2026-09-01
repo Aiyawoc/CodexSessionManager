@@ -195,10 +195,30 @@ def bundled_age_keygen_path(*, allow_development_path: bool = True) -> Path | No
     return None
 
 
-def codex_binary() -> str:
-    """Return the configured Codex CLI path."""
+def _bundled_codex_binary() -> str | None:
+    """Locate the Codex CLI shipped with the macOS ChatGPT application."""
 
-    return os.environ.get("CSM_CODEX_BIN", "codex")
+    if sys.platform != "darwin":
+        return None
+    candidate = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
+    return str(candidate) if candidate.is_file() and os.access(candidate, os.X_OK) else None
+
+
+def codex_binary() -> str:
+    """Return a runnable Codex CLI path for shell and desktop launches."""
+
+    explicit = os.environ.get("CSM_CODEX_BIN")
+    if explicit:
+        return explicit
+    cli_path = os.environ.get("CODEX_CLI_PATH")
+    if cli_path:
+        candidate = Path(cli_path).expanduser()
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    discovered = shutil.which("codex")
+    if discovered:
+        return discovered
+    return _bundled_codex_binary() or "codex"
 
 
 def stable_installed_app() -> Path:

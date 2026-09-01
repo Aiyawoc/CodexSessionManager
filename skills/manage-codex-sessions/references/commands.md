@@ -20,6 +20,7 @@ Hook 中禁止使用 `uv`、`.venv`、网络下载或依赖安装。
 
 ```text
 csm threads list --project /absolute/project/path
+csm threads list --older-than-days 90
 csm threads show TASK_ID
 csm cleanup review --older-than-days 90
 csm acceptance run --output acceptance-report.json
@@ -111,5 +112,7 @@ csm acceptance report acceptance-v1.json --schema-report schema-audit-v1.json --
 csm acceptance run --output acceptance-first-delivery.json
 csm acceptance release --output acceptance-release.json
 ```
+
+`csm threads list` 默认通过官方 App Server 读取全部可见的活跃与归档任务，并由 CSM 自己完成搜索、项目和时间筛选；例如 `csm threads list --older-than-days 90` 只保留更新时间早于当前 UTC 截止时间的任务。GUI 上下文审查页的“更新时间”筛选与该参数使用同一套 CSM 逻辑，默认值为“全部”。这与 `csm cleanup review --older-than-days 90` 的清理候选建议流程相互独立。
 
 未知 schema 报告不得自动加入信任列表。验收报告只接受固定阶段、散列任务 ID 和 SHA-256，并始终标记 `production_ready: false`。

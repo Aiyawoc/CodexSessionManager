@@ -39,7 +39,7 @@ from codex_session_manager.importing import (
     record_from_backup_json,
     record_from_thread,
 )
-from codex_session_manager.inventory import InventoryFilter, InventoryService
+from codex_session_manager.inventory import InventoryFilter, InventoryService, older_than_cutoff
 from codex_session_manager.models import (
     ActionPlan,
     ImportPlan,
@@ -477,6 +477,7 @@ def _inventory_filter(
     statuses: list[ThreadStatus] | None = None,
     archived: bool | None = None,
     pinned: bool | None = None,
+    older_than_days: int | None = None,
     updated_before: str | None = None,
     updated_after: str | None = None,
     minimum_size: int | None = None,
@@ -484,6 +485,8 @@ def _inventory_filter(
     parent_id: str | None = None,
     search: str | None = None,
 ) -> InventoryFilter:
+    if older_than_days is not None and updated_before is not None:
+        raise typer.BadParameter("--older-than-days 与 --updated-before 不能同时使用")
     return InventoryFilter(
         cwd=project,
         git_remote=git_remote,
@@ -491,7 +494,11 @@ def _inventory_filter(
         archived=archived,
         pinned=pinned,
         statuses=tuple(statuses or ()),
-        updated_before=_aware_datetime(updated_before, "--updated-before"),
+        updated_before=(
+            older_than_cutoff(older_than_days)
+            if older_than_days is not None
+            else _aware_datetime(updated_before, "--updated-before")
+        ),
         updated_after=_aware_datetime(updated_after, "--updated-after"),
         minimum_size=minimum_size,
         maximum_size=maximum_size,
@@ -623,6 +630,10 @@ def threads_list(
     pinned: Annotated[bool | None, typer.Option("--pinned/--not-pinned")] = None,
     source_kind: Annotated[list[str] | None, typer.Option("--source-kind")] = None,
     status: Annotated[list[ThreadStatus] | None, typer.Option("--status")] = None,
+    older_than_days: Annotated[
+        int | None,
+        typer.Option("--older-than-days", min=1, help="只显示超过 N 天未更新的任务"),
+    ] = None,
     updated_before: Annotated[str | None, typer.Option("--updated-before")] = None,
     updated_after: Annotated[str | None, typer.Option("--updated-after")] = None,
     minimum_size: Annotated[int | None, typer.Option("--min-size", min=0)] = None,
@@ -640,6 +651,7 @@ def threads_list(
             statuses=status,
             archived=archived,
             pinned=pinned,
+            older_than_days=older_than_days,
             updated_before=updated_before,
             updated_after=updated_after,
             minimum_size=minimum_size,

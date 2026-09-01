@@ -26,6 +26,7 @@ from codex_session_manager.gui.prompt import PrecompactPromptDialog
 from codex_session_manager.gui.theme import APP_STYLESHEET, DANGER, SPLITTER_LINE, TEXT
 from codex_session_manager.gui.widgets import CenteredHandleSplitter
 from codex_session_manager.hashing import utc_now
+from codex_session_manager.inventory import InventoryFilter
 from codex_session_manager.models import (
     BackupManifest,
     ItemKind,
@@ -42,7 +43,11 @@ from codex_session_manager.sensitive import (
     SensitiveSeverity,
     scan_sensitive_snapshot,
 )
-from codex_session_manager.workflows import BackupCreationResult, SensitiveScanBatch
+from codex_session_manager.workflows import (
+    BackupCreationResult,
+    InventoryResult,
+    SensitiveScanBatch,
+)
 
 
 def _document(snapshot, capabilities) -> ReviewDocument:
@@ -144,6 +149,66 @@ def test_review_window_layout_and_stale_worker_result(
     current_item = window.ui.taskListView.currentItem()
     assert current_item is not None
     assert current_item.data(0, Qt.ItemDataRole.UserRole) == "current"
+
+
+def test_task_age_filter_defaults_to_all_and_builds_csm_criteria(qtbot, app_paths) -> None:
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+
+    age_spin = getattr(window.ui, "olderThanDaysSpinBox", None)
+    assert age_spin is not None
+    assert age_spin.value() == 0
+    assert age_spin.specialValueText() == "全部"
+
+    build_filter = getattr(window, "_task_inventory_filter", None)
+    assert callable(build_filter)
+    assert build_filter() is None
+
+    age_spin.setValue(90)
+    criteria = build_filter()
+    assert isinstance(criteria, InventoryFilter)
+    assert criteria.updated_before is not None
+    age = datetime.now(UTC) - criteria.updated_before
+    assert 89 * 86_400 < age.total_seconds() < 91 * 86_400
+
+
+def test_task_age_filter_is_forwarded_to_workflow(qtbot, app_paths, capabilities) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeWorkflows:
+        def list_threads(self, *, criteria=None, include_active=True, include_archived=True):
+            captured["criteria"] = criteria
+            return InventoryResult(capabilities, ())
+
+    window = TrimReviewWindow(
+        paths=app_paths,
+        workflows=FakeWorkflows(),  # type: ignore[arg-type]
+        load_task_list=False,
+    )
+    qtbot.addWidget(window)
+    window.ui.olderThanDaysSpinBox.setValue(90)
+    window.load_task_list()
+    qtbot.waitUntil(lambda: "criteria" in captured, timeout=3000)
+
+    criteria = captured["criteria"]
+    assert isinstance(criteria, InventoryFilter)
+    assert criteria.updated_before is not None
+
+
+def test_footer_action_buttons_are_equal_fixed_width_and_right_aligned(qtbot, app_paths) -> None:
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+
+    buttons = tuple(
+        window.ui.buttonLayout.itemAt(index).widget()
+        for index in range(window.ui.buttonLayout.count())
+    )
+    assert buttons
+    assert {button.minimumWidth() for button in buttons} == {136}
+    assert {button.maximumWidth() for button in buttons} == {136}
+    assert window.ui.buttonLayout.alignment() & Qt.AlignmentFlag.AlignRight
+    assert window.ui.footerMainLayout.stretch(1) == 1
+    assert window.ui.footerMainLayout.stretch(2) == 1
 
 
 def test_trim_apply_button_requires_safe_inactive_source_status(

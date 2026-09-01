@@ -19,8 +19,9 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
     QFrame, QGridLayout, QHBoxLayout, QHeaderView,
     QLabel, QLineEdit, QMainWindow, QPlainTextEdit,
     QProgressBar, QPushButton, QSizePolicy, QSpacerItem,
-    QTextBrowser, QTextEdit, QToolButton, QTreeView,
-    QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+    QSpinBox, QTextBrowser, QTextEdit, QToolButton,
+    QTreeView, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
+    QWidget)
 
 from codex_session_manager.gui.widgets import CenteredHandleSplitter
 
@@ -187,6 +188,30 @@ class Ui_MainWindow(object):
 
 
         self.taskTopLayout.addLayout(self.manualTaskLayout)
+
+        self.taskFilterLayout = QHBoxLayout()
+        self.taskFilterLayout.setSpacing(6)
+        self.taskFilterLayout.setObjectName(u"taskFilterLayout")
+        self.olderThanDaysLabel = QLabel(self.taskPane)
+        self.olderThanDaysLabel.setObjectName(u"olderThanDaysLabel")
+
+        self.taskFilterLayout.addWidget(self.olderThanDaysLabel)
+
+        self.olderThanDaysSpinBox = QSpinBox(self.taskPane)
+        self.olderThanDaysSpinBox.setObjectName(u"olderThanDaysSpinBox")
+        self.olderThanDaysSpinBox.setMinimumSize(QSize(84, 32))
+        self.olderThanDaysSpinBox.setMinimum(0)
+        self.olderThanDaysSpinBox.setMaximum(36500)
+        self.olderThanDaysSpinBox.setValue(0)
+
+        self.taskFilterLayout.addWidget(self.olderThanDaysSpinBox)
+
+        self.taskFilterSpacer = QSpacerItem(20, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+
+        self.taskFilterLayout.addItem(self.taskFilterSpacer)
+
+
+        self.taskTopLayout.addLayout(self.taskFilterLayout)
 
 
         self.taskLayout.addLayout(self.taskTopLayout)
@@ -438,7 +463,7 @@ class Ui_MainWindow(object):
         self.errorLabel = QLabel(self.footerFrame)
         self.errorLabel.setObjectName(u"errorLabel")
         self.errorLabel.setMinimumSize(QSize(0, 0))
-        self.errorLabel.setMaximumSize(QSize(360, 34))
+        self.errorLabel.setMaximumSize(QSize(16777215, 34))
         self.errorLabel.setAlignment(Qt.AlignmentFlag.AlignLeading|Qt.AlignmentFlag.AlignVCenter)
         self.errorLabel.setWordWrap(False)
 
@@ -455,6 +480,7 @@ class Ui_MainWindow(object):
         self.buttonLayout = QHBoxLayout()
         self.buttonLayout.setSpacing(8)
         self.buttonLayout.setObjectName(u"buttonLayout")
+        self.buttonLayout.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
         self.sensitiveScanButton = QPushButton(self.footerFrame)
         self.sensitiveScanButton.setObjectName(u"sensitiveScanButton")
         self.sensitiveScanButton.setCheckable(True)
@@ -489,13 +515,15 @@ class Ui_MainWindow(object):
 
         MainWindow.setCentralWidget(self.centralwidget)
 #if QT_CONFIG(shortcut)
+        self.olderThanDaysLabel.setBuddy(self.olderThanDaysSpinBox)
         self.summaryLabel.setBuddy(self.summaryEdit)
 #endif // QT_CONFIG(shortcut)
         QWidget.setTabOrder(self.languageCombo, self.projectTaskRailButton)
         QWidget.setTabOrder(self.projectTaskRailButton, self.memoryRailButton)
         QWidget.setTabOrder(self.memoryRailButton, self.threadIdEdit)
         QWidget.setTabOrder(self.threadIdEdit, self.loadButton)
-        QWidget.setTabOrder(self.loadButton, self.taskListView)
+        QWidget.setTabOrder(self.loadButton, self.olderThanDaysSpinBox)
+        QWidget.setTabOrder(self.olderThanDaysSpinBox, self.taskListView)
         QWidget.setTabOrder(self.taskListView, self.taskRefreshButton)
         QWidget.setTabOrder(self.taskRefreshButton, self.taskBackupButton)
         QWidget.setTabOrder(self.taskBackupButton, self.taskArchiveButton)
@@ -565,6 +593,13 @@ class Ui_MainWindow(object):
         self.loadButton.setText(QCoreApplication.translate("MainWindow", u"\u52a0\u8f7d ID", None))
 #if QT_CONFIG(accessibility)
         self.loadButton.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u6309 Codex \u5bf9\u8bdd ID \u52a0\u8f7d", None))
+#endif // QT_CONFIG(accessibility)
+        self.olderThanDaysLabel.setText(QCoreApplication.translate("MainWindow", u"\u66f4\u65b0\u65f6\u95f4", None))
+        self.olderThanDaysSpinBox.setSuffix(QCoreApplication.translate("MainWindow", u" \u5929", None))
+        self.olderThanDaysSpinBox.setPrefix(QCoreApplication.translate("MainWindow", u"\u8d85\u8fc7 ", None))
+        self.olderThanDaysSpinBox.setSpecialValueText(QCoreApplication.translate("MainWindow", u"\u5168\u90e8", None))
+#if QT_CONFIG(accessibility)
+        self.olderThanDaysSpinBox.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u6309\u672a\u66f4\u65b0\u65f6\u95f4\u7b5b\u9009\u4efb\u52a1\uff0c\u96f6\u8868\u793a\u5168\u90e8", None))
 #endif // QT_CONFIG(accessibility)
         self.taskContextStatusLabel.setText(QCoreApplication.translate("MainWindow", u"\u5c1a\u672a\u52a0\u8f7d\u4efb\u52a1", None))
 #if QT_CONFIG(tooltip)

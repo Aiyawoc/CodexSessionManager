@@ -198,6 +198,7 @@ scripts/install_user.sh /absolute/path/to/CodexSessionManager.app
 csm doctor
 csm schema audit --output schema-audit-v1.json
 csm threads list
+csm threads list --older-than-days 90
 csm threads show CONVERSATION_ID --include-content
 csm gui open --page pending
 csm trim review CONVERSATION_ID
@@ -220,6 +221,8 @@ csm cleanup apply PLAN.json --confirm PLAN_ID
 ```
 
 主要命令组：
+
+`csm threads list` 默认通过官方 App Server 读取全部可见的活跃与归档任务，再由 CSM 自己完成搜索、项目和时间筛选；`--older-than-days N` 按更新时间计算 UTC 截止值，只输出超过 N 天未更新的任务。GUI 上下文审查页的“更新时间”筛选使用同一套工具逻辑，默认值为“全部”，因此这里的读取与筛选不是由 LLM 手工完成。`csm cleanup review --older-than-days N` 仍是独立的密封清理候选建议流程。
 
 | 命令 | 用途 |
 | --- | --- |
@@ -346,6 +349,7 @@ CSM 默认使用各平台的用户级标准目录。环境变量主要用于明�
 | `CSM_CODEX_HOME` | CSM 使用的明确 Codex 数据根目录 |
 | `CODEX_HOME` | Codex 官方数据根覆盖；两个 home 变量同时设置时必须解析到同一路径 |
 | `CSM_CODEX_BIN` | Codex CLI/App Server 启动器的绝对路径或命令名 |
+| `CODEX_CLI_PATH` | 桌面启动时可选的 Codex CLI 绝对路径；仅在文件可执行时使用 |
 | `CSM_APP_PATH` | 生成 Hook 命令时使用的稳定 App 根目录或可执行文件 |
 | `CSM_DATA_DIR` | 计划、导入、备份和审计数据库目录 |
 | `CSM_CONFIG_DIR` | CSM 配置目录 |
@@ -447,7 +451,7 @@ scripts/package_macos_release.sh --app dist/CodexSessionManager.app
 <details>
 <summary><strong>为什么对话列表为空，或 App Server 不可用？</strong></summary>
 
-先运行 `csm doctor`。确认 Codex CLI 已安装且可访问，或用 `CSM_CODEX_BIN` 指向其绝对路径；同时检查 `CODEX_HOME` 与 `CSM_CODEX_HOME` 是否指向预期且相同的数据根。
+先运行 `csm doctor`。macOS standalone 会优先使用显式的 `CSM_CODEX_BIN`，其次检查 `CODEX_CLI_PATH`、当前 PATH，最后尝试 ChatGPT.app 内置 CLI；若仍不可用，可用 `CSM_CODEX_BIN` 指向其绝对路径。同时检查 `CODEX_HOME` 与 `CSM_CODEX_HOME` 是否指向预期且相同的数据根。
 </details>
 
 <details>

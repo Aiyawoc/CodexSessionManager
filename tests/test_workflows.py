@@ -63,7 +63,7 @@ class _WorkflowClient:
         self.reads: list[str] = []
         self.closed = False
 
-    def list_threads(self, *, archived: bool = False):
+    def list_threads(self, *, archived: bool = False, limit: int = 0):
         if archived:
             return iter(())
         return iter(
@@ -112,7 +112,7 @@ class _ArchivingWorkflowClient(_WorkflowClient):
         self.archived_ids: set[str] = set()
         self.archive_calls: list[str] = []
 
-    def list_threads(self, *, archived: bool = False):
+    def list_threads(self, *, archived: bool = False, limit: int = 0):
         values = (
             {
                 "id": "root",

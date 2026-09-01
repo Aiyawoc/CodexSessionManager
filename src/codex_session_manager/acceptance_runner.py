@@ -422,7 +422,6 @@ def run_automated_acceptance(
         "Codex desktop 本机 MCP 的 stdio 启动、工具发现和真实 GUI 行为需要在目标测试机人工验收",
         "HTTP MCP、远程连接器和 Tunnel 不属于本机 stdio 自动门禁；如启用需另行验收",
         "Apple 签名、公证和 Windows 原生运行不由本地自动检查声称完成",
-        "永久删除仍是独立人工高风险流程",
         "production_ready 始终为 false；本报告只判断首次用户交付门槛",
     )
     report = AutomatedAcceptanceReport(

@@ -80,7 +80,6 @@ class AcceptanceReport(FrozenModel):
     stages: tuple[AcceptanceStage, ...]
     production_ready: Literal[False] = False
     limitations: tuple[str, ...] = (
-        "no-permanent-delete",
         "no-restore-or-import",
         "no-real-hook-install",
         "not-production-acceptance",

@@ -293,9 +293,11 @@ def test_codex_directory_hash_binds_paths_and_rejects_symlinks(tmp_path: Path) -
 class _ImportClient:
     def __init__(self, *, preserve_injection: bool = True) -> None:
         self.preserve_injection = preserve_injection
+        self.start_calls = 0
         self.items: list[dict[str, object]] = []
 
     def start_thread(self, *, cwd: str | None = None, name: str | None = None):
+        self.start_calls += 1
         assert cwd == "/confirmed/project"
         assert name == "Imported task"
         return {"id": "derived-import"}
@@ -312,7 +314,7 @@ class _ImportClient:
         }
 
 
-def test_import_apply_rereads_and_verifies_injected_provenance(
+def test_import_apply_fails_closed_before_any_write(
     tmp_path: Path, app_paths, capabilities
 ) -> None:
     source = tmp_path / "source.json"
@@ -332,29 +334,16 @@ def test_import_apply_rereads_and_verifies_injected_provenance(
         capabilities=capabilities,
         confirmed_cwd="/confirmed/project",
     )
-    with AuditStore(app_paths) as audit:
-        created = LogicalImportExecutor(
-            client=_ImportClient(),  # type: ignore[arg-type]
+    client = _ImportClient()
+    with (
+        AuditStore(app_paths) as audit,
+        pytest.raises(ValueError, match=r"no approved operation contract.*thread/start"),
+    ):
+        LogicalImportExecutor(
+            client=client,  # type: ignore[arg-type]
             capabilities=capabilities,
             paths=app_paths,
             audit=audit,
         ).apply(plan, source=source, records=(record,))
-    assert created == {"record": "derived-import"}
-
-    failed_plan = ImportPlanner(app_paths).plan(
-        source=source,
-        records=(record,),
-        existing=(),
-        capabilities=capabilities,
-        confirmed_cwd="/confirmed/project",
-    )
-    with (
-        AuditStore(app_paths) as audit,
-        pytest.raises(CsmImportError, match="ordered-message verification"),
-    ):
-        LogicalImportExecutor(
-            client=_ImportClient(preserve_injection=False),  # type: ignore[arg-type]
-            capabilities=capabilities,
-            paths=app_paths,
-            audit=audit,
-        ).apply(failed_plan, source=source, records=(record,))
+    assert client.start_calls == 0
+    assert client.items == []

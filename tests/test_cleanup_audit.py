@@ -8,7 +8,12 @@ import pytest
 
 from codex_session_manager.app_server import RequestError, RequestTimeout
 from codex_session_manager.audit import AuditStore
-from codex_session_manager.cleanup import CleanupExecutor, CleanupPlanner, ProcessGuard
+from codex_session_manager.cleanup import (
+    CleanupExecutor,
+    CleanupPlanner,
+    ProcessGuard,
+    selected_root_block_reason,
+)
 from codex_session_manager.hashing import hash_file
 from codex_session_manager.inventory import InventoryFilter, attach_descendant_closures
 from codex_session_manager.models import (
@@ -16,8 +21,11 @@ from codex_session_manager.models import (
     BackupEntry,
     BackupManifest,
     BackupVerification,
+    ContractIssue,
+    OperationName,
     PlanAction,
     PlanTarget,
+    ThreadHistoryMode,
     ThreadSnapshot,
     ThreadStatus,
 )
@@ -55,6 +63,97 @@ def _record_backup(audit: AuditStore, snapshot: ThreadSnapshot, path: Path) -> B
     audit.record_verified_backup(verification, path)
     manifest = verification.manifest
     return manifest
+
+
+def _block_operation(capabilities, operation: OperationName):
+    blocked = capabilities.operation(operation).model_copy(
+        update={
+            "available": False,
+            "runtime_contract_fingerprint": None,
+            "issues": (
+                ContractIssue(
+                    code="test_blocked",
+                    subject=f"{operation.value} contract is unavailable",
+                ),
+            ),
+        }
+    )
+    return capabilities.model_copy(
+        update={
+            "operation_capabilities": tuple(
+                blocked if item.operation is operation else item
+                for item in capabilities.operation_capabilities
+            )
+        }
+    )
+
+
+def test_selected_root_contracts_are_task_level(capabilities, snapshot_factory) -> None:
+    legacy = snapshot_factory("legacy", history_mode=ThreadHistoryMode.LEGACY)
+    paginated = snapshot_factory("paginated", history_mode=ThreadHistoryMode.PAGINATED)
+    blocked_pagination = _block_operation(capabilities, OperationName.HISTORY_PAGINATED)
+
+    assert (
+        selected_root_block_reason(
+            action=PlanAction.ARCHIVE,
+            thread_id="legacy",
+            snapshots={legacy.id: legacy, paginated.id: paginated},
+            capabilities=blocked_pagination,
+        )
+        is None
+    )
+    reason = selected_root_block_reason(
+        action=PlanAction.ARCHIVE,
+        thread_id="paginated",
+        snapshots={legacy.id: legacy, paginated.id: paginated},
+        capabilities=blocked_pagination,
+    )
+    assert reason is not None and "history.paginated" in reason
+
+
+def test_archive_and_unarchive_contracts_are_independent(capabilities, snapshot_factory) -> None:
+    archived = snapshot_factory("archived", archived=True)
+    snapshots = {archived.id: archived}
+
+    assert (
+        selected_root_block_reason(
+            action=PlanAction.UNARCHIVE,
+            thread_id=archived.id,
+            snapshots=snapshots,
+            capabilities=_block_operation(capabilities, OperationName.ARCHIVE),
+        )
+        is None
+    )
+    reason = selected_root_block_reason(
+        action=PlanAction.UNARCHIVE,
+        thread_id=archived.id,
+        snapshots=snapshots,
+        capabilities=_block_operation(capabilities, OperationName.UNARCHIVE),
+    )
+    assert reason is not None and "unarchive" in reason
+
+
+def test_archive_planner_keeps_legacy_when_paginated_contract_is_blocked(
+    capabilities, snapshot_factory
+) -> None:
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    legacy = snapshot_factory(
+        "legacy", updated_at=now - timedelta(days=120), history_mode=ThreadHistoryMode.LEGACY
+    )
+    paginated = snapshot_factory(
+        "paginated",
+        updated_at=now - timedelta(days=120),
+        history_mode=ThreadHistoryMode.PAGINATED,
+    )
+    snapshots = attach_descendant_closures((legacy, paginated))
+
+    plan = CleanupPlanner().plan_archive(
+        snapshots,
+        _block_operation(capabilities, OperationName.HISTORY_PAGINATED),
+        now=now,
+    )
+
+    assert tuple(target.root_thread_id for target in plan.targets) == ("legacy",)
 
 
 def test_archive_plan_requires_complete_old_descendant_closure(
@@ -128,19 +227,6 @@ class _CleanupClient:
         self.archive_calls += 1
         if self.timeout:
             raise RequestTimeout("thread/archive", 1.0)
-
-
-class _RenameClient:
-    pid = 445
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str]] = []
-
-    def loaded_thread_ids(self):
-        return ()
-
-    def rename_thread(self, thread_id: str, name: str) -> None:
-        self.calls.append((thread_id, name))
 
 
 class _CleanupInventory:
@@ -326,28 +412,69 @@ def test_audit_verification_detects_event_chain_payload_damage(app_paths) -> Non
             audit.verify_chain()
 
 
-def test_rename_uses_sealed_plan_and_verifies_title_postcondition(
+def test_historical_rename_plan_is_rejected_without_a_client_write(
     app_paths, capabilities, snapshot_factory
 ) -> None:
-    before = snapshot_factory("root")
-    after = before.model_copy(update={"title": "新的对话名称"})
-    plan = CleanupPlanner().plan_rename(
-        (before,), capabilities, thread_id="root", new_name=" 新的对话名称 "
+    snapshot = snapshot_factory("root")
+    plan = ActionPlan.create(
+        action=PlanAction.RENAME,
+        capability_fingerprint=capabilities.fingerprint,
+        targets=(
+            PlanTarget(
+                root_thread_id=snapshot.id,
+                affected_thread_ids=(snapshot.id,),
+                snapshot_fingerprints={snapshot.id: snapshot.management_fingerprint},
+            ),
+        ),
     )
-    client = _RenameClient()
-    inventory = _CleanupInventory(before, after)
+    client = _CleanupClient()
 
-    with AuditStore(app_paths) as audit:
-        completed = CleanupExecutor(
+    with AuditStore(app_paths) as audit, pytest.raises(ValueError, match="cannot apply rename"):
+        CleanupExecutor(
             client=client,  # type: ignore[arg-type]
-            inventory=inventory,  # type: ignore[arg-type]
+            inventory=_CleanupInventory(snapshot, snapshot),  # type: ignore[arg-type]
             capabilities=capabilities,
             audit=audit,
         ).apply(plan)
 
-    assert plan.action is PlanAction.RENAME
-    assert completed == ("root",)
-    assert client.calls == [("root", "新的对话名称")]
+    assert client.archive_calls == 0
+
+
+def test_archive_apply_rejects_task_history_drift_before_client_write(
+    app_paths, capabilities, snapshot_factory
+) -> None:
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    planned = snapshot_factory("root", updated_at=now - timedelta(days=120))
+    drifted = planned.model_copy(update={"history_mode": ThreadHistoryMode.PAGINATED})
+    plan = CleanupPlanner().plan_archive((planned,), capabilities, now=now)
+
+    with AuditStore(app_paths) as audit, pytest.raises(ValueError, match="snapshot drift"):
+        CleanupExecutor(
+            client=_CleanupClient(),  # type: ignore[arg-type]
+            inventory=_CleanupInventory(drifted, drifted),  # type: ignore[arg-type]
+            capabilities=capabilities,
+            audit=audit,
+        ).apply(plan)
+
+
+def test_archive_apply_rejects_capability_drift_before_client_write(
+    app_paths, capabilities, snapshot_factory
+) -> None:
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    snapshot = snapshot_factory("root", updated_at=now - timedelta(days=120))
+    plan = CleanupPlanner().plan_archive((snapshot,), capabilities, now=now)
+    drifted_capabilities = capabilities.model_copy(update={"initialize_fingerprint": "changed"})
+    client = _CleanupClient()
+
+    with AuditStore(app_paths) as audit, pytest.raises(ValueError, match="capability drift"):
+        CleanupExecutor(
+            client=client,  # type: ignore[arg-type]
+            inventory=_CleanupInventory(snapshot, snapshot),  # type: ignore[arg-type]
+            capabilities=drifted_capabilities,
+            audit=audit,
+        ).apply(plan)
+
+    assert client.archive_calls == 0
 
 
 def test_replaced_backup_invalidates_cleanup_gate(

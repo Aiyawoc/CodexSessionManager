@@ -17,6 +17,7 @@ from codex_session_manager.hooks import (
     HookInput,
     HookInstaller,
     HookOutput,
+    _plan_has_current_write_capability,
 )
 from codex_session_manager.models import TrimAction, TrimPlan, TrimSelection
 from codex_session_manager.pending_plans import PendingPlanStatus, PendingTrimPlanStore
@@ -197,6 +198,36 @@ def test_precompact_rechecks_cached_blocking_plan_capabilities(
 
     assert repeated.continue_ is True
     assert "no longer executable" in (repeated.systemMessage or "")
+
+
+def test_trim_hook_never_suppresses_native_compaction_for_unapproved_write(
+    app_paths, capabilities, snapshot_factory, monkeypatch
+) -> None:
+    snapshot = snapshot_factory("session-1")
+    plan = TrimPlan.create(
+        source_thread=snapshot,
+        capability_fingerprint=capabilities.fingerprint,
+        selections=(TrimSelection(target_id=snapshot.turns[0].id, action=TrimAction.KEEP),),
+        estimated_tokens_after=snapshot.token_estimate,
+        trigger="hook",
+        source_turn_id="turn-1",
+    )
+
+    def unexpected_workflow(*_args, **_kwargs):
+        raise AssertionError("unapproved TrimPlan must not open an App Server session")
+
+    monkeypatch.setattr("codex_session_manager.workflows.ApplicationWorkflows", unexpected_workflow)
+
+    assert _plan_has_current_write_capability(plan) is False
+    assert (
+        HookHandler(
+            app_paths,
+            reviewer=lambda _input, _deadline: plan,
+        )
+        .precompact(_hook_input())
+        .continue_
+        is True
+    )
 
 
 def test_hook_decision_rejects_implausible_future_timestamp(app_paths) -> None:

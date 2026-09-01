@@ -189,9 +189,11 @@ class _TrimClient:
     pid = 123
 
     def __init__(self) -> None:
+        self.fork_calls = 0
         self.rollbacks: list[tuple[str, int]] = []
 
     def fork_thread(self, thread_id: str, *, last_turn_id: str | None = None):
+        self.fork_calls += 1
         assert thread_id == "source"
         assert last_turn_id is None
         return {"id": "derived"}
@@ -229,9 +231,11 @@ class _ProjectionClient:
     ) -> None:
         self.preserve_injection = preserve_injection
         self.target_id = target_id
+        self.start_calls = 0
         self.items: list[dict[str, object]] = []
 
     def start_thread(self, *, cwd: str | None = None, name: str | None = None):
+        self.start_calls += 1
         assert name == "Review · 精简"
         return {"id": self.target_id}
 
@@ -275,7 +279,7 @@ def _non_prefix_plan(source: ThreadSnapshot, capabilities) -> TrimPlan:
     )
 
 
-def test_prefix_apply_adapts_to_fork_then_rollback_without_touching_source(
+def test_prefix_apply_fails_closed_before_fork_write(
     app_paths, capabilities, snapshot_factory
 ) -> None:
     turns = tuple(
@@ -310,51 +314,65 @@ def test_prefix_apply_adapts_to_fork_then_rollback_without_touching_source(
     )
     client = _TrimClient()
     inventory = _TrimInventory(source, derived)
-    with AuditStore(app_paths) as audit:
-        target = TrimExecutor(
+    with (
+        AuditStore(app_paths) as audit,
+        pytest.raises(ValueError, match=r"no approved operation contract.*thread/fork"),
+    ):
+        TrimExecutor(
             client=client,  # type: ignore[arg-type]
             inventory=inventory,  # type: ignore[arg-type]
             capabilities=capabilities,
             audit=audit,
         ).apply(plan)
-        audit.verify_chain()
-    assert target == "derived"
-    assert client.rollbacks == [("derived", 2)]
-    assert inventory.source_reads == 2
+    assert client.fork_calls == 0
+    assert client.rollbacks == []
+    assert inventory.source_reads == 1
 
 
-def test_projection_apply_verifies_exact_ordered_injected_message(app_paths, capabilities) -> None:
+def test_projection_apply_fails_closed_before_start_write(app_paths, capabilities) -> None:
     source = _review_snapshot()
     client = _ProjectionClient()
-    with AuditStore(app_paths) as audit:
-        target = TrimExecutor(
+    with (
+        AuditStore(app_paths) as audit,
+        pytest.raises(ValueError, match=r"no approved operation contract.*thread/start"),
+    ):
+        TrimExecutor(
             client=client,  # type: ignore[arg-type]
             inventory=_ProjectionInventory(source),  # type: ignore[arg-type]
             capabilities=capabilities,
             audit=audit,
         ).apply(_non_prefix_plan(source, capabilities))
-    assert target == "projection-derived"
+    assert client.start_calls == 0
+    assert client.items == []
 
 
-def test_projection_apply_rejects_missing_injected_message(app_paths, capabilities) -> None:
+def test_projection_apply_rejects_missing_injected_message_before_any_write(
+    app_paths, capabilities
+) -> None:
     source = _review_snapshot()
+    client = _ProjectionClient(preserve_injection=False)
     with (
         AuditStore(app_paths) as audit,
-        pytest.raises(TrimError, match="ordered-message verification"),
+        pytest.raises(ValueError, match=r"no approved operation contract.*thread/start"),
     ):
         TrimExecutor(
-            client=_ProjectionClient(preserve_injection=False),  # type: ignore[arg-type]
+            client=client,  # type: ignore[arg-type]
             inventory=_ProjectionInventory(source),  # type: ignore[arg-type]
             capabilities=capabilities,
             audit=audit,
         ).apply(_non_prefix_plan(source, capabilities))
+    assert client.start_calls == 0
+    assert client.items == []
 
 
-def test_projection_apply_rejects_source_id_before_injection(app_paths, capabilities) -> None:
+def test_projection_apply_rejects_source_id_before_any_write(app_paths, capabilities) -> None:
     source = _review_snapshot()
     client = _ProjectionClient(target_id=source.id)
 
-    with AuditStore(app_paths) as audit, pytest.raises(TrimError, match="source thread id"):
+    with (
+        AuditStore(app_paths) as audit,
+        pytest.raises(ValueError, match=r"no approved operation contract.*thread/start"),
+    ):
         TrimExecutor(
             client=client,  # type: ignore[arg-type]
             inventory=_ProjectionInventory(source),  # type: ignore[arg-type]
@@ -365,13 +383,16 @@ def test_projection_apply_rejects_source_id_before_injection(app_paths, capabili
     assert client.items == []
 
 
-def test_projection_apply_rejects_missing_target_id_before_injection(
+def test_projection_apply_rejects_missing_target_id_before_any_write(
     app_paths, capabilities
 ) -> None:
     source = _review_snapshot()
     client = _ProjectionClient(target_id="")
 
-    with AuditStore(app_paths) as audit, pytest.raises(TrimError, match="no derived thread id"):
+    with (
+        AuditStore(app_paths) as audit,
+        pytest.raises(ValueError, match=r"no approved operation contract.*thread/start"),
+    ):
         TrimExecutor(
             client=client,  # type: ignore[arg-type]
             inventory=_ProjectionInventory(source),  # type: ignore[arg-type]
@@ -402,18 +423,22 @@ def test_trim_apply_requires_explicit_idle_state(app_paths, capabilities, snapsh
     assert client.rollbacks == []
 
 
-def test_trim_apply_accepts_not_loaded_source(app_paths, capabilities) -> None:
+def test_trim_apply_rejects_not_loaded_source_before_start_write(app_paths, capabilities) -> None:
     source = _review_snapshot().model_copy(update={"status": ThreadStatus.NOT_LOADED})
     client = _ProjectionClient()
-    with AuditStore(app_paths) as audit:
-        target = TrimExecutor(
+    with (
+        AuditStore(app_paths) as audit,
+        pytest.raises(ValueError, match=r"no approved operation contract.*thread/start"),
+    ):
+        TrimExecutor(
             client=client,  # type: ignore[arg-type]
             inventory=_ProjectionInventory(source),  # type: ignore[arg-type]
             capabilities=capabilities,
             audit=audit,
         ).apply(_non_prefix_plan(source, capabilities))
 
-    assert target == "projection-derived"
+    assert client.start_calls == 0
+    assert client.items == []
 
 
 def test_trim_apply_revalidates_hard_protection_before_prefix_write(

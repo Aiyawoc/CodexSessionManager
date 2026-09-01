@@ -416,6 +416,17 @@ class ApplicationWorkflows:
             )
             return PreparedAction(plan, session.plans.save(plan))
 
+    def prepare_selected_unarchive(self, selected_ids: tuple[str, ...]) -> PreparedAction:
+        with self.session() as session:
+            _client, capabilities, inventory = session.services()
+            snapshots = inventory.list_for_targets(selected_ids)
+            plan = CleanupPlanner().plan_selected_unarchive(
+                snapshots,
+                capabilities,
+                selected_ids,
+            )
+            return PreparedAction(plan, session.plans.save(plan))
+
     def prepare_selected_purge(self, selected_ids: tuple[str, ...]) -> PreparedAction:
         with self.session(experimental_api=True) as session:
             _client, capabilities, inventory = session.services()
@@ -436,25 +447,6 @@ class ApplicationWorkflows:
             snapshots = inventory.list(include_turns=True)
             plan = CleanupPlanner(policy).plan_purge(snapshots, capabilities, session.audit)
             return PreparedAction(plan, session.plans.save(plan))
-
-    def rename_thread(self, thread_id: str, new_name: str) -> ActionExecutionResult:
-        with self.session() as session:
-            client, capabilities, inventory = session.services()
-            snapshots = inventory.list_for_targets((thread_id,))
-            plan = CleanupPlanner().plan_rename(
-                snapshots,
-                capabilities,
-                thread_id=thread_id,
-                new_name=new_name,
-            )
-            session.plans.save(plan)
-            completed = CleanupExecutor(
-                client=client,
-                inventory=inventory,
-                capabilities=capabilities,
-                audit=session.audit,
-            ).apply(plan)
-            return ActionExecutionResult(plan, completed)
 
     def apply_action(
         self,

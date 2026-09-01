@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import os
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Final
@@ -23,9 +24,11 @@ from codex_session_manager.models import (
     SAFE_INACTIVE_STATUSES,
     ActionPlan,
     CapabilityMatrix,
+    OperationName,
     PlanAction,
     PlanTarget,
     RiskLevel,
+    ThreadHistoryMode,
     ThreadSnapshot,
     ThreadStatus,
 )
@@ -89,6 +92,70 @@ def _non_overlapping_roots(roots: list[ThreadSnapshot]) -> list[ThreadSnapshot]:
     return [root for index, root in enumerate(roots) if index not in ambiguous]
 
 
+def selected_root_block_reason(
+    *,
+    action: PlanAction,
+    thread_id: str,
+    snapshots: Mapping[str, ThreadSnapshot],
+    capabilities: CapabilityMatrix,
+    require_content_complete: bool = True,
+) -> str | None:
+    """Return the first shared task-closure eligibility failure."""
+
+    root = snapshots.get(thread_id)
+    if root is None:
+        return f"selected conversation is no longer available: {thread_id}"
+    closure_ids = (root.id, *root.spawned_descendant_ids)
+    if len(set(closure_ids)) != len(closure_ids):
+        return f"descendant closure is invalid for {thread_id}"
+    missing = [member_id for member_id in closure_ids if member_id not in snapshots]
+    if missing:
+        return f"descendant closure is incomplete for {thread_id}: {', '.join(missing)}"
+    if action not in {PlanAction.ARCHIVE, PlanAction.UNARCHIVE}:
+        return f"cleanup action is not approved: {action.value}"
+
+    try:
+        capabilities.require_operation(OperationName.INVENTORY_COMMON)
+    except ValueError as exc:
+        return str(exc)
+    operation = OperationName.ARCHIVE if action is PlanAction.ARCHIVE else OperationName.UNARCHIVE
+    try:
+        capabilities.require_operation(operation)
+    except ValueError as exc:
+        return str(exc)
+
+    closure = tuple(snapshots[member_id] for member_id in closure_ids)
+    for snapshot in closure:
+        if snapshot.history_mode is ThreadHistoryMode.UNKNOWN:
+            return f"history mode is unknown for {snapshot.id}"
+        history_operation = (
+            OperationName.HISTORY_PAGINATED
+            if snapshot.history_mode is ThreadHistoryMode.PAGINATED
+            else OperationName.HISTORY_LEGACY
+        )
+        try:
+            capabilities.require_operation(history_operation)
+        except ValueError as exc:
+            return f"{snapshot.id}: {exc}"
+
+    for snapshot in closure:
+        if action is PlanAction.ARCHIVE and snapshot.archived:
+            return f"conversation is already archived: {snapshot.id}"
+        if action is PlanAction.UNARCHIVE and snapshot.id == root.id and not snapshot.archived:
+            return f"conversation is not archived: {snapshot.id}"
+        if snapshot.pinned:
+            return f"conversation is pinned: {snapshot.id}"
+        if snapshot.ephemeral:
+            return f"ephemeral conversation cannot be managed: {snapshot.id}"
+        if snapshot.status not in SAFE_INACTIVE_STATUSES:
+            return f"conversation is active or in an unsafe state: {snapshot.id}"
+        if not snapshot.mapping_complete:
+            return f"conversation mapping is incomplete: {snapshot.id}"
+        if require_content_complete and not snapshot.content_complete:
+            return f"conversation content is incomplete: {snapshot.id}"
+    return None
+
+
 class CleanupPlanner:
     def __init__(self, policy: CleanupPolicy | None = None) -> None:
         self.policy = policy or CleanupPolicy()
@@ -110,6 +177,17 @@ class CleanupPlanner:
             criteria=criteria,
             require_content=True,
         )
+        roots = [
+            root
+            for root in roots
+            if selected_root_block_reason(
+                action=PlanAction.ARCHIVE,
+                thread_id=root.id,
+                snapshots=all_snapshots,
+                capabilities=capabilities,
+            )
+            is None
+        ]
         targets = tuple(self._target(root, all_snapshots, cutoff) for root in roots)
         return ActionPlan.create(
             action=PlanAction.ARCHIVE,
@@ -302,11 +380,14 @@ class CleanupPlanner:
         roots = self._explicit_roots(selected_ids, all_snapshots)
         targets: list[PlanTarget] = []
         for root in roots:
-            closure = self._resolved_closure(root, all_snapshots)
-            for snapshot in closure:
-                reason = self._archive_block_reason(snapshot)
-                if reason:
-                    raise ValueError(f"selected archive blocked for {snapshot.id}: {reason}")
+            reason = selected_root_block_reason(
+                action=PlanAction.ARCHIVE,
+                thread_id=root.id,
+                snapshots=all_snapshots,
+                capabilities=capabilities,
+            )
+            if reason:
+                raise ValueError(f"selected archive blocked: {reason}")
             targets.append(
                 self._explicit_target(root, all_snapshots, "explicit human archive selection")
             )
@@ -320,46 +401,6 @@ class CleanupPlanner:
                 "descendant closure and App Server capability fingerprint remain unchanged",
             ),
             options={"manual_selection": True, "automatic_ceiling": "archive"},
-        )
-
-    def plan_rename(
-        self,
-        snapshots: tuple[ThreadSnapshot, ...],
-        capabilities: CapabilityMatrix,
-        *,
-        thread_id: str,
-        new_name: str,
-    ) -> ActionPlan:
-        """Plan a reversible title change against a full management snapshot."""
-
-        normalized_name = new_name.strip()
-        if not normalized_name:
-            raise ValueError("new conversation name must not be empty")
-        if len(normalized_name) > 200:
-            raise ValueError("new conversation name exceeds 200 characters")
-        all_snapshots = {snapshot.id: snapshot for snapshot in snapshots}
-        roots = self._explicit_roots((thread_id,), all_snapshots)
-        root = roots[0]
-        for snapshot in self._resolved_closure(root, all_snapshots):
-            if snapshot.status not in SAFE_INACTIVE_STATUSES:
-                raise ValueError(f"selected rename blocked for active thread: {snapshot.id}")
-            if snapshot.pinned or snapshot.ephemeral:
-                raise ValueError(f"selected rename blocked for protected thread: {snapshot.id}")
-            if not snapshot.mapping_complete or not snapshot.content_complete:
-                raise ValueError(f"selected rename lacks complete mapping: {snapshot.id}")
-        if root.title == normalized_name:
-            raise ValueError("new conversation name is unchanged")
-        return ActionPlan.create(
-            action=PlanAction.RENAME,
-            capability_fingerprint=capabilities.fingerprint,
-            targets=(
-                self._explicit_target(root, all_snapshots, "explicit human rename selection"),
-            ),
-            prerequisites=(
-                "the selected conversation remains inactive",
-                "descendant closure and App Server capability fingerprint remain unchanged",
-            ),
-            options={"new_name": normalized_name, "manual_selection": True},
         )
 
     def plan_unarchive(
@@ -381,6 +422,17 @@ class CleanupPlanner:
         selected = _non_overlapping_roots(_top_level_candidates(selected, all_snapshots))
         if criteria is not None:
             selected = [snapshot for snapshot in selected if matches_filter(snapshot, criteria)]
+        selected = [
+            root
+            for root in selected
+            if selected_root_block_reason(
+                action=PlanAction.UNARCHIVE,
+                thread_id=root.id,
+                snapshots=all_snapshots,
+                capabilities=capabilities,
+            )
+            is None
+        ]
         targets = tuple(
             self._target(snapshot, all_snapshots, utc_now())
             for snapshot in selected[: self.policy.maximum_roots]
@@ -390,6 +442,40 @@ class CleanupPlanner:
             capability_fingerprint=capabilities.fingerprint,
             targets=targets,
             prerequisites=("descendant closure remains unchanged",),
+        )
+
+    def plan_selected_unarchive(
+        self,
+        snapshots: tuple[ThreadSnapshot, ...],
+        capabilities: CapabilityMatrix,
+        selected_ids: tuple[str, ...],
+    ) -> ActionPlan:
+        """Plan an explicitly selected unarchive batch with full closure checks."""
+
+        all_snapshots = {snapshot.id: snapshot for snapshot in snapshots}
+        roots = self._explicit_roots(selected_ids, all_snapshots)
+        targets: list[PlanTarget] = []
+        for root in roots:
+            reason = selected_root_block_reason(
+                action=PlanAction.UNARCHIVE,
+                thread_id=root.id,
+                snapshots=all_snapshots,
+                capabilities=capabilities,
+            )
+            if reason:
+                raise ValueError(f"selected unarchive blocked: {reason}")
+            targets.append(
+                self._explicit_target(root, all_snapshots, "explicit human unarchive selection")
+            )
+        return ActionPlan.create(
+            action=PlanAction.UNARCHIVE,
+            capability_fingerprint=capabilities.fingerprint,
+            targets=tuple(targets),
+            prerequisites=(
+                "all affected threads remain non-active and unpinned",
+                "descendant closure and App Server capability fingerprint remain unchanged",
+            ),
+            options={"manual_selection": True},
         )
 
     def unarchive_hydration_ids(
@@ -799,7 +885,6 @@ class CleanupExecutor:
             PlanAction.ARCHIVE: "thread/archive",
             PlanAction.UNARCHIVE: "thread/unarchive",
             PlanAction.PURGE: "thread/delete",
-            PlanAction.RENAME: "thread/name/set",
         }.get(plan.action)
         if method is None:
             raise ValueError(f"CleanupExecutor cannot apply {plan.action.value}")
@@ -814,6 +899,16 @@ class CleanupExecutor:
             else self.inventory.list(include_active=True, include_archived=True, include_turns=True)
         )
         current_by_id = self._verify_snapshot_drift(plan, current)
+        if plan.action in {PlanAction.ARCHIVE, PlanAction.UNARCHIVE}:
+            for target in plan.targets:
+                reason = selected_root_block_reason(
+                    action=plan.action,
+                    thread_id=target.root_thread_id,
+                    snapshots=current_by_id,
+                    capabilities=self.capabilities,
+                )
+                if reason:
+                    raise ValueError(f"cleanup plan is no longer eligible: {reason}")
         if plan.action in {PlanAction.ARCHIVE, PlanAction.PURGE}:
             self._verify_backup_gate(plan, current_by_id)
         if plan.action is PlanAction.PURGE:
@@ -1023,11 +1118,8 @@ class CleanupExecutor:
                 self.client.unarchive_thread(thread_id)
             elif plan.action is PlanAction.PURGE:
                 self.client.delete_thread(thread_id)
-            elif plan.action is PlanAction.RENAME:
-                new_name = plan.options.get("new_name")
-                if not isinstance(new_name, str) or not new_name:
-                    raise ValueError("rename plan lacks a non-empty new_name")
-                self.client.rename_thread(thread_id, new_name)
+            else:
+                raise ValueError(f"CleanupExecutor cannot apply {plan.action.value}")
         except (RequestError, RequestTimeout) as exc:
             # Never retry.  The postcondition query in _verify_result determines
             # whether the operation committed; an unresolved state stays failed.
@@ -1154,13 +1246,7 @@ class CleanupExecutor:
         elif plan.action is PlanAction.PURGE:
             unresolved = [thread_id for thread_id in affected if thread_id in by_id]
         else:
-            new_name = plan.options.get("new_name")
-            unresolved = [
-                target.root_thread_id
-                for target in plan.targets
-                if target.root_thread_id not in by_id
-                or by_id[target.root_thread_id].title != new_name
-            ]
+            raise ValueError(f"CleanupExecutor cannot verify {plan.action.value}")
         if unresolved:
             raise RuntimeError(
                 f"operation postcondition unresolved for: {', '.join(sorted(unresolved))}; no retry was attempted"

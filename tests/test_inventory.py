@@ -7,11 +7,17 @@ from codex_session_manager.inventory import (
     InventoryService,
     attach_descendant_closures,
     matches_filter,
+    merge_thread_detail,
     model_visible_messages,
     normalize_thread,
     target_closure_ids,
 )
-from codex_session_manager.models import ItemKind, ThreadSnapshot, ThreadStatus
+from codex_session_manager.models import (
+    ItemKind,
+    ThreadHistoryMode,
+    ThreadSnapshot,
+    ThreadStatus,
+)
 
 
 def test_normalize_protects_current_request_unknown_and_active_items() -> None:
@@ -45,6 +51,7 @@ def test_normalize_protects_current_request_unknown_and_active_items() -> None:
     assert verification.kind is ItemKind.VERIFICATION
     assert verification.hard_protected
     assert snapshot.unknown_item_count == 1
+    assert not snapshot.mapping_complete
 
 
 def test_normalize_infers_roles_from_codex_message_item_types() -> None:
@@ -82,6 +89,7 @@ def test_normalize_tolerates_turn_without_items() -> None:
 
     assert snapshot.turns[0].items == ()
     assert snapshot.content_complete is False
+    assert snapshot.mapping_complete is False
 
 
 def test_normalize_marks_incomplete_thread_and_item_shapes() -> None:
@@ -95,18 +103,99 @@ def test_normalize_marks_incomplete_thread_and_item_shapes() -> None:
     assert invalid_item.content_complete is False
 
 
-def test_unknown_top_level_thread_field_disables_lineage_writes() -> None:
+def test_unknown_optional_top_level_thread_field_does_not_disable_mapping() -> None:
     snapshot = normalize_thread(
         {
             "id": "future-thread",
             "status": {"type": "idle"},
             "turns": [],
-            "futureLineage": {"parent": "unknown"},
+            "agentNickname": "reviewer",
         },
         content_complete=True,
     )
 
     assert snapshot.content_complete
+    assert snapshot.mapping_complete
+
+
+def test_history_mode_is_normalized_and_detail_wins_in_merge() -> None:
+    summary = normalize_thread(
+        {
+            "id": "history",
+            "status": {"type": "idle"},
+            "historyMode": "paginated",
+            "turns": [],
+        },
+        content_complete=True,
+    )
+    detail = normalize_thread(
+        {
+            "id": "history",
+            "status": {"type": "idle"},
+            "historyMode": "legacy",
+            "turns": [],
+        },
+        content_complete=True,
+    )
+
+    assert summary.history_mode is ThreadHistoryMode.PAGINATED
+    assert detail.history_mode is ThreadHistoryMode.LEGACY
+    assert summary.management_fingerprint != detail.management_fingerprint
+    assert summary.backup_fingerprint != detail.backup_fingerprint
+    assert merge_thread_detail(summary, detail).history_mode is ThreadHistoryMode.LEGACY
+
+
+def test_unknown_history_status_and_relationship_disable_mapping() -> None:
+    unknown_history = normalize_thread(
+        {"id": "history", "historyMode": "future", "turns": []},
+        content_complete=True,
+    )
+    unknown_status = normalize_thread(
+        {"id": "status", "status": {"type": "future"}, "turns": []},
+        content_complete=True,
+    )
+    invalid_parent = normalize_thread(
+        {"id": "parent", "parentThreadId": 123, "turns": []},
+        content_complete=True,
+    )
+
+    assert unknown_history.history_mode is ThreadHistoryMode.UNKNOWN
+    assert not unknown_history.mapping_complete
+    assert unknown_status.status is ThreadStatus.UNKNOWN
+    assert not unknown_status.mapping_complete
+    assert not invalid_parent.mapping_complete
+
+
+def test_reviewed_desktop_thread_metadata_preserves_complete_mapping() -> None:
+    snapshot = normalize_thread(
+        {
+            "id": "desktop-thread",
+            "status": {"type": "idle"},
+            "turns": [],
+            "canAcceptDirectInput": None,
+            "extra": None,
+            "historyMode": "legacy",
+            "projectId": None,
+            "section": None,
+            "sectionEnteredAt": None,
+        },
+        content_complete=True,
+    )
+
+    assert snapshot.mapping_complete
+    assert snapshot.content_complete
+
+
+def test_nonempty_opaque_thread_extra_disables_lineage_writes() -> None:
+    snapshot = normalize_thread(
+        {
+            "id": "future-extra",
+            "turns": [],
+            "extra": {"futureLineage": "unknown"},
+        },
+        content_complete=True,
+    )
+
     assert not snapshot.mapping_complete
 
 

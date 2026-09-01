@@ -136,6 +136,9 @@ class _ArchivingWorkflowClient(_WorkflowClient):
         self.archive_calls.append(thread_id)
         self.archived_ids.add(thread_id)
 
+    def unarchive_thread(self, thread_id: str) -> None:
+        self.archived_ids.discard(thread_id)
+
     def loaded_thread_ids(self) -> tuple[str, ...]:
         return ()
 
@@ -172,6 +175,24 @@ def test_selected_archive_workflow_hydrates_only_target_closure(app_paths, capab
     assert prepared.plan.action is PlanAction.ARCHIVE
     assert prepared.plan.targets[0].affected_thread_ids == ("root", "child")
 
+
+def test_selected_unarchive_workflow_hydrates_only_target_closure(app_paths, capabilities) -> None:
+    client = _ArchivingWorkflowClient()
+    client.archived_ids = {"root", "child"}
+
+    def connect(**_kwargs):
+        return client, capabilities
+
+    prepared = ApplicationWorkflows(
+        paths=app_paths,
+        connection_factory=connect,  # type: ignore[arg-type]
+    ).prepare_selected_unarchive(("root",))
+
+    assert client.reads == ["child", "root"]
+    assert client.closed
+    assert prepared.path.is_file()
+    assert prepared.plan.action is PlanAction.UNARCHIVE
+    assert prepared.plan.targets[0].affected_thread_ids == ("root", "child")
 
 def test_pending_trim_workflow_rechecks_current_state_before_ready(app_paths, capabilities) -> None:
     client = _WorkflowClient()

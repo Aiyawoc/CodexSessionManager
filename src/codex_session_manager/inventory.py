@@ -15,49 +15,11 @@ from codex_session_manager.app_server import SubprocessAppServer
 from codex_session_manager.hashing import estimate_tokens, fingerprint, utc_now
 from codex_session_manager.models import (
     ItemKind,
+    ThreadHistoryMode,
     ThreadItemSnapshot,
     ThreadSnapshot,
     ThreadStatus,
     TurnSnapshot,
-)
-
-_AUDITED_THREAD_FIELDS = frozenset(
-    {
-        "agentNickname",
-        "agentRole",
-        "cliVersion",
-        "createdAt",
-        "cwd",
-        "ephemeral",
-        "forkedFromId",
-        "gitInfo",
-        "id",
-        "modelProvider",
-        "name",
-        "parentThreadId",
-        "path",
-        "preview",
-        "recencyAt",
-        "sessionId",
-        "source",
-        "status",
-        "threadSource",
-        "turns",
-        "updatedAt",
-    }
-)
-# Compatibility aliases observed in older App Server payloads.  They remain
-# explicit so a genuinely new top-level field still disables lineage writes.
-_THREAD_COMPATIBILITY_ALIASES = frozenset(
-    {
-        "archived",
-        "gitRemote",
-        "isPinned",
-        "parentId",
-        "pinned",
-        "sourceKind",
-        "title",
-    }
 )
 
 
@@ -115,6 +77,22 @@ def _status(value: Any) -> ThreadStatus:
         return ThreadStatus(status_type)
     except (TypeError, ValueError):
         return ThreadStatus.UNKNOWN
+
+
+def _history_mode(value: Any) -> ThreadHistoryMode:
+    if not isinstance(value, str):
+        return ThreadHistoryMode.UNKNOWN
+    try:
+        return ThreadHistoryMode(value)
+    except ValueError:
+        return ThreadHistoryMode.UNKNOWN
+
+
+def _thread_reference_is_known(raw: Mapping[str, Any], *keys: str) -> bool:
+    return all(
+        key not in raw or raw[key] is None or (isinstance(raw[key], str) and bool(raw[key]))
+        for key in keys
+    )
 
 
 def _text_from(value: Any) -> str:
@@ -438,7 +416,26 @@ def normalize_thread(
     parent_value = raw.get("parentThreadId") or raw.get("parentId")
     parent_id = parent_value if isinstance(parent_value, str) else None
     unknown_item_count = sum(item.kind is ItemKind.UNKNOWN for turn in turns for item in turn.items)
-    unknown_thread_fields = set(raw) - _AUDITED_THREAD_FIELDS - _THREAD_COMPATIBILITY_ALIASES
+    history_mode = _history_mode(raw.get("historyMode", "legacy"))
+    known_status = status is not ThreadStatus.UNKNOWN
+    known_relationships = _thread_reference_is_known(
+        raw, "parentThreadId", "parentId", "forkedFromId"
+    )
+    known_turns = raw_turns is None or turns_shape_complete
+    reviewed_metadata = (
+        history_mode is not ThreadHistoryMode.UNKNOWN
+        and raw.get("extra") is None
+        and isinstance(raw.get("canAcceptDirectInput"), (bool, type(None)))
+        and isinstance(raw.get("projectId"), (str, type(None)))
+        and isinstance(raw.get("section"), (Mapping, type(None)))
+        and (
+            raw.get("sectionEnteredAt") is None
+            or (
+                isinstance(raw.get("sectionEnteredAt"), int)
+                and not isinstance(raw.get("sectionEnteredAt"), bool)
+            )
+        )
+    )
     return ThreadSnapshot(
         id=thread_id,
         title=str(raw.get("name") or raw.get("title") or ""),
@@ -452,6 +449,7 @@ def normalize_thread(
         created_at=_timestamp(raw.get("createdAt")),
         updated_at=_timestamp(raw.get("updatedAt")),
         status=status,
+        history_mode=history_mode,
         archived=bool(raw.get("archived", archived if archived is not None else False)),
         pinned=bool(raw.get("isPinned", raw.get("pinned", False))),
         ephemeral=bool(raw.get("ephemeral", False)),
@@ -464,7 +462,13 @@ def normalize_thread(
         content_complete=content_complete and turns_shape_complete,
         size_bytes=size_bytes,
         raw_path=raw_path,
-        mapping_complete=not unknown_thread_fields,
+        mapping_complete=(
+            known_status
+            and known_relationships
+            and known_turns
+            and unknown_item_count == 0
+            and reviewed_metadata
+        ),
         unknown_item_count=unknown_item_count,
     )
 

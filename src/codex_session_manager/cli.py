@@ -832,7 +832,7 @@ def cleanup_reconcile(
 
 @purge_app.command("plan")
 def purge_plan() -> None:
-    """只为满足 14 天可信归档和已验证备份的任务生成删除计划。"""
+    """只为具有 CSM 可信归档证据和当前有效备份的任务生成删除计划。"""
 
     prepared = _workflows().prepare_purge_plan()
     _emit({"plan": prepared.plan, "path": prepared.path})

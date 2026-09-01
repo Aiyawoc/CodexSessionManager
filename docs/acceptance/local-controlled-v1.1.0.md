@@ -5,7 +5,7 @@
 
 1. 只读盘点、协议审计和 MCP/GUI 请求链检查；
 2. 在停止 Codex、完成并复验排除认证文件的 .codex 数据加密回滚快照后，只对已经确认属于本项目的
-   少量任务执行真实归档、对话标题修改和记忆文件修改；上下文只验收审查、投影计划和源任务保护，跳过应用执行。
+   少量任务执行真实归档、对话标题修改、记忆文件修改，以及用户明确单选的一个已归档根的永久删除；上下文只验收审查、投影计划和源任务保护，跳过应用执行。
 
 本计划不是生产发布，也不是把 .codex 打包给其他机器。.codex 快照仍可能包含真实对话
 和其他敏感数据，但脚本会排除根目录认证文件（`auth.json`、`credentials*.json`、
@@ -387,36 +387,45 @@ Codex desktop 只能准备建议：
 不要调用不存在的写入工具，也不要声称已经写入记忆文件。
 ~~~
 
-### 2.5 永久删除：只能是延迟的独立子步骤
+### 2.5 永久删除：即时但独立的人工子步骤
 
-同一轮刚归档的任务不能马上永久删除。CSM 的 purge 计划要求：
+固定 14 天等待期已取消；同一轮由 CSM 成功归档的任务可以立即进入人工永久删除验收。但完整备份本身不能解锁删除，CSM 的 purge 计划仍要求：
 
 - 根和完整 descendants 已归档、inactive、非 pinned/ephemeral；
 - 每个受影响任务都有 archive-bound 的已验证加密逻辑备份；
-- CSM 审计中的可信归档记录至少经过 14 天；
+- 每个受影响任务都有 CSM 自有可信归档审计记录，且记录绑定的 manifest 与当前有效备份完全一致；
 - 写入前重新通过 doctor、schema、状态、内容指纹、能力指纹和闭包复核；
 - 没有其它 Codex 进程、loaded thread 或 background terminal；
 - 只选择一个已经确认属于 CSM_PROJECT_ROOT 的根；
 - 人工输入精确 plan_id 和固定短语
   PERMANENTLY DELETE CODEX TASKS。
 
-因此，本计划当天可以真实验证“记忆 list item 删除”，也可以真实验证对话归档、
-标题修改和上下文投影计划；派生投影应用保持上游阻塞，对话永久删除要在 14 天后才执行。届时从同一个精确根 ID 打开：
+完成 2.3 并确认归档与审计证据后，从同一个精确根 ID 打开：
 
 ~~~bash
 "$CSM_CLI" gui open --thread "$ARCHIVE_THREAD_ID"
 ~~~
 
-在 GUI 中右键该根选择“删除”，确认：
+关闭其它 Codex Desktop/CLI 进程，确保该任务未在其它窗口加载。随后在 GUI 中单选该已归档根并点击“删除”，确认：
 
 1. 计划只有这个根及其完整 descendants；
-2. 归档年龄和 archive-bound backup evidence 均满足；
+2. CSM 可信归档记录和 archive-bound 当前 backup evidence 均满足；
 3. 对话 cwd 仍为 CSM_PROJECT_ROOT；
 4. 第一处确认输入精确 plan_id；
 5. 第二处确认输入精确短语 PERMANENTLY DELETE CODEX TASKS。
 
+删除后重新运行 `threads show` 和 `audit verify`，保存“目标已不存在”的回读结果、purge plan SHA-256、审计事件和备份 manifest SHA-256；不保存正文。该证据层级必须标记为“真实本机 App Server 永久删除”，不能由 fixture、offscreen GUI 或只有计划的结果替代。
+
 任何不满足项都应取消。不得用 App Server 原始方法、MCP 工具、脚本或直接文件删除
 绕过 purge 计划。
+
+#### 2026-09-01 本轮门禁记录
+
+- 实现层证据：`scripts/check.sh`、`scripts/test_source_workflow.sh` 均通过；Ruff、严格 mypy、UI 生成一致性、Skill 校验和 `249 passed` 全部通过。大文本敏感筛查曾重复触发 Qt 心跳超时，定位为 macOS `sleep(0)` 不能保证主线程调度；改为每个 256 KiB 扫描块让出 1 ms 后，完整 GUI 套件和全套测试通过。
+- bundle 层证据：从当前源码 fresh 构建 arm64 standalone；`accept_macos_bundle.sh`、ad-hoc `codesign --verify --deep --strict`、中文空格路径、内置 CPython/PySide6/Qt/age 和 bundled Skill 工作流通过。
+- 真实 App Server 只读证据：显式使用已批准的 Codex CLI `0.142.1`，精确 schema SHA-256 `3e07fdc39d62bb0afaa1509863bebee96178572372a8eeaa7e95bddb2b2f24ad`，`write_enabled=true`。用户指定根 ID 的 SHA-256 为 `e1c2bddbdd61d18259e51fc19192c3d118f8c5e13601e9812a718862eae501af`；当前为 `notLoaded`、未归档、非 pinned，已知闭包包含一个 descendant。
+- 当前阻塞：尚未由用户在实体 GUI 完成“备份并归档”及随后单根“删除”确认，因此本段不能记为真实永久删除通过，也没有发生真实归档或删除写入。
+- 下一步：在 fresh bundle 的 cleanup review 中由用户只选上述根，完成托管 age 备份、完整复验和归档；重启上下文页后再次单选该已归档根，关闭其它 Codex 进程并完成精确 plan ID 与固定短语确认，再回读状态和审计链。
 
 ## 3. 回滚和收尾
 

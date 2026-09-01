@@ -187,7 +187,7 @@ QLabel#timelineTitle, QLabel#contentTitle, QLabel#actionTitle, QLabel#taskTitle 
     font-weight: 600;
 }}
 
-QLineEdit, QComboBox, QPlainTextEdit, QTextBrowser, QTextEdit {{
+QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTextBrowser, QTextEdit {{
     background: {PANEL};
     color: {TEXT};
     border: 1px solid {OUTLINE};
@@ -196,7 +196,7 @@ QLineEdit, QComboBox, QPlainTextEdit, QTextBrowser, QTextEdit {{
     selection-color: #ffffff;
 }}
 
-QLineEdit, QComboBox {{
+QLineEdit, QComboBox, QSpinBox {{
     min-height: 30px;
     padding: 0 9px;
 }}
@@ -205,7 +205,7 @@ QPlainTextEdit, QTextBrowser, QTextEdit {{
     padding: 8px;
 }}
 
-QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus, QTextBrowser:focus,
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QPlainTextEdit:focus, QTextBrowser:focus,
 QTextEdit:focus,
 QTreeView:focus {{
     border: 1px solid {ACCENT};

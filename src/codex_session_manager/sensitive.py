@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from enum import StrEnum
 from itertools import chain
+from time import sleep
 
 from codex_session_manager.models import ThreadSnapshot
 
@@ -292,6 +293,8 @@ def _scan_fragment_counts(
             ),
         )
         _merge_counts(counts, chunk_counts)
+        # macOS sleep(0) may immediately reschedule this worker; leave Qt a real event-loop slice.
+        sleep(0.001)
     return counts
 
 

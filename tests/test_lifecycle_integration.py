@@ -154,12 +154,6 @@ def test_real_age_backup_archive_and_purge_lifecycle(
         assert archived == ("thread-1",)
         assert client.archived
 
-        audit.record_trusted_archive(
-            thread_id="thread-1",
-            plan_sha256=archive_plan.plan_sha256,
-            manifest_sha256=manifest.manifest_sha256,
-            archived_at=now - timedelta(days=15),
-        )
         trusted = audit.trusted_archive("thread-1")
         assert trusted is not None
         assert trusted.plan_sha256 == archive_plan.plan_sha256

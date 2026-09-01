@@ -449,7 +449,7 @@ class AuditStore:
         )
 
     def invalidate_trusted_archive(self, *, thread_id: str, plan_sha256: str) -> None:
-        """Remove an archive-age credential before attempting an unarchive."""
+        """Remove trusted archive evidence before attempting an unarchive."""
 
         trusted = self.trusted_archive(thread_id)
         if trusted is None:

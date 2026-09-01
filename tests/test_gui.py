@@ -47,6 +47,7 @@ from codex_session_manager.workflows import (
     BackupCreationResult,
     InventoryResult,
     SensitiveScanBatch,
+    ThreadReadResult,
 )
 
 
@@ -131,6 +132,7 @@ def test_review_window_layout_and_stale_worker_result(
     assert "QTextEdit#contentBrowser" in APP_STYLESHEET
     assert "QLabel#tokenLabel" in APP_STYLESHEET
     assert "QPushButton#sensitiveScanButton" in APP_STYLESHEET
+    assert "QSpinBox" in APP_STYLESHEET
     assert "background: #fff1f0" in APP_STYLESHEET
 
     stale = _document(snapshot_factory("stale"), capabilities)
@@ -158,7 +160,11 @@ def test_task_age_filter_defaults_to_all_and_builds_csm_criteria(qtbot, app_path
     age_spin = getattr(window.ui, "olderThanDaysSpinBox", None)
     assert age_spin is not None
     assert age_spin.value() == 0
-    assert age_spin.specialValueText() == "全部"
+    assert window.ui.olderThanDaysLabel.text() == "筛选天数 >"
+    assert age_spin.prefix() == ""
+    assert age_spin.suffix() == ""
+    assert age_spin.specialValueText() == ""
+    assert window.ui.olderThanDaysUnitLabel.text() == "天"
 
     build_filter = getattr(window, "_task_inventory_filter", None)
     assert callable(build_filter)
@@ -340,12 +346,15 @@ def test_archived_task_does_not_offer_archive_action(qtbot, app_paths, snapshot_
 
     window._select_task_in_list("archived")
     assert not window.ui.taskArchiveButton.isEnabled()
+    assert window.ui.taskDeleteButton.isEnabled()
 
     window._select_task_in_list("active")
     assert window.ui.taskArchiveButton.isEnabled()
+    assert not window.ui.taskDeleteButton.isEnabled()
 
     window._select_task_in_list("running")
     assert not window.ui.taskArchiveButton.isEnabled()
+    assert not window.ui.taskDeleteButton.isEnabled()
 
 
 def test_message_box_message_label_uses_application_text_color(qtbot) -> None:
@@ -405,13 +414,44 @@ def test_shared_task_query_filters_and_supports_multi_selection(
     assert set(window._selected_task_ids()) == {"first", "second"}
     assert window.ui.taskBackupButton.isEnabled()
     assert window.ui.taskArchiveButton.isEnabled()
-    assert window.ui.taskDeleteButton.isEnabled()
+    assert not window.ui.taskDeleteButton.isEnabled()
     window._populate_task_list(window.task_snapshots)
     assert set(window._selected_task_ids()) == {"first", "second"}
 
     window.ui.threadIdEdit.setText("Alpha")
     assert window.ui.taskListView.topLevelItem(0).childCount() == 1
     assert window.ui.taskListView.topLevelItem(0).child(0).text(0) == "Alpha conversation"
+
+
+def test_incomplete_mapping_loads_timeline_as_read_only_review(
+    qtbot, app_paths, capabilities, snapshot_factory
+) -> None:
+    snapshot = snapshot_factory("read-only-review").model_copy(update={"mapping_complete": False})
+
+    class FakeWorkflows:
+        def read_thread(self, thread_id: str, *, include_turns: bool = True) -> ThreadReadResult:
+            assert thread_id == snapshot.id
+            assert include_turns
+            return ThreadReadResult(capabilities, snapshot)
+
+    window = TrimReviewWindow(
+        paths=app_paths,
+        workflows=FakeWorkflows(),  # type: ignore[arg-type]
+        load_task_list=False,
+    )
+    qtbot.addWidget(window)
+
+    window.load_thread(snapshot.id)
+    qtbot.waitUntil(lambda: window.document is not None, timeout=2000)
+
+    assert window.ui.timelineView.model().rowCount() == 1
+    assert window.current_plan is None
+    assert not window.ui.actionCombo.isEnabled()
+    assert not window.ui.suggestButton.isEnabled()
+    assert not window.ui.savePlanButton.isEnabled()
+    assert not window.ui.applyButton.isEnabled()
+    assert window.ui.contentBrowser.isReadOnly()
+    assert "只读浏览" in window.ui.taskContextStatusLabel.text()
 
 
 def test_gui_backup_request_uses_managed_identity_and_expands_descendants(qtbot, app_paths) -> None:

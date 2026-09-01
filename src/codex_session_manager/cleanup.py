@@ -30,14 +30,12 @@ from codex_session_manager.models import (
 )
 
 DEFAULT_STALE_DAYS: Final[int] = 90
-DEFAULT_PURGE_DELAY_DAYS: Final[int] = 14
 MAX_ROOTS: Final[int] = 100
 
 
 @dataclass(frozen=True, slots=True)
 class CleanupPolicy:
     stale_after: timedelta = timedelta(days=DEFAULT_STALE_DAYS)
-    purge_delay: timedelta = timedelta(days=DEFAULT_PURGE_DELAY_DAYS)
     maximum_roots: int = MAX_ROOTS
 
 
@@ -425,12 +423,12 @@ class CleanupPlanner:
             capability_fingerprint=capabilities.fingerprint,
             targets=targets,
             prerequisites=(
-                f"CSM-trusted archive age is at least {self.policy.purge_delay.days} days",
+                "CSM-trusted archive evidence exists for every affected snapshot",
                 "verified encrypted backup covers every affected snapshot",
                 "no other Codex process is running against the data root",
                 "human supplies the exact plan id and permanent-deletion phrase",
             ),
-            options={"manual_only": True, "minimum_archive_days": self.policy.purge_delay.days},
+            options={"manual_only": True, "trusted_archive_required": True},
         )
 
     def purge_candidates(
@@ -442,7 +440,6 @@ class CleanupPlanner:
     ) -> tuple[ThreadSnapshot, ...]:
         """Return roots satisfying every purge evidence gate without creating a plan."""
 
-        effective_now = (now or utc_now()).astimezone(UTC)
         audit.verify_chain()
         all_snapshots = {snapshot.id: snapshot for snapshot in snapshots}
         eligible: list[ThreadSnapshot] = []
@@ -457,7 +454,7 @@ class CleanupPlanner:
             ):
                 continue
             trusted = audit.trusted_archive(snapshot.id)
-            if trusted is None or effective_now - trusted.archived_at < self.policy.purge_delay:
+            if trusted is None:
                 continue
             evidence = audit.verified_backup(
                 snapshot.id,
@@ -525,7 +522,6 @@ class CleanupPlanner:
     ) -> ActionPlan:
         """Plan permanent deletion for explicit roots after every purge gate passes."""
 
-        effective_now = (now or utc_now()).astimezone(UTC)
         audit.verify_chain()
         all_snapshots = {snapshot.id: snapshot for snapshot in snapshots}
         roots = self._explicit_roots(selected_ids, all_snapshots)
@@ -547,10 +543,10 @@ class CleanupPlanner:
                         f"selected permanent deletion is not safely archived: {snapshot.id}"
                     )
                 trusted = audit.trusted_archive(snapshot.id)
-                if trusted is None or effective_now - trusted.archived_at < self.policy.purge_delay:
+                if trusted is None:
                     raise ValueError(
-                        f"selected permanent deletion requires {self.policy.purge_delay.days} "
-                        f"days of CSM-trusted archive history: {snapshot.id}"
+                        f"selected permanent deletion requires CSM-trusted archive evidence: "
+                        f"{snapshot.id}"
                     )
                 evidence = audit.verified_backup(
                     snapshot.id,
@@ -572,7 +568,7 @@ class CleanupPlanner:
             capability_fingerprint=capabilities.fingerprint,
             targets=tuple(targets),
             prerequisites=(
-                f"CSM-trusted archive age is at least {self.policy.purge_delay.days} days",
+                "CSM-trusted archive evidence exists for every affected snapshot",
                 "verified encrypted backup covers every affected snapshot",
                 "no other Codex process is running against the data root",
                 "human supplies the exact plan id and permanent-deletion phrase",
@@ -580,7 +576,7 @@ class CleanupPlanner:
             options={
                 "manual_only": True,
                 "manual_selection": True,
-                "minimum_archive_days": self.policy.purge_delay.days,
+                "trusted_archive_required": True,
             },
         )
 
@@ -1056,18 +1052,19 @@ class CleanupExecutor:
         targets: tuple[PlanTarget, ...],
         current_by_id: dict[str, ThreadSnapshot],
     ) -> None:
-        minimum_days = plan.options.get("minimum_archive_days")
-        if not isinstance(minimum_days, int) or minimum_days < DEFAULT_PURGE_DELAY_DAYS:
-            raise ValueError("purge plan has an invalid trusted-archive threshold")
-        now = utc_now()
+        if (
+            plan.options.get("manual_only") is not True
+            or plan.options.get("trusted_archive_required") is not True
+        ):
+            raise ValueError("purge plan lacks the manual trusted-archive gate")
         for target in targets:
             for thread_id in target.affected_thread_ids:
                 snapshot = current_by_id.get(thread_id)
                 if snapshot is None or not snapshot.archived:
                     raise ValueError(f"thread is no longer archived: {thread_id}")
                 trusted = self.audit.trusted_archive(thread_id)
-                if trusted is None or now - trusted.archived_at < timedelta(days=minimum_days):
-                    raise ValueError(f"trusted archive age is insufficient: {thread_id}")
+                if trusted is None:
+                    raise ValueError(f"trusted archive evidence is missing: {thread_id}")
                 evidence = self.audit.verified_backup(
                     thread_id,
                     snapshot.backup_fingerprint,

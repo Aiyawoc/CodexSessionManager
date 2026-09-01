@@ -305,7 +305,7 @@ def test_audit_refuses_ciphertext_replaced_after_full_verification(
         assert audit.verified_backup(snapshot.id, snapshot.backup_fingerprint) is None
 
 
-def test_purge_plan_rejects_ephemeral_and_untrusted_archive(
+def test_purge_plan_rejects_ephemeral_and_accepts_new_trusted_archive(
     tmp_path: Path, app_paths, capabilities, snapshot_factory
 ) -> None:
     now = datetime(2026, 6, 1, tzinfo=UTC)
@@ -322,13 +322,15 @@ def test_purge_plan_rejects_ephemeral_and_untrusted_archive(
             thread_id="normal",
             plan_sha256="p" * 64,
             manifest_sha256=manifest.manifest_sha256,
-            archived_at=now - timedelta(days=15),
+            archived_at=now,
         )
         planner = CleanupPlanner()
         candidates = planner.purge_candidates((ephemeral, normal), audit, now=now)
         plan = planner.plan_purge((ephemeral, normal), capabilities, audit, now=now)
     assert [snapshot.id for snapshot in candidates] == ["normal"]
     assert [target.root_thread_id for target in plan.targets] == ["normal"]
+    assert plan.options["trusted_archive_required"] is True
+    assert "minimum_archive_days" not in plan.options
     with pytest.raises(ValueError, match=r"snapshot drift|no longer archived"):
         CleanupExecutor._verify_snapshot_drift(
             plan, (normal.model_copy(update={"archived": False}),)
@@ -348,18 +350,23 @@ def test_explicit_purge_plans_only_selected_eligible_roots(
             thread_id="first",
             plan_sha256="1" * 64,
             manifest_sha256=first_manifest.manifest_sha256,
-            archived_at=now - timedelta(days=15),
+            archived_at=now,
         )
         audit.record_trusted_archive(
             thread_id="second",
             plan_sha256="2" * 64,
             manifest_sha256=second_manifest.manifest_sha256,
-            archived_at=now - timedelta(days=15),
+            archived_at=now,
         )
 
         plan = CleanupPlanner().plan_selected_purge(
             (first, second), capabilities, audit, ("second",), now=now
         )
+        assert plan.options == {
+            "manual_only": True,
+            "manual_selection": True,
+            "trusted_archive_required": True,
+        }
 
         with pytest.raises(ValueError, match="exactly one root"):
             CleanupPlanner().plan_selected_purge(
@@ -384,6 +391,25 @@ def test_explicit_purge_plans_only_selected_eligible_roots(
                 multi_root_plan,
                 confirmation=multi_root_plan.plan_id,
                 permanent_phrase="PERMANENTLY DELETE CODEX TASKS",
+            )
+
+        plan_without_trusted_gate = ActionPlan.create(
+            action=PlanAction.PURGE,
+            capability_fingerprint=capabilities.fingerprint,
+            targets=plan.targets,
+            options={"manual_only": True},
+        )
+        executor = CleanupExecutor(
+            client=_CleanupClient(),  # type: ignore[arg-type]
+            inventory=_CleanupInventory(second, second),  # type: ignore[arg-type]
+            capabilities=capabilities,
+            audit=audit,
+        )
+        with pytest.raises(ValueError, match="manual trusted-archive gate"):
+            executor._verify_purge_gate(
+                plan_without_trusted_gate,
+                plan_without_trusted_gate.targets,
+                {second.id: second},
             )
 
     assert [target.root_thread_id for target in plan.targets] == ["second"]

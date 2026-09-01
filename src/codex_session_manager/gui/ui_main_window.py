@@ -199,12 +199,18 @@ class Ui_MainWindow(object):
 
         self.olderThanDaysSpinBox = QSpinBox(self.taskPane)
         self.olderThanDaysSpinBox.setObjectName(u"olderThanDaysSpinBox")
-        self.olderThanDaysSpinBox.setMinimumSize(QSize(84, 32))
+        self.olderThanDaysSpinBox.setMinimumSize(QSize(64, 32))
+        self.olderThanDaysSpinBox.setMaximumSize(QSize(76, 32))
         self.olderThanDaysSpinBox.setMinimum(0)
         self.olderThanDaysSpinBox.setMaximum(36500)
         self.olderThanDaysSpinBox.setValue(0)
 
         self.taskFilterLayout.addWidget(self.olderThanDaysSpinBox)
+
+        self.olderThanDaysUnitLabel = QLabel(self.taskPane)
+        self.olderThanDaysUnitLabel.setObjectName(u"olderThanDaysUnitLabel")
+
+        self.taskFilterLayout.addWidget(self.olderThanDaysUnitLabel)
 
         self.taskFilterSpacer = QSpacerItem(20, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
@@ -594,13 +600,11 @@ class Ui_MainWindow(object):
 #if QT_CONFIG(accessibility)
         self.loadButton.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u6309 Codex \u5bf9\u8bdd ID \u52a0\u8f7d", None))
 #endif // QT_CONFIG(accessibility)
-        self.olderThanDaysLabel.setText(QCoreApplication.translate("MainWindow", u"\u66f4\u65b0\u65f6\u95f4", None))
-        self.olderThanDaysSpinBox.setSuffix(QCoreApplication.translate("MainWindow", u" \u5929", None))
-        self.olderThanDaysSpinBox.setPrefix(QCoreApplication.translate("MainWindow", u"\u8d85\u8fc7 ", None))
-        self.olderThanDaysSpinBox.setSpecialValueText(QCoreApplication.translate("MainWindow", u"\u5168\u90e8", None))
+        self.olderThanDaysLabel.setText(QCoreApplication.translate("MainWindow", u"\u7b5b\u9009\u5929\u6570 >", None))
 #if QT_CONFIG(accessibility)
         self.olderThanDaysSpinBox.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u6309\u672a\u66f4\u65b0\u65f6\u95f4\u7b5b\u9009\u4efb\u52a1\uff0c\u96f6\u8868\u793a\u5168\u90e8", None))
 #endif // QT_CONFIG(accessibility)
+        self.olderThanDaysUnitLabel.setText(QCoreApplication.translate("MainWindow", u"\u5929", None))
         self.taskContextStatusLabel.setText(QCoreApplication.translate("MainWindow", u"\u5c1a\u672a\u52a0\u8f7d\u4efb\u52a1", None))
 #if QT_CONFIG(tooltip)
         self.taskContextStatusLabel.setToolTip(QCoreApplication.translate("MainWindow", u"\u5f53\u524d\u6b63\u5728\u5ba1\u67e5\u7684\u4efb\u52a1\u72b6\u6001", None))

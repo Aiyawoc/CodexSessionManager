@@ -35,6 +35,8 @@ csm purge plan
 csm purge apply PLAN.json --confirm PLAN_ID --permanent-phrase "PERMANENTLY DELETE CODEX TASKS"
 ```
 
+固定归档等待期已取消，但永久删除仍不能由备份直接解锁。目标必须先由 CSM 完成归档并留下绑定同一备份 manifest 的可信归档证据。GUI 中一次只单选一个已归档根并由用户主动点击“删除”；MCP、Hook 和自动清理没有永久删除入口。
+
 `reconcile` 只在 Codex App 原生任务工具已完成归档后使用；它不执行 Codex 写入。
 
 选择根任务创建备份时，CSM 会自动展开其完整派生后代；输出中的 `covered_thread_ids` 必须与随后归档计划的 affected IDs 对齐。

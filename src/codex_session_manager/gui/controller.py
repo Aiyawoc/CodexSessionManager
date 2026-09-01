@@ -138,9 +138,41 @@ FOOTER_ACTION_BUTTON_WIDTH = 136
 class ReviewDocument:
     snapshot: ThreadSnapshot
     capabilities: CapabilityMatrix
-    suggested_plan: TrimPlan
+    suggested_plan: TrimPlan | None
     external_applied_target_ids: tuple[str, ...] = ()
     external_ignored_target_ids: tuple[str, ...] = ()
+    read_only_selections: tuple[TrimSelection, ...] = ()
+
+    @property
+    def selections(self) -> tuple[TrimSelection, ...]:
+        if self.suggested_plan is not None:
+            return self.suggested_plan.selections
+        return self.read_only_selections
+
+
+def _read_only_review_selections(snapshot: ThreadSnapshot) -> tuple[TrimSelection, ...]:
+    selections: list[TrimSelection] = []
+    for turn in snapshot.turns:
+        protected_reasons = tuple(
+            dict.fromkeys(
+                reason
+                for item in turn.items
+                if item.hard_protected
+                for reason in item.protected_reasons
+            )
+        )
+        selections.append(
+            TrimSelection(
+                target_id=turn.id,
+                action=TrimAction.PROTECT if protected_reasons else TrimAction.KEEP,
+                reason=(
+                    "硬保护项所在 turn" if protected_reasons else "来源映射不完整，仅供只读浏览"
+                ),
+                suggested=False,
+                protected_reasons=protected_reasons,
+            )
+        )
+    return tuple(selections)
 
 
 class TrimReviewWindow(QMainWindow):
@@ -390,9 +422,7 @@ class TrimReviewWindow(QMainWindow):
         self.ui.threadIdEdit.setAccessibleName(self._t("task_search_accessible"))
         self.ui.loadButton.setText(self._t("load_id"))
         self.ui.olderThanDaysLabel.setText(self._t("older_than_days_label"))
-        self.ui.olderThanDaysSpinBox.setPrefix(self._t("older_than_days_prefix"))
-        self.ui.olderThanDaysSpinBox.setSuffix(self._t("older_than_days_suffix"))
-        self.ui.olderThanDaysSpinBox.setSpecialValueText(self._t("older_than_days_all"))
+        self.ui.olderThanDaysUnitLabel.setText(self._t("older_than_days_unit"))
         self.ui.olderThanDaysSpinBox.setAccessibleName(self._t("older_than_days_accessible"))
         self.ui.taskListView.setAccessibleName(self._t("task_list_accessible"))
         task_header = self.ui.taskListView.headerItem()
@@ -612,14 +642,18 @@ class TrimReviewWindow(QMainWindow):
         self.ui.loadButton.setVisible(not memory_mode)
         self.ui.olderThanDaysLabel.setVisible(context_mode)
         self.ui.olderThanDaysSpinBox.setVisible(context_mode)
+        self.ui.olderThanDaysUnitLabel.setVisible(context_mode)
         self.ui.contentTagsButton.setVisible(not memory_mode)
         self.ui.contentMarkdownButton.setVisible(not memory_mode)
         self.ui.actionCombo.setVisible(not cleanup_mode)
-        self.ui.actionCombo.setEnabled(context_mode or memory_mode)
+        self.ui.actionCombo.setEnabled(
+            (context_mode and self._context_plan_available()) or memory_mode
+        )
         self.ui.summaryLabel.setVisible(not cleanup_mode)
         self.ui.summaryEdit.setVisible(not cleanup_mode)
         self.ui.summaryEdit.setEnabled(
-            (context_mode or memory_mode) and self.ui.actionCombo.currentIndex() == 2
+            ((context_mode and self._context_plan_available()) or memory_mode)
+            and self.ui.actionCombo.currentIndex() == 2
         )
         self.ui.aiConsentCheck.setVisible(context_mode)
         self.ui.suggestButton.setVisible(context_mode)
@@ -719,6 +753,9 @@ class TrimReviewWindow(QMainWindow):
             )
         )
 
+    def _context_plan_available(self) -> bool:
+        return self.document is not None and self.document.suggested_plan is not None
+
     def _refresh_loaded_context_status(self) -> None:
         if self.document is None:
             return
@@ -729,6 +766,8 @@ class TrimReviewWindow(QMainWindow):
             status=thread_status_label(self._language, snapshot.status),
             turns=len(snapshot.turns),
         )
+        if not self._context_plan_available():
+            status += " · " + self._t("context_read_only_review")
         self.ui.taskContextStatusLabel.setText(status)
         self.ui.taskContextStatusLabel.setToolTip(status)
 
@@ -1446,6 +1485,22 @@ class TrimReviewWindow(QMainWindow):
         }
         return all(self._can_archive_root(thread_id, by_id) for thread_id in selected_ids)
 
+    def _can_purge_selected_task(self) -> bool:
+        selected_ids = self._selected_task_ids()
+        if len(selected_ids) != 1:
+            return False
+        by_id = {
+            snapshot.id: snapshot for snapshot in (self._all_task_snapshots or self.task_snapshots)
+        }
+        snapshot = by_id.get(selected_ids[0])
+        return bool(
+            snapshot is not None
+            and snapshot.archived
+            and not snapshot.pinned
+            and not snapshot.ephemeral
+            and snapshot.status in SAFE_INACTIVE_STATUSES
+        )
+
     @staticmethod
     def _can_archive_root(
         thread_id: str,
@@ -1483,7 +1538,7 @@ class TrimReviewWindow(QMainWindow):
             return
         self.ui.taskBackupButton.setEnabled(enabled)
         self.ui.taskArchiveButton.setEnabled(enabled and self._can_archive_selected_tasks())
-        self.ui.taskDeleteButton.setEnabled(enabled)
+        self.ui.taskDeleteButton.setEnabled(enabled and self._can_purge_selected_task())
 
     @Slot(QPoint)
     def _show_task_context_menu(self, point: QPoint) -> None:
@@ -1528,7 +1583,9 @@ class TrimReviewWindow(QMainWindow):
         archive_action.setEnabled(
             not self._task_write_in_progress and self._can_archive_selected_tasks()
         )
-        delete_action.setEnabled(not self._task_write_in_progress)
+        delete_action.setEnabled(
+            not self._task_write_in_progress and self._can_purge_selected_task()
+        )
         rename_action.triggered.connect(lambda _checked=False: self._rename_task(thread_id))
         copy_action.triggered.connect(lambda _checked=False: self._copy_conversation_id(thread_id))
         backup_action.triggered.connect(self._task_backup_clicked)
@@ -1841,6 +1898,9 @@ class TrimReviewWindow(QMainWindow):
         selected_ids = self._selected_task_ids()
         if not selected_ids:
             self._show_error(self._t("select_task"))
+            return
+        if not self._can_purge_selected_task():
+            self._show_error(self._t("purge_select_archived"))
             return
         answer = QMessageBox.warning(
             self,
@@ -2218,12 +2278,18 @@ class TrimReviewWindow(QMainWindow):
 
         def load() -> ReviewDocument:
             result = self.workflows.read_thread(thread_id, include_turns=True)
-            suggested = LocalTrimSuggester().suggest(
-                result.snapshot,
-                capabilities=result.capabilities,
-                trigger=self.trigger,
-                source_turn_id=self.source_turn_id,
+            can_plan = result.snapshot.content_complete and result.snapshot.mapping_complete
+            suggested = (
+                LocalTrimSuggester().suggest(
+                    result.snapshot,
+                    capabilities=result.capabilities,
+                    trigger=self.trigger,
+                    source_turn_id=self.source_turn_id,
+                )
+                if can_plan
+                else None
             )
+            read_only_selections = () if can_plan else _read_only_review_selections(result.snapshot)
             applied: tuple[str, ...] = ()
             ignored: tuple[str, ...] = ()
             request = self.review_request
@@ -2235,6 +2301,8 @@ class TrimReviewWindow(QMainWindow):
                 and request.target_ids == (thread_id,)
                 and bundle is not None
             ):
+                if suggested is None:
+                    raise TrimError("external suggestions require complete source mapping")
                 external = ExternalSuggestionBundleProvider().apply(
                     snapshot=result.snapshot,
                     base_plan=suggested,
@@ -2260,6 +2328,7 @@ class TrimReviewWindow(QMainWindow):
                 suggested,
                 applied,
                 ignored,
+                read_only_selections,
             )
 
         worker = FunctionWorker(load, self._worker_owner)
@@ -2281,7 +2350,7 @@ class TrimReviewWindow(QMainWindow):
         self.document = value
         self.review_state = ReviewState.from_selections(
             value.snapshot,
-            value.suggested_plan.selections,
+            value.selections,
         )
         self.selections = self.review_state.selections
         self.current_plan = value.suggested_plan
@@ -2310,9 +2379,14 @@ class TrimReviewWindow(QMainWindow):
                 value.snapshot.id,
                 clear=self.review_mode is not ReviewMode.CONVERSATION_CLEANUP,
             )
-        self.ui.savePlanButton.setEnabled(not self.hook_mode or value.capabilities.write_enabled)
+        self.ui.savePlanButton.setEnabled(
+            self._context_plan_available()
+            and (not self.hook_mode or value.capabilities.write_enabled)
+        )
         self.ui.applyButton.setEnabled(
-            not self.hook_mode and value.snapshot.status in SAFE_INACTIVE_STATUSES
+            self._context_plan_available()
+            and not self.hook_mode
+            and value.snapshot.status in SAFE_INACTIVE_STATUSES
         )
         self._update_estimate()
         if value.snapshot.turns:
@@ -2374,7 +2448,9 @@ class TrimReviewWindow(QMainWindow):
             action = selection.action if selection else TrimAction.KEEP
             self.ui.actionCombo.setCurrentIndex(INDEX_BY_ACTION[action])
             self.ui.summaryEdit.setPlainText(selection.summary or "" if selection else "")
-            self.ui.summaryEdit.setEnabled(action is TrimAction.SUMMARY)
+            self.ui.summaryEdit.setEnabled(
+                action is TrimAction.SUMMARY and self._context_plan_available()
+            )
             self.ui.reasonBrowser.setPlainText(
                 localized_reason(self._language, selection.reason)
                 if selection
@@ -2425,7 +2501,14 @@ class TrimReviewWindow(QMainWindow):
             self.ui.contentBrowser.setExtraSelections([])
             self.ui.contentBrowser.clear()
             protected = bool(self._target_protected_reasons(target))
-            self.ui.contentBrowser.setReadOnly(self._content_markdown_preview or protected)
+            self.ui.contentBrowser.setReadOnly(
+                self._content_markdown_preview
+                or protected
+                or (
+                    self.review_mode is ReviewMode.CONTEXT_TRIM
+                    and not self._context_plan_available()
+                )
+            )
             self.ui.contentBrowser.setToolTip(
                 self._t("protected_edit_tooltip") if protected else ""
             )
@@ -2587,7 +2670,12 @@ class TrimReviewWindow(QMainWindow):
     def _content_edited(self) -> None:
         if self.review_mode is ReviewMode.MEMORY_EDIT:
             return
-        if self._updating_content or self._content_markdown_preview or self.current_target is None:
+        if (
+            self._updating_content
+            or self._content_markdown_preview
+            or self.current_target is None
+            or not self._context_plan_available()
+        ):
             return
         if self._target_protected_reasons(self.current_target):
             return
@@ -2644,7 +2732,11 @@ class TrimReviewWindow(QMainWindow):
         if self.review_mode is ReviewMode.MEMORY_EDIT:
             self._memory_action_changed(index)
             return
-        if self._updating_controls or self.current_target is None:
+        if (
+            self._updating_controls
+            or self.current_target is None
+            or not self._context_plan_available()
+        ):
             return
         action = ACTION_BY_INDEX[index]
         protected = (
@@ -2691,7 +2783,11 @@ class TrimReviewWindow(QMainWindow):
         if self.review_mode is ReviewMode.MEMORY_EDIT:
             self._memory_replacement_changed()
             return
-        if self._updating_controls or self.current_target is None:
+        if (
+            self._updating_controls
+            or self.current_target is None
+            or not self._context_plan_available()
+        ):
             return
         selection = self.selections.get(self.current_target.id)
         if selection is None or selection.action is not TrimAction.SUMMARY:
@@ -2755,7 +2851,7 @@ class TrimReviewWindow(QMainWindow):
 
     @Slot()
     def _regenerate_suggestions(self) -> None:
-        if self.document is None:
+        if not self._context_plan_available() or self.document is None:
             return
         if self.ui.aiConsentCheck.isChecked():
             self._show_error(self._t("ai_not_configured"))
@@ -2781,6 +2877,8 @@ class TrimReviewWindow(QMainWindow):
     def _build_plan(self) -> TrimPlan:
         if self.document is None:
             raise TrimError("no thread is loaded")
+        if not self._context_plan_available():
+            raise TrimError("context planning requires complete source mapping")
         selections = tuple(self.selections.values())
         validate_selections(self.document.snapshot, selections)
         after = self._estimated_after()
@@ -3025,15 +3123,17 @@ class TrimReviewWindow(QMainWindow):
                 self.ui.taskContextStatusLabel.setText(message)
                 self.ui.taskContextStatusLabel.setToolTip(message)
             return
-        self.ui.suggestButton.setEnabled(not busy and self.document is not None)
+        self.ui.suggestButton.setEnabled(not busy and self._context_plan_available())
         self.ui.savePlanButton.setEnabled(
             not busy
+            and self._context_plan_available()
             and self.document is not None
             and (not self.hook_mode or self.document.capabilities.write_enabled)
         )
         self.ui.applyButton.setEnabled(
             not busy
             and not self.hook_mode
+            and self._context_plan_available()
             and self.document is not None
             and self.document.snapshot.status is not ThreadStatus.ACTIVE
             and self.document.capabilities.write_enabled

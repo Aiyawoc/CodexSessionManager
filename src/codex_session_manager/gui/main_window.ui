@@ -84,8 +84,9 @@
           <item>
            <layout class="QHBoxLayout" name="taskFilterLayout">
             <property name="spacing"><number>6</number></property>
-            <item><widget class="QLabel" name="olderThanDaysLabel"><property name="text"><string>更新时间</string></property><property name="buddy"><cstring>olderThanDaysSpinBox</cstring></property></widget></item>
-            <item><widget class="QSpinBox" name="olderThanDaysSpinBox"><property name="minimumSize"><size><width>84</width><height>32</height></size></property><property name="minimum"><number>0</number></property><property name="maximum"><number>36500</number></property><property name="suffix"><string> 天</string></property><property name="prefix"><string>超过 </string></property><property name="specialValueText"><string>全部</string></property><property name="value"><number>0</number></property><property name="accessibleName"><string>按未更新时间筛选任务，零表示全部</string></property></widget></item>
+            <item><widget class="QLabel" name="olderThanDaysLabel"><property name="text"><string>筛选天数 &gt;</string></property><property name="buddy"><cstring>olderThanDaysSpinBox</cstring></property></widget></item>
+            <item><widget class="QSpinBox" name="olderThanDaysSpinBox"><property name="minimumSize"><size><width>64</width><height>32</height></size></property><property name="maximumSize"><size><width>76</width><height>32</height></size></property><property name="minimum"><number>0</number></property><property name="maximum"><number>36500</number></property><property name="value"><number>0</number></property><property name="accessibleName"><string>按未更新时间筛选任务，零表示全部</string></property></widget></item>
+            <item><widget class="QLabel" name="olderThanDaysUnitLabel"><property name="text"><string>天</string></property></widget></item>
             <item><spacer name="taskFilterSpacer"><property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property><property name="sizeHint"><size><width>20</width><height>20</height></size></property></spacer></item>
            </layout>
           </item>

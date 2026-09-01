@@ -10,7 +10,7 @@
 - App Server 协议未知、不完整、版本未审计或映射不稳定时，只开放读取、备份、验证和生成计划；禁止写入。
 - 当前上下文能力仅限审查与投影计划；原任务应用不可用，派生投影在完整真实 round-trip probe 通过前保持阻塞。未来若重新开放执行，只能创建受支持的派生任务并保持原任务不变；不得通过编辑原始 JSONL 或 SQLite 伪造裁剪结果。
 - 父任务归档、恢复或删除前必须展开并备份全部 spawned descendants；发现缺失父节点、环、闭包重叠或内容不完整时停止写入。
-- 自动操作最多归档。永久删除必须由用户明确要求，并通过单独 purge 计划、备份门禁、归档等待期、运行进程复核和精确确认短语。
+- 自动操作最多归档。永久删除不设置固定等待期，但只允许用户对单个已归档根主动触发；必须通过独立 purge 计划、CSM 可信归档证据、与该归档事件绑定的当前有效备份、运行进程/loaded/后台终端复核和精确确认短语。只有完整备份而没有 CSM 可信归档证据时仍拒绝删除。
 - 写入超时后先查询实际状态，禁止盲目重试；任何不确定结果都按“可能已完成”处理。
 - 备份使用 age 加密和原子发布，不包含 Codex 认证、项目源码或未授权配置；口令不得进入模型上下文、参数、环境变量、日志或提交。
 - `CSM_CODEX_HOME` 与 `CODEX_HOME` 同时设置时必须解析到同一数据根；否则所有入口拒绝继续。
@@ -138,7 +138,7 @@ scripts/accept_macos_bundle.sh dist/CodexSessionManager.app
 
 Windows bundle 构建还必须执行 `scripts/test_windows_install_workflow.ps1`，覆盖临时 `%LOCALAPPDATA%`、重复安装、中文空格路径、无 Python/uv/age PATH 和 Hook 安装/卸载。Apple Silicon CI 使用 `macos-15` 并显式断言 `arm64`；bundle 验收只接受当前源码的 fresh build。
 
-验收至少覆盖内置 Python、PySide6、Qt 插件、age 校验、无 Python/uv 的运行、中文或空格路径和可写用户目录。隔离测试使用 `scripts/install_test_app.sh`；其复制的 Codex home 可能包含认证信息，结束后只删除脚本打印的精确 `TEST_ROOT`。永久删除、恢复和 Hook 写入只能针对临时隔离数据根。
+验收至少覆盖内置 Python、PySide6、Qt 插件、age 校验、无 Python/uv 的运行、中文或空格路径和可写用户目录。隔离测试使用 `scripts/install_test_app.sh`；其复制的 Codex home 可能包含认证信息，结束后只删除脚本打印的精确 `TEST_ROOT`。永久删除、恢复和 Hook 写入默认只能针对临时隔离数据根；只有用户明确要求真实账号受控验收、已完成并复验全数据根回滚快照、目标为用户在 GUI 单选的精确已归档根且所有写门禁通过时，才允许例外执行一次永久删除。
 
 报告结果时区分测试层级：单元测试、假 App Server、offscreen GUI、本机构建和 bundle 验收只能证明对应层级；真实账号联调、真实用户输入、签名公证和生产验收必须单独标明证据。
 

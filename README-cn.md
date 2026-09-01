@@ -232,8 +232,8 @@ csm cleanup apply PLAN.json --confirm PLAN_ID
 | `csm backup create\|verify` | 流式 age 加密备份与完整复验 |
 | `csm cleanup review` | 生成密封清理建议并灌入原项目/任务 GUI，由用户最终选择 |
 | `csm cleanup plan\|apply` | 计划式归档/反归档工作流 |
-| `csm restore plan\|apply` | 生成逻辑恢复计划；当前不写入 Codex |
-| `csm import {chatgpt\|codex} ...` | 生成导入计划；当前不写入 Codex |
+| `csm restore plan` | 生成逻辑恢复计划；当前不写入 Codex |
+| `csm import {chatgpt\|codex} plan ...` | 生成导入计划；当前不写入 Codex |
 | `csm trim review\|suggest` | GUI/人工审查与本地投影建议 |
 | `csm memory ...` | 登记、分段审查、diff、版本备份、原子写入与恢复本地记忆文件 |
 | `csm gui open` | 打开原审查 GUI 的指定模式或密封请求；pending/backup 使用辅助入口 |

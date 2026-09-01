@@ -232,8 +232,8 @@ Important command groups:
 | `csm backup create\|verify` | Streaming age-encrypted backup and full verification |
 | `csm cleanup review` | Create sealed cleanup suggestions and inject them into the original task GUI for final user selection |
 | `csm cleanup plan\|apply` | Plan-based archive/unarchive workflow |
-| `csm restore plan\|apply` | Create a logical restore plan; it does not write to Codex |
-| `csm import {chatgpt\|codex} ...` | Create an import plan; it does not write to Codex |
+| `csm restore plan` | Create a logical restore plan; it does not write to Codex |
+| `csm import {chatgpt\|codex} plan ...` | Create an import plan; it does not write to Codex |
 | `csm trim review\|suggest` | GUI/manual review and local projection suggestions |
 | `csm memory ...` | Register, segment, review, diff, version, atomically edit, and restore local memory files |
 | `csm gui open` | Open an original-GUI review mode or sealed request; pending/backup use auxiliary entries |

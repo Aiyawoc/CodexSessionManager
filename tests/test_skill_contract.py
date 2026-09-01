@@ -14,6 +14,32 @@ SKILL_PATH = SKILL_ROOT / "SKILL.md"
 COMMANDS_PATH = SKILL_ROOT / "references" / "commands.md"
 OPENAI_YAML_PATH = SKILL_ROOT / "agents" / "openai.yaml"
 
+README_COMMAND_CONTRACTS = {
+    "README-cn.md": (
+        PROJECT_ROOT / "README-cn.md",
+        (
+            "| `csm restore plan` | 生成逻辑恢复计划；当前不写入 Codex |",
+            "| `csm import {chatgpt\\|codex} plan ...` | 生成导入计划；当前不写入 Codex |",
+            "| `csm trim review\\|suggest` | GUI/人工审查与本地投影建议 |",
+        ),
+    ),
+    "README.md": (
+        PROJECT_ROOT / "README.md",
+        (
+            "| `csm restore plan` | Create a logical restore plan; it does not write to Codex |",
+            "| `csm import {chatgpt\\|codex} plan ...` | Create an import plan; it does not write to Codex |",
+            "| `csm trim review\\|suggest` | GUI/manual review and local projection suggestions |",
+        ),
+    ),
+}
+
+README_FORBIDDEN_COMMAND_ROWS = (
+    "`csm restore plan\\|apply`",
+    "`csm import {chatgpt\\|codex} ...`",
+    "`csm trim review\\|suggest\\|apply`",
+    "`csm trim apply`",
+)
+
 CURRENT_CONTRACT_DOCUMENTS = {
     "AGENTS.md": (
         PROJECT_ROOT / "AGENTS.md",
@@ -272,6 +298,15 @@ def test_current_docs_use_version_independent_contract_sensitive_boundary() -> N
         text = path.read_text(encoding="utf-8")
         missing = [marker for marker in markers if marker not in text]
         assert not missing, (name, missing)
+
+
+def test_readmes_keep_restore_import_and_trim_commands_plan_only() -> None:
+    for name, (path, expected_rows) in README_COMMAND_CONTRACTS.items():
+        text = path.read_text(encoding="utf-8")
+        command_rows = "\n".join(line for line in text.splitlines() if line.startswith("| `csm "))
+        missing = [row for row in expected_rows if row not in command_rows]
+        assert not missing, (name, missing)
+        assert not any(row in command_rows for row in README_FORBIDDEN_COMMAND_ROWS), name
 
 
 def test_historical_documents_have_top_superseded_markers() -> None:

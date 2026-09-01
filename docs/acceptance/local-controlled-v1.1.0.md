@@ -43,13 +43,15 @@ Codex CLI 的版本、二进制和全量 schema 散列可随运行时变化；�
 不是归档授权条件。真实归档/反归档写入仍必须分别通过 CSM 静态、人工复核的最小操作契约，
 不能用跳过检查或环境变量绕过计划、备份、状态、内容指纹和后代闭包门禁。
 
+当前边界是版本无关、契约敏感：当前 Codex 在线任务仅允许 `archive`/`unarchive` 执行；上下文审查与投影计划可用，但应用不可用；永久删除、重命名、restore/import 写入、trim/context apply 和 MCP 写入不可用。
+
 ## 第一步：只读基线和请求链
 
 这一阶段不归档、不删除、不恢复、不裁剪、不修改记忆文件，也不直接打开 Codex
 JSONL、SQLite 或认证文件。MCP 的配置和“打开审查窗口”只会改变 CSM 私有请求队列，
 不会改变 Codex 对话；需要严格纯只读时只调用下文列出的 inspect/status 工具。
 
-### 1.1 记录环境和协议画像
+### 1.1 记录环境和操作契约
 
 ~~~bash
 git -C "$CSM_REPO_ROOT" rev-parse HEAD > "$CSM_EVIDENCE_DIR/candidate-sha.txt"
@@ -377,7 +379,7 @@ Codex desktop 只能准备建议：
 
 ### 已退役流程的历史证据
 
-永久删除不属于第一版能力或本 Runbook。曾经的设计与真实部分提交证据已移至 [`docs/archive/2026-09-01-purge-retirement/`](../archive/2026-09-01-purge-retirement/)，并标记为 `SUPERSEDED`；不得把归档记录当作当前操作步骤。
+永久删除不属于第一版能力或本 Runbook。相关历史证据保留为待归档材料，不作为当前验收入口；不得把历史记录当作当前操作步骤。
 
 ## 3. 回滚和收尾
 

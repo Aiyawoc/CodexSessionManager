@@ -14,6 +14,102 @@ SKILL_PATH = SKILL_ROOT / "SKILL.md"
 COMMANDS_PATH = SKILL_ROOT / "references" / "commands.md"
 OPENAI_YAML_PATH = SKILL_ROOT / "agents" / "openai.yaml"
 
+CURRENT_CONTRACT_DOCUMENTS = {
+    "AGENTS.md": (
+        PROJECT_ROOT / "AGENTS.md",
+        (
+            "版本无关",
+            "契约敏感",
+            "不是归档授权条件",
+            "归档与反归档由静态、人工复核的最小操作契约逐项评估",
+        ),
+    ),
+    "README-cn.md": (
+        PROJECT_ROOT / "README-cn.md",
+        (
+            "版本无关",
+            "契约敏感",
+            "不是归档授权条件",
+            "归档与反归档由静态、人工复核的最小操作契约逐项评估",
+        ),
+    ),
+    "README.md": (
+        PROJECT_ROOT / "README.md",
+        (
+            "version-independent",
+            "contract-sensitive",
+            "not archive authorization conditions.",
+            "archive and unarchive are evaluated against static, human-reviewed minimal operation contracts.",
+        ),
+    ),
+    "acceptance/README.md": (
+        PROJECT_ROOT / "docs" / "acceptance" / "README.md",
+        (
+            "版本无关",
+            "契约敏感",
+            "不是归档授权条件",
+            "归档与反归档由静态、人工复核的最小操作契约逐项评估",
+        ),
+    ),
+    "local-controlled-v1.1.0.md": (
+        PROJECT_ROOT / "docs" / "acceptance" / "local-controlled-v1.1.0.md",
+        (
+            "版本无关",
+            "契约敏感",
+            "不是归档授权条件",
+            "静态、人工复核的最小操作契约",
+        ),
+    ),
+    "context-projection-plan.md": (
+        PROJECT_ROOT
+        / "docs"
+        / "CodexSessionManager-v1.1-context-projection-and-sensitive-data-plan.md",
+        (
+            "版本无关",
+            "契约敏感",
+            "不是归档授权条件",
+            "归档与反归档由静态、人工复核的最小操作契约逐项评估",
+        ),
+    ),
+    "phase-two-plan.md": (
+        PROJECT_ROOT / "docs" / "CodexSessionManager 二期最终实施计划.md",
+        (
+            "版本无关",
+            "契约敏感",
+            "不是归档授权条件",
+            "归档与反归档由静态、人工复核的最小操作契约逐项评估",
+        ),
+    ),
+    "SKILL.md": (
+        SKILL_PATH,
+        (
+            "版本无关",
+            "契约敏感",
+            "不是归档授权条件",
+            "归档与反归档由静态、人工复核的最小操作契约逐项评估",
+        ),
+    ),
+    "safety.md": (
+        SKILL_ROOT / "references" / "safety.md",
+        (
+            "版本无关",
+            "契约敏感",
+            "不是归档授权条件",
+            "归档与反归档由静态、人工复核的最小操作契约逐项评估",
+        ),
+    ),
+}
+
+CURRENT_DOC_PATHS = (
+    *(path for path, _ in CURRENT_CONTRACT_DOCUMENTS.values()),
+    PROJECT_ROOT / "CONTEXT.md",
+    PROJECT_ROOT / "docs" / "acceptance" / "app-server-schema-approval.md",
+    PROJECT_ROOT / "docs" / "acceptance" / "first-delivery-v1.1.0.md",
+    PROJECT_ROOT / "docs" / "acceptance" / "formal-release-manual-v1.1.0.md",
+    PROJECT_ROOT / "docs" / "releases" / "v1.1.0-first-delivery.md",
+    COMMANDS_PATH,
+)
+
 EXPECTED_COMMAND_PATHS = {
     ("doctor",),
     ("threads", "list"),
@@ -125,58 +221,30 @@ def test_skill_keeps_stable_entry_and_fail_closed_safety_contract() -> None:
 
 
 def test_current_docs_use_version_independent_contract_sensitive_boundary() -> None:
-    docs = {
-        "AGENTS.md": (PROJECT_ROOT / "AGENTS.md").read_text(encoding="utf-8"),
-        "README-cn.md": (PROJECT_ROOT / "README-cn.md").read_text(encoding="utf-8"),
-        "README.md": (PROJECT_ROOT / "README.md").read_text(encoding="utf-8"),
-        "SKILL.md": SKILL_PATH.read_text(encoding="utf-8"),
-        "safety.md": (SKILL_ROOT / "references" / "safety.md").read_text(encoding="utf-8"),
-    }
-    chinese = "\n".join(
-        docs[name] for name in ("AGENTS.md", "README-cn.md", "SKILL.md", "safety.md")
-    )
-    assert "版本无关" in chinese
-    assert "契约敏感" in chinese
-    assert (
-        "当前 Codex 版本、二进制散列和全量 schema 散列是诊断与计划失效证据，不是归档授权条件。"
-        in chinese
-    )
-    assert "归档与反归档由静态、人工复核的最小操作契约逐项评估。" in chinese
-    assert "无关变化自动兼容；相关方法/字段/关键枚举不兼容时只关闭受影响操作。" in chinese
-    assert "version-independent" in docs["README.md"]
-    assert "contract-sensitive" in docs["README.md"]
-    assert (
-        "The current Codex version, binary hash, and full schema hash are diagnostic "
-        "and plan-invalidation evidence, not archive authorization conditions."
-    ) in docs["README.md"]
+    for name, (path, markers) in CURRENT_CONTRACT_DOCUMENTS.items():
+        text = path.read_text(encoding="utf-8")
+        missing = [marker for marker in markers if marker not in text]
+        assert not missing, (name, missing)
 
 
 def test_current_docs_do_not_use_exact_profile_as_archive_authorization() -> None:
-    current_docs = [
-        PROJECT_ROOT / "AGENTS.md",
-        PROJECT_ROOT / "CONTEXT.md",
-        PROJECT_ROOT / "README-cn.md",
-        PROJECT_ROOT / "README.md",
-        PROJECT_ROOT / "docs" / "acceptance" / "README.md",
-        PROJECT_ROOT / "docs" / "acceptance" / "app-server-schema-approval.md",
-        PROJECT_ROOT / "docs" / "acceptance" / "first-delivery-v1.1.0.md",
-        PROJECT_ROOT / "docs" / "acceptance" / "formal-release-manual-v1.1.0.md",
-        PROJECT_ROOT / "docs" / "acceptance" / "local-controlled-v1.1.0.md",
-        PROJECT_ROOT / "docs" / "releases" / "v1.1.0-first-delivery.md",
-        SKILL_PATH,
-        SKILL_ROOT / "references" / "safety.md",
-        SKILL_ROOT / "references" / "commands.md",
-    ]
+    current_docs = CURRENT_DOC_PATHS
     forbidden = (
+        "protocol_profiles",
+        "write_enabled",
+        "exact_profile",
+        "exact profile",
         "只有版本与 schema 哈希精确命中人工批准画像才开放写入",
         "Writes require an exact version and schema-hash match",
         "exact_profile_match: true",
-        "write_enabled: true",
         "未审计版本",
     )
     for path in current_docs:
         text = path.read_text(encoding="utf-8")
-        assert not any(phrase in text for phrase in forbidden), path
+        assert not any(phrase.lower() in text.lower() for phrase in forbidden), path
+        assert "execute_purge_plan" not in text
+        assert "永久删除独立流程" not in text
+        assert "永久删除：独立的" not in text
 
 
 def test_current_boundaries_keep_unavailable_writes_and_mcp_read_only() -> None:

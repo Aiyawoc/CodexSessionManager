@@ -1,16 +1,17 @@
 # CodexSessionManager 验收文档索引
 
-本目录区分首次交付、正式发布、协议画像、本机真实账号和单项验收收口。报告任何结果时必须标明证据层级；fixture、offscreen GUI、本机构建、真实 App Server 写入和生产发布不能混称为“E2E 通过”。
+本目录区分首次交付、正式发布、操作契约审查、本机真实账号和单项验收收口。报告任何结果时必须标明证据层级；fixture、offscreen GUI、本机构建、真实 App Server 写入和生产发布不能混称为“E2E 通过”。
 
 ## 当前 v1.1 状态
 
-- 当前基线：`main` 当前提交；历史文档各自保留当时的精确基线，精确版本与全量 schema 散列仅作为诊断和计划失效证据。
+- 当前基线：`main` 当前提交；历史文档各自保留当时的诊断基线，版本与全量 schema 散列仅作为诊断和计划失效证据。
 - 当前阶段：继续完成 v1.1 其它功能验收；2.4 上下文应用执行层不再强行推进。
 - 2.4 判定：`CLOSED_WITH_UPSTREAM_BLOCKER`
 - 第一版 Codex 写能力：仅批量归档和反归档；永久删除、重命名、restore/import 写入、上下文应用和 MCP 写入不可用。
 - 已证明：上下文审查与投影计划可生成；源任务在失败后保持完整。
 - 未证明：派生投影可以持久化；人工投影可以安装回原任务；敏感信息已经从 Codex 历史或活动上下文中删除。
 - 后续顺序：先完成 v1.1 其它验收；再优先实现敏感信息修改计划与受支持目标；最后研究其它官方上下文应用方向。
+- 当前边界是版本无关、契约敏感：版本、二进制和全量 schema 散列仅用于诊断与计划失效，不是归档授权条件；归档与反归档由静态、人工复核的最小操作契约逐项评估；无关变化自动兼容，相关方法/字段/关键枚举不兼容时只关闭受影响操作。第一版任务管理仅允许 `archive`/`unarchive` 执行；上下文审查与投影计划可用，但应用不可用；永久删除、重命名、restore/import 写入、trim/context apply 和 MCP 写入不可用。
 
 ### 当前能力边界
 
@@ -25,16 +26,16 @@
 
 - [`local-controlled-v1.1.0.md`](local-controlled-v1.1.0.md)：v1.1.0 本机两步受控验收主 Runbook。
 - [`v1.1.0-phase-2.4-context-projection-closure.md`](v1.1.0-phase-2.4-context-projection-closure.md)：2.4 上下文投影的正式结论、真实证据和停止边界。对 2.4 的冲突表述以该文件为准。
-- [`v1.1.0-phase-2.5-permanent-purge-closure.md`](v1.1.0-phase-2.5-permanent-purge-closure.md)：已退役的永久删除历史证据与上游根因；当前不提供其资格盘点、计划、GUI、CLI、Skill、MCP 或执行器。
+- 永久删除历史：已从当前能力与二期交付中退役；历史证据不属于当前验收入口，也不提供其资格盘点、计划、GUI、CLI、Skill、MCP 或执行器。
 
 ### 首次交付与正式发布
 
 - [`first-delivery-v1.1.0.md`](first-delivery-v1.1.0.md)：首次交付候选验收。
 - [`formal-release-manual-v1.1.0.md`](formal-release-manual-v1.1.0.md)：正式发布前人工验收；在统一修订前，不得把其中的上下文应用步骤视为当前已验证能力。
 
-### 协议画像与历史验收
+### 操作契约审查与历史验收
 
-- [`app-server-schema-approval.md`](app-server-schema-approval.md)：App Server 精确画像人工批准流程。
+- [`app-server-schema-approval.md`](app-server-schema-approval.md)：App Server 操作契约人工审查流程。
 - [`../adr/0011-version-independent-operation-contracts.md`](../adr/0011-version-independent-operation-contracts.md)：版本无关、契约敏感的五项操作边界；归档/反归档逐项评估。
 - [`app-server-schema-0.151.0-alpha.7.2.md`](app-server-schema-0.151.0-alpha.7.2.md)：历史精确画像证据，仅用于诊断和计划失效。
 - [`macos-real-account-v1.0.1.md`](macos-real-account-v1.0.1.md)：v1.0.1 历史真实账号验收。
@@ -79,6 +80,5 @@
 - `failed`：实现或行为不满足预期；
 - `blocked_upstream`：CSM 安全层通过，但依赖的官方能力不存在或真实语义未兑现；
 - `not_run`：尚未执行；
-- `waiting_period`：受时间门禁约束；
 - `unavailable`：当前版本对用户不可交付；
 - `production_ready: false`：不论其它阶段结果如何，当前候选不是生产验收。

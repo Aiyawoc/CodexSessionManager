@@ -44,7 +44,7 @@
 - Skill 安全不变量：`skills/manage-codex-sessions/references/safety.md`。
 - Skill 命令工作流：`skills/manage-codex-sessions/references/commands.md`。
 - App Server 客户端和能力门禁：`src/codex_session_manager/app_server.py`。
-- 人工批准协议规则与只读差异报告：`protocol_profiles.py`、`protocol_profiles.json`、`schema_audit.py`。
+- 操作契约规则与只读差异报告：`src/codex_session_manager/operation_contracts.py`、`src/codex_session_manager/schema_audit.py`（后者仅生成只读报告）。
 - 不可变模型、指纹和计划：`models.py`、`hashing.py`、`plans.py`。
 - 盘点、清理、备份、导入和裁剪：`inventory.py`、`cleanup.py`、`backup.py`、`importing.py`、`trim.py`。
 - CLI/GUI/Hook 共用编排边界：`workflows.py`；脱敏人工验收证据：`acceptance.py`。

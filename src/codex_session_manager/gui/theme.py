@@ -464,7 +464,7 @@ QCheckBox {{
 QCheckBox::indicator, QTreeWidget::indicator {{
     width: 16px;
     height: 16px;
-    border: 2px solid {OUTLINE_STRONG};
+    border: 2px solid {TEXT_MUTED};
     border-radius: 4px;
     background: {PANEL};
 }}

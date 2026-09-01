@@ -8,7 +8,7 @@ from itertools import pairwise
 from pathlib import Path
 
 from PySide6.QtCore import QModelIndex, QPoint, Qt, QTimer
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QCloseEvent, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -28,9 +28,10 @@ from codex_session_manager.gui.theme import (
     ACCENT,
     APP_STYLESHEET,
     DANGER,
-    OUTLINE_STRONG,
+    PANEL,
     SPLITTER_LINE,
     TEXT,
+    TEXT_MUTED,
 )
 from codex_session_manager.gui.widgets import CenteredHandleSplitter
 from codex_session_manager.hashing import utc_now
@@ -334,10 +335,32 @@ def test_task_checkbox_states_have_visible_light_theme_contrast(qtbot, app_paths
             for y in range(checked.height())
         }
 
-        assert OUTLINE_STRONG in unchecked_colors
+        assert TEXT_MUTED in unchecked_colors
         assert ACCENT in checked_colors
     finally:
         application.setStyleSheet(previous_stylesheet)
+
+
+def test_checkbox_indicator_border_has_three_to_one_panel_contrast() -> None:
+    border = QColor(TEXT_MUTED)
+    panel = QColor(PANEL)
+
+    def relative_luminance(color: QColor) -> float:
+        channels = (color.redF(), color.greenF(), color.blueF())
+        linear = tuple(
+            channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+            for channel in channels
+        )
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    border_luminance = relative_luminance(border)
+    panel_luminance = relative_luminance(panel)
+    contrast = (max(border_luminance, panel_luminance) + 0.05) / (
+        min(border_luminance, panel_luminance) + 0.05
+    )
+
+    assert f"border: 2px solid {TEXT_MUTED};" in APP_STYLESHEET
+    assert contrast >= 3.0
 
 
 def test_footer_action_buttons_are_equal_fixed_width_and_right_aligned(qtbot, app_paths) -> None:

@@ -26,7 +26,7 @@
 
 - [`local-controlled-v1.1.0.md`](local-controlled-v1.1.0.md)：v1.1.0 本机两步受控验收主 Runbook。
 - [`v1.1.0-phase-2.4-context-projection-closure.md`](v1.1.0-phase-2.4-context-projection-closure.md)：2.4 上下文投影的正式结论、真实证据和停止边界。对 2.4 的冲突表述以该文件为准。
-- 永久删除历史：已从当前能力与二期交付中退役；历史证据不属于当前验收入口，也不提供其资格盘点、计划、GUI、CLI、Skill、MCP 或执行器。
+- 永久删除历史：已从当前能力与二期交付中退役；历史证据不属于当前验收入口，也不提供其资格盘点、计划、GUI、CLI、Skill、MCP 或执行器。归档材料见 [`永久删除能力退役历史`](../archive/2026-09-01-purge-retirement/README.md)。
 
 ### 首次交付与正式发布
 

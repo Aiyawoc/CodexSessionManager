@@ -137,23 +137,29 @@ CURRENT_CONTRACT_DOCUMENTS = {
 
 HISTORICAL_DOCUMENTS = {
     "phase-2.5-purge-closure.md": (
-        PROJECT_ROOT / "docs" / "acceptance" / "v1.1.0-phase-2.5-permanent-purge-closure.md",
-        "> **SUPERSEDED（2026-09-02）**",
+        PROJECT_ROOT
+        / "docs"
+        / "archive"
+        / "2026-09-01-purge-retirement"
+        / "v1.1.0-phase-2.5-permanent-purge-closure.md",
+        "SUPERSEDED（2026-09-01）",
         (
-            "../adr/0011-version-independent-operation-contracts.md",
-            "README.md",
-            "永久删除（purge）已从第一版退休",
-            "精确版本/画像授权归档写入仅属历史",
+            "已取消永久删除能力",
+            "仅保留历史验收与部分提交证据",
+            "不描述当前产品功能",
         ),
     ),
     "adr-0010-manual-purge.md": (
-        PROJECT_ROOT / "docs" / "adr" / "0010-manual-purge-without-fixed-delay.md",
-        "> **SUPERSEDED（2026-09-02）**",
+        PROJECT_ROOT
+        / "docs"
+        / "archive"
+        / "2026-09-01-purge-retirement"
+        / "0010-manual-purge-without-fixed-delay.md",
+        "SUPERSEDED（2026-09-01）",
         (
-            "0011-version-independent-operation-contracts.md",
-            "../acceptance/README.md",
-            "永久删除（purge）已从第一版退休",
-            "精确版本/画像授权归档写入仅属历史",
+            "已取消永久删除能力",
+            "仅保留历史决策与失败证据",
+            "不描述当前产品功能",
         ),
     ),
     "adr-0002-closures.md": (
@@ -407,14 +413,13 @@ def test_readmes_keep_restore_import_and_trim_commands_plan_only() -> None:
         assert not any(row in command_rows for row in README_FORBIDDEN_COMMAND_ROWS), name
 
 
-def test_historical_documents_have_top_superseded_markers() -> None:
+def test_historical_documents_have_superseded_markers() -> None:
     for name, (path, expected_prefix, markers) in HISTORICAL_DOCUMENTS.items():
         text = path.read_text(encoding="utf-8")
-        marker, separator, body = text.partition("\n\n")
-        assert separator, name
-        assert marker.startswith(expected_prefix), name
-        assert body.startswith("# "), name
-        missing = [expected for expected in markers if expected not in marker]
+        header = "\n".join(text.splitlines()[:12])
+        assert expected_prefix in header, name
+        assert re.search(r"^# ", text, re.MULTILINE), name
+        missing = [expected for expected in markers if expected not in header]
         assert not missing, (name, missing)
 
 

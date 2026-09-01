@@ -1,12 +1,12 @@
-> **SUPERSEDED（2026-09-02）**：本文仅保留为历史证据，不再作为当前执行规则；永久删除（purge）已从第一版退休，旧文中的精确版本/画像授权归档写入仅属历史。当前边界见 [ADR 0011：版本无关操作契约](0011-version-independent-operation-contracts.md) 与 [当前验收索引](../acceptance/README.md)。
-
 # ADR 0010：取消固定归档等待期，保留人工永久删除证据门禁
 
-- 状态：Accepted
+> **SUPERSEDED（2026-09-01）**：CodexSessionManager 第一版已取消永久删除能力。本文件仅保留历史决策与失败证据，不描述当前产品功能，也不授权任何删除操作。
+
+- 状态：Superseded
 - 日期：2026-09-01
 - 关联：ADR 0001、ADR 0002、v1.1 本机受控验收 2.5
 
-> 实施状态补充（2026-09-01）：下文关于 GUI/CLI 删除应用可执行和同轮闭环的表述已 **SUPERSEDED**。真实 `thread/delete` 发生部分提交后，2.5 已按 [`CLOSED_WITH_UPSTREAM_BLOCKER`](../acceptance/v1.1.0-phase-2.5-permanent-purge-closure.md) 关闭应用；本 ADR 的无固定等待期和安全门禁仍作为未来重新开放条件保留。
+> 实施状态补充（2026-09-01）：下文关于 GUI/CLI 删除应用可执行和同轮闭环的表述已 **SUPERSEDED**。真实 `thread/delete` 发生部分提交后，2.5 已按 [`CLOSED_WITH_UPSTREAM_BLOCKER`](v1.1.0-phase-2.5-permanent-purge-closure.md) 关闭应用；随后第一版完全移除了该能力。
 
 ## 背景
 

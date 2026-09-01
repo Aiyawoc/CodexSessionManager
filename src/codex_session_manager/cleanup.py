@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import csv
-import os
-import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -30,18 +27,10 @@ from codex_session_manager.models import (
     RiskLevel,
     ThreadHistoryMode,
     ThreadSnapshot,
-    ThreadStatus,
 )
 
 DEFAULT_STALE_DAYS: Final[int] = 90
 MAX_ROOTS: Final[int] = 100
-PURGE_CONFIRMATION_PHRASE: Final[str] = "确认删除"
-PURGE_EXECUTION_ENABLED: Final[bool] = False
-PURGE_EXECUTION_BLOCKED_REASON: Final[str] = (
-    "permanent deletion application is CLOSED_WITH_UPSTREAM_BLOCKER: "
-    "the approved Codex App Server 0.142.1 can partially commit thread/delete "
-    "against state migrated by a newer Codex; planning and review remain available"
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +48,7 @@ def _top_level_candidates(
         parents = list(_parent_ids(candidate))
         if any(parent in candidate_ids for parent in parents):
             continue
-        # If any known ancestor is also a candidate, the archive/delete cascade
+        # If any known ancestor is also a candidate, the archive cascade
         # must be represented by that ancestor only.
         visited: set[str] = set()
         queue = parents
@@ -535,180 +524,6 @@ class CleanupPlanner:
             return ()
         return target_closure_ids(summaries, tuple(root.id for root in roots))
 
-    def plan_purge(
-        self,
-        snapshots: tuple[ThreadSnapshot, ...],
-        capabilities: CapabilityMatrix,
-        audit: AuditStore,
-        *,
-        now: datetime | None = None,
-    ) -> ActionPlan:
-        effective_now = (now or utc_now()).astimezone(UTC)
-        all_snapshots = {snapshot.id: snapshot for snapshot in snapshots}
-        roots = self.purge_candidates(snapshots, audit, now=effective_now)[:1]
-        targets = tuple(self._target(root, all_snapshots, effective_now) for root in roots)
-        return ActionPlan.create(
-            action=PlanAction.PURGE,
-            capability_fingerprint=capabilities.fingerprint,
-            targets=targets,
-            prerequisites=(
-                "CSM-trusted archive evidence exists for every affected snapshot",
-                "verified encrypted backup covers every affected snapshot",
-                "no other Codex process is running against the data root",
-                "human supplies the exact plan id and permanent-deletion phrase",
-            ),
-            options={"manual_only": True, "trusted_archive_required": True},
-        )
-
-    def purge_candidates(
-        self,
-        snapshots: tuple[ThreadSnapshot, ...],
-        audit: AuditStore,
-        *,
-        now: datetime | None = None,
-    ) -> tuple[ThreadSnapshot, ...]:
-        """Return roots satisfying every purge evidence gate without creating a plan."""
-
-        audit.verify_chain()
-        all_snapshots = {snapshot.id: snapshot for snapshot in snapshots}
-        eligible: list[ThreadSnapshot] = []
-        for snapshot in snapshots:
-            if (
-                not snapshot.archived
-                or snapshot.pinned
-                or snapshot.ephemeral
-                or snapshot.status not in SAFE_INACTIVE_STATUSES
-                or not snapshot.mapping_complete
-                or not snapshot.content_complete
-            ):
-                continue
-            trusted = audit.trusted_archive(snapshot.id)
-            if trusted is None:
-                continue
-            evidence = audit.verified_backup(
-                snapshot.id,
-                snapshot.backup_fingerprint,
-                manifest_sha256=trusted.manifest_sha256,
-            )
-            if evidence is None or not evidence.is_current():
-                continue
-            eligible.append(snapshot)
-        eligible_ids = {snapshot.id for snapshot in eligible}
-        roots = _non_overlapping_roots(
-            [
-                root
-                for root in _top_level_candidates(eligible, all_snapshots)
-                if {root.id, *root.spawned_descendant_ids} <= eligible_ids
-            ]
-        )
-        return tuple(
-            sorted(
-                roots,
-                key=lambda item: item.updated_at or datetime.min.replace(tzinfo=UTC),
-            )[: self.policy.maximum_roots]
-        )
-
-    def purge_hydration_ids(
-        self,
-        summaries: tuple[ThreadSnapshot, ...],
-    ) -> tuple[str, ...]:
-        """Select bounded archived roots whose content needs purge evidence checks."""
-
-        all_snapshots = {snapshot.id: snapshot for snapshot in summaries}
-        candidates = [
-            snapshot
-            for snapshot in summaries
-            if snapshot.archived
-            and not snapshot.pinned
-            and not snapshot.ephemeral
-            and snapshot.mapping_complete
-            and snapshot.status in SAFE_INACTIVE_STATUSES
-        ]
-        candidate_ids = {snapshot.id for snapshot in candidates}
-        roots = _non_overlapping_roots(
-            [
-                root
-                for root in _top_level_candidates(candidates, all_snapshots)
-                if {root.id, *root.spawned_descendant_ids} <= candidate_ids
-            ]
-        )
-        roots = sorted(
-            roots,
-            key=lambda item: item.updated_at or datetime.min.replace(tzinfo=UTC),
-        )[: self.policy.maximum_roots]
-        if not roots:
-            return ()
-        return target_closure_ids(summaries, tuple(root.id for root in roots))
-
-    def plan_selected_purge(
-        self,
-        snapshots: tuple[ThreadSnapshot, ...],
-        capabilities: CapabilityMatrix,
-        audit: AuditStore,
-        selected_ids: tuple[str, ...],
-        *,
-        now: datetime | None = None,
-    ) -> ActionPlan:
-        """Plan permanent deletion for explicit roots after every purge gate passes."""
-
-        audit.verify_chain()
-        all_snapshots = {snapshot.id: snapshot for snapshot in snapshots}
-        roots = self._explicit_roots(selected_ids, all_snapshots)
-        if len(roots) != 1:
-            raise ValueError("permanent-deletion plans must contain exactly one root")
-        targets: list[PlanTarget] = []
-        for root in roots:
-            closure = self._resolved_closure(root, all_snapshots)
-            for snapshot in closure:
-                if (
-                    not snapshot.archived
-                    or snapshot.pinned
-                    or snapshot.ephemeral
-                    or snapshot.status not in SAFE_INACTIVE_STATUSES
-                    or not snapshot.mapping_complete
-                    or not snapshot.content_complete
-                ):
-                    raise ValueError(
-                        f"selected permanent deletion is not safely archived: {snapshot.id}"
-                    )
-                trusted = audit.trusted_archive(snapshot.id)
-                if trusted is None:
-                    raise ValueError(
-                        f"selected permanent deletion requires CSM-trusted archive evidence: "
-                        f"{snapshot.id}"
-                    )
-                evidence = audit.verified_backup(
-                    snapshot.id,
-                    snapshot.backup_fingerprint,
-                    manifest_sha256=trusted.manifest_sha256,
-                )
-                if evidence is None or not evidence.is_current():
-                    raise ValueError(
-                        f"selected permanent deletion lacks an archive-bound verified backup: "
-                        f"{snapshot.id}"
-                    )
-            targets.append(
-                self._explicit_target(
-                    root, all_snapshots, "explicit human permanent-deletion selection"
-                )
-            )
-        return ActionPlan.create(
-            action=PlanAction.PURGE,
-            capability_fingerprint=capabilities.fingerprint,
-            targets=tuple(targets),
-            prerequisites=(
-                "CSM-trusted archive evidence exists for every affected snapshot",
-                "verified encrypted backup covers every affected snapshot",
-                "no other Codex process is running against the data root",
-                "human supplies the exact plan id and permanent-deletion phrase",
-            ),
-            options={
-                "manual_only": True,
-                "manual_selection": True,
-                "trusted_archive_required": True,
-            },
-        )
-
     def _explicit_roots(
         self,
         selected_ids: tuple[str, ...],
@@ -736,18 +551,6 @@ class CleanupPlanner:
         if not set(unique_ids) <= covered:
             raise ValueError("selected conversation graph cannot be represented safely")
         return roots
-
-    @staticmethod
-    def _resolved_closure(
-        root: ThreadSnapshot, snapshots: dict[str, ThreadSnapshot]
-    ) -> tuple[ThreadSnapshot, ...]:
-        closure_ids = (root.id, *root.spawned_descendant_ids)
-        missing = [thread_id for thread_id in closure_ids if thread_id not in snapshots]
-        if missing:
-            raise ValueError(
-                f"descendant closure is incomplete for {root.id}: " + ", ".join(missing)
-            )
-        return tuple(snapshots[thread_id] for thread_id in closure_ids)
 
     @staticmethod
     def _archive_block_reason(snapshot: ThreadSnapshot) -> str | None:
@@ -808,84 +611,6 @@ class CleanupPlanner:
         )
 
 
-class ProcessGuard:
-    """Conservatively detect other local Codex processes before purge."""
-
-    @staticmethod
-    def assert_no_other_codex_processes(*, controlled_pid: int | None = None) -> None:
-        if os.name == "nt":
-            ProcessGuard._assert_no_other_windows_codex_processes(controlled_pid)
-            return
-        completed = subprocess.run(
-            ["ps", "-axo", "pid=,ppid=,command="],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        processes: list[tuple[int, int, str]] = []
-        for line in completed.stdout.splitlines():
-            fields = line.strip().split(maxsplit=2)
-            if len(fields) != 3:
-                continue
-            try:
-                pid, parent_pid = int(fields[0]), int(fields[1])
-            except ValueError:
-                continue
-            processes.append((pid, parent_pid, fields[2]))
-
-        controlled_processes = {controlled_pid} if controlled_pid is not None else set()
-        while descendants := {
-            pid
-            for pid, parent_pid, _command in processes
-            if parent_pid in controlled_processes and pid not in controlled_processes
-        }:
-            controlled_processes.update(descendants)
-
-        blockers: list[str] = []
-        for pid, _parent_pid, command in processes:
-            if pid in controlled_processes:
-                continue
-            lowered = command.casefold()
-            is_codex = (
-                "/codex.app/contents/" in lowered
-                or lowered.endswith("/codex")
-                or " codex app-server" in lowered
-                or "/bin/codex " in lowered
-            )
-            if is_codex and "codex_session_manager" not in lowered:
-                blockers.append(f"{pid} {command}")
-        if blockers:
-            preview = "; ".join(blockers[:5])
-            raise RuntimeError(f"permanent deletion blocked by running Codex processes: {preview}")
-
-    @staticmethod
-    def _assert_no_other_windows_codex_processes(controlled_pid: int | None) -> None:
-        completed = subprocess.run(
-            ["tasklist", "/FO", "CSV", "/NH"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        blockers: list[str] = []
-        for row in csv.reader(completed.stdout.splitlines()):
-            if len(row) < 2:
-                continue
-            image_name, pid_text = row[0], row[1]
-            try:
-                pid = int(pid_text)
-            except ValueError:
-                continue
-            if controlled_pid is not None and pid == controlled_pid:
-                continue
-            if image_name.casefold() in {"codex.exe", "chatgpt.exe"}:
-                blockers.append(f"{pid} {image_name}")
-        if blockers:
-            preview = "; ".join(blockers[:5])
-            raise RuntimeError(f"permanent deletion blocked by running Codex processes: {preview}")
-
-
 class CleanupExecutor:
     """Apply one already-sealed plan after re-reading all safety evidence."""
 
@@ -909,29 +634,18 @@ class CleanupExecutor:
         confirmation: str | None = None,
     ) -> tuple[str, ...]:
         plan.verify()
-        if plan.action is PlanAction.PURGE and len(plan.targets) != 1:
-            raise ValueError("permanent-deletion plans must contain exactly one root")
-        if plan.action is PlanAction.PURGE and not PURGE_EXECUTION_ENABLED:
-            raise RuntimeError(PURGE_EXECUTION_BLOCKED_REASON)
         self.audit.verify_chain()
         if plan.capability_fingerprint != self.capabilities.fingerprint:
             raise ValueError("App Server capability drift invalidated the plan")
         method = {
             PlanAction.ARCHIVE: "thread/archive",
             PlanAction.UNARCHIVE: "thread/unarchive",
-            PlanAction.PURGE: "thread/delete",
         }.get(plan.action)
         if method is None:
             raise ValueError(f"CleanupExecutor cannot apply {plan.action.value}")
         self.capabilities.require_write(method)
-        current = (
-            self.inventory.list_for_targets(
-                tuple(target.root_thread_id for target in plan.targets),
-                include_active=True,
-                include_archived=True,
-            )
-            if plan.action is PlanAction.PURGE
-            else self.inventory.list(include_active=True, include_archived=True, include_turns=True)
+        current = self.inventory.list(
+            include_active=True, include_archived=True, include_turns=True
         )
         current_by_id = self._verify_snapshot_drift(plan, current)
         if plan.action in {PlanAction.ARCHIVE, PlanAction.UNARCHIVE}:
@@ -944,11 +658,8 @@ class CleanupExecutor:
                 )
                 if reason:
                     raise ValueError(f"cleanup plan is no longer eligible: {reason}")
-        if plan.action in {PlanAction.ARCHIVE, PlanAction.PURGE}:
+        if plan.action is PlanAction.ARCHIVE:
             self._verify_backup_gate(plan, current_by_id)
-        if plan.action is PlanAction.PURGE:
-            self.capabilities.require_write("thread/backgroundTerminals/list")
-            self.capabilities.require_write("thread/loaded/list")
         affected = {
             thread_id for target in plan.targets for thread_id in target.affected_thread_ids
         }
@@ -961,78 +672,15 @@ class CleanupExecutor:
             raise RuntimeError(
                 f"affected threads are loaded: {', '.join(sorted(loaded & affected))}"
             )
-        if plan.action is PlanAction.PURGE:
-            if confirmation != PURGE_CONFIRMATION_PHRASE:
-                raise ValueError("missing permanent-deletion confirmation phrase")
-            self._verify_purge_gate(plan, plan.targets, current_by_id)
-            background_processes = {
-                thread_id: self._purge_background_terminals(current_by_id[thread_id])
-                for target in plan.targets
-                for thread_id in target.affected_thread_ids
-            }
-            occupied = {
-                thread_id: terminals
-                for thread_id, terminals in background_processes.items()
-                if terminals
-            }
-            if occupied:
-                raise RuntimeError(
-                    "permanent deletion blocked by background terminals: "
-                    + ", ".join(sorted(occupied))
-                )
-            ProcessGuard.assert_no_other_codex_processes(controlled_pid=self.client.pid)
-
         self.audit.begin_operation(plan_sha256=plan.plan_sha256, action=plan.action.value)
         completed: list[str] = []
         ambiguous_write_errors: list[RequestError | RequestTimeout] = []
         try:
-            if plan.action is PlanAction.UNARCHIVE:
-                for thread_id in sorted(affected):
-                    self.audit.invalidate_trusted_archive(
-                        thread_id=thread_id, plan_sha256=plan.plan_sha256
-                    )
             for target in plan.targets:
-                if plan.action is PlanAction.PURGE:
-                    fresh = self.inventory.list_for_targets(
-                        (target.root_thread_id,),
-                        include_active=True,
-                        include_archived=True,
-                    )
-                    fresh_by_id = {snapshot.id: snapshot for snapshot in fresh}
-                    self._verify_target_drift(plan, target, fresh_by_id)
-                    self._verify_backup_gate(plan, fresh_by_id, targets=(target,))
-                    self._verify_purge_gate(plan, (target,), fresh_by_id)
-                    fresh_loaded = (
-                        set(self.client.loaded_thread_ids())
-                        if self.capabilities.supports("thread/loaded/list")
-                        else set()
-                    )
-                    occupied_loaded = fresh_loaded & set(target.affected_thread_ids)
-                    if occupied_loaded:
-                        raise RuntimeError(
-                            "affected threads became loaded: " + ", ".join(sorted(occupied_loaded))
-                        )
-                    fresh_terminals = {
-                        thread_id: self._purge_background_terminals(fresh_by_id[thread_id])
-                        for thread_id in target.affected_thread_ids
-                    }
-                    occupied_terminals = {
-                        thread_id: terminals
-                        for thread_id, terminals in fresh_terminals.items()
-                        if terminals
-                    }
-                    if occupied_terminals:
-                        raise RuntimeError(
-                            "permanent deletion blocked by newly opened background terminals: "
-                            + ", ".join(sorted(occupied_terminals))
-                        )
-                    ProcessGuard.assert_no_other_codex_processes(controlled_pid=self.client.pid)
                 thread_ids = (
                     tuple(reversed(target.affected_thread_ids))
                     if plan.action is PlanAction.ARCHIVE
                     else target.affected_thread_ids
-                    if plan.action is PlanAction.UNARCHIVE
-                    else (target.root_thread_id,)
                 )
                 for thread_id in thread_ids:
                     if (
@@ -1052,7 +700,7 @@ class CleanupExecutor:
                     raise RuntimeError(f"{exc}; App Server reported: {reported}") from exc
                 raise
             if plan.action is PlanAction.ARCHIVE:
-                self._record_archives(plan, current_by_id)
+                self._verify_backup_gate(plan, current_by_id)
             self.audit.finish_operation(plan_sha256=plan.plan_sha256, status="succeeded")
             details: dict[str, object] = {"root_count": len(plan.targets)}
             if ambiguous_write_errors:
@@ -1080,24 +728,6 @@ class CleanupExecutor:
                 target_ids=tuple(sorted(affected)),
                 details={"error": str(exc), "completed_roots": completed},
             )
-            raise
-
-    def _purge_background_terminals(
-        self, snapshot: ThreadSnapshot
-    ) -> tuple[dict[str, object], ...]:
-        """Normalize the App Server's archived/notLoaded not-found sentinel."""
-
-        try:
-            return self.client.background_terminals(snapshot.id)
-        except RequestError as exc:
-            if (
-                snapshot.archived
-                and snapshot.status is ThreadStatus.NOT_LOADED
-                and exc.method == "thread/backgroundTerminals/list"
-                and exc.code == -32600
-                and exc.message == f"thread not found: {snapshot.id}"
-            ):
-                return ()
             raise
 
     def reconcile_native_archive(self, plan: ActionPlan) -> tuple[str, ...]:
@@ -1134,7 +764,7 @@ class CleanupExecutor:
             raise RuntimeError(
                 "native archive postcondition unresolved for: " + ", ".join(sorted(unresolved))
             )
-        self._record_archives(plan, current_by_id)
+        self._verify_backup_gate(plan, current_by_id)
         self.audit.append(
             event_type="archive.reconcile-native",
             actor="codex-native-task-tool",
@@ -1151,8 +781,6 @@ class CleanupExecutor:
                 self.client.archive_thread(thread_id)
             elif plan.action is PlanAction.UNARCHIVE:
                 self.client.unarchive_thread(thread_id)
-            elif plan.action is PlanAction.PURGE:
-                self.client.delete_thread(thread_id)
             else:
                 raise ValueError(f"CleanupExecutor cannot apply {plan.action.value}")
         except (RequestError, RequestTimeout) as exc:
@@ -1212,9 +840,10 @@ class CleanupExecutor:
             if plan.action is PlanAction.ARCHIVE and not allow_native_archive_transition:
                 if snapshot.archived:
                     raise ValueError(f"thread is already archived: {thread_id}")
-            elif not snapshot.archived and (
-                plan.action is PlanAction.PURGE
-                or (plan.action is PlanAction.UNARCHIVE and thread_id == target.root_thread_id)
+            elif (
+                plan.action is PlanAction.UNARCHIVE
+                and thread_id == target.root_thread_id
+                and not snapshot.archived
             ):
                 raise ValueError(f"thread is no longer archived: {thread_id}")
 
@@ -1234,35 +863,6 @@ class CleanupExecutor:
                 if evidence is None or not evidence.is_current():
                     raise ValueError(f"no verified encrypted backup covers {thread_id}")
 
-    def _verify_purge_gate(
-        self,
-        plan: ActionPlan,
-        targets: tuple[PlanTarget, ...],
-        current_by_id: dict[str, ThreadSnapshot],
-    ) -> None:
-        if (
-            plan.options.get("manual_only") is not True
-            or plan.options.get("trusted_archive_required") is not True
-        ):
-            raise ValueError("purge plan lacks the manual trusted-archive gate")
-        for target in targets:
-            for thread_id in target.affected_thread_ids:
-                snapshot = current_by_id.get(thread_id)
-                if snapshot is None or not snapshot.archived:
-                    raise ValueError(f"thread is no longer archived: {thread_id}")
-                trusted = self.audit.trusted_archive(thread_id)
-                if trusted is None:
-                    raise ValueError(f"trusted archive evidence is missing: {thread_id}")
-                evidence = self.audit.verified_backup(
-                    thread_id,
-                    snapshot.backup_fingerprint,
-                    manifest_sha256=trusted.manifest_sha256,
-                )
-                if evidence is None or not evidence.is_current():
-                    raise ValueError(
-                        f"archive-bound verified backup is no longer current: {thread_id}"
-                    )
-
     def _verify_result(self, plan: ActionPlan, affected: set[str]) -> None:
         current = self.inventory.list(include_active=True, include_archived=True)
         by_id = {snapshot.id: snapshot for snapshot in current}
@@ -1278,26 +878,9 @@ class CleanupExecutor:
                 for thread_id in affected
                 if not by_id.get(thread_id) or by_id[thread_id].archived
             ]
-        elif plan.action is PlanAction.PURGE:
-            unresolved = [thread_id for thread_id in affected if thread_id in by_id]
         else:
             raise ValueError(f"CleanupExecutor cannot verify {plan.action.value}")
         if unresolved:
             raise RuntimeError(
                 f"operation postcondition unresolved for: {', '.join(sorted(unresolved))}; no retry was attempted"
             )
-
-    def _record_archives(self, plan: ActionPlan, current_by_id: dict[str, ThreadSnapshot]) -> None:
-        for target in plan.targets:
-            for thread_id in target.affected_thread_ids:
-                snapshot = current_by_id.get(thread_id)
-                if snapshot is None:
-                    raise RuntimeError(f"archive source disappeared for {thread_id}")
-                evidence = self.audit.verified_backup(thread_id, snapshot.backup_fingerprint)
-                if evidence is None:
-                    raise RuntimeError(f"backup evidence disappeared for {thread_id}")
-                self.audit.record_trusted_archive(
-                    thread_id=thread_id,
-                    plan_sha256=plan.plan_sha256,
-                    manifest_sha256=evidence.manifest_sha256,
-                )

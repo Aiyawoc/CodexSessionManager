@@ -55,7 +55,6 @@ WRITE_METHODS: Final[frozenset[str]] = frozenset(
         "thread/fork",
         "thread/archive",
         "thread/unarchive",
-        "thread/delete",
         "thread/inject_items",
         "thread/name/set",
     }
@@ -390,9 +389,6 @@ class SubprocessAppServer:
         if not isinstance(result, dict):
             raise ProtocolError("thread/unarchive result must be an object")
         return result
-
-    def delete_thread(self, thread_id: str) -> None:
-        self.request("thread/delete", {"threadId": thread_id})
 
     def rename_thread(self, thread_id: str, name: str) -> None:
         if not name.strip():

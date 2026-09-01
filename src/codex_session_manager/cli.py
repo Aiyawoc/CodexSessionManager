@@ -27,13 +27,12 @@ from codex_session_manager.backup import (
     DecryptionSpec,
     EncryptionSpec,
 )
-from codex_session_manager.cleanup import PURGE_CONFIRMATION_PHRASE, CleanupPolicy
+from codex_session_manager.cleanup import CleanupPolicy
 from codex_session_manager.config import get_paths
 from codex_session_manager.doctor import run_doctor
 from codex_session_manager.hooks import HookInstaller
 from codex_session_manager.importing import (
     ImportPlanner,
-    LogicalImportExecutor,
     chatgpt_records,
     codex_records,
     record_from_backup_json,
@@ -42,10 +41,8 @@ from codex_session_manager.importing import (
 from codex_session_manager.inventory import InventoryFilter, InventoryService, older_than_cutoff
 from codex_session_manager.models import (
     ActionPlan,
-    ImportPlan,
     PlanAction,
     ThreadStatus,
-    TrimPlan,
 )
 from codex_session_manager.plans import load_plan_as
 from codex_session_manager.schema_audit import (
@@ -64,7 +61,6 @@ app = typer.Typer(
 )
 threads_app = typer.Typer(help="盘点和查看 Codex 任务。")
 cleanup_app = typer.Typer(help="生成或应用可恢复的归档/反归档计划。")
-purge_app = typer.Typer(help="生成或人工应用永久删除计划。")
 backup_app = typer.Typer(help="创建和验证 age 加密 .csmbackup。")
 restore_app = typer.Typer(help="从 CSM 备份进行逻辑恢复。")
 import_app = typer.Typer(help="导入其他来源的对话。")
@@ -82,7 +78,6 @@ memory_restore_app = typer.Typer(help="从 CSM 私有记忆版本中计划并执
 
 app.add_typer(threads_app, name="threads")
 app.add_typer(cleanup_app, name="cleanup")
-app.add_typer(purge_app, name="purge")
 app.add_typer(backup_app, name="backup")
 app.add_typer(restore_app, name="restore")
 app.add_typer(import_app, name="import")
@@ -831,34 +826,6 @@ def cleanup_reconcile(
     _emit({"reconciled_roots": result.completed_ids, "plan_sha256": plan.plan_sha256})
 
 
-@purge_app.command("plan")
-def purge_plan() -> None:
-    """只为具有 CSM 可信归档证据和当前有效备份的任务生成删除计划。"""
-
-    prepared = _workflows().prepare_purge_plan()
-    _emit({"plan": prepared.plan, "path": prepared.path})
-
-
-@purge_app.command("apply")
-def purge_apply(
-    plan_path: Path,
-    confirm: Annotated[
-        str,
-        typer.Option("--confirm", help=f"精确输入：{PURGE_CONFIRMATION_PHRASE}"),
-    ],
-) -> None:
-    """人工永久删除；有任何活动 Codex 进程、漂移或证据缺失即停止。"""
-
-    plan = load_plan_as(plan_path, ActionPlan)
-    if plan.action is not PlanAction.PURGE:
-        raise typer.BadParameter("该计划不是 purge 计划")
-    result = _workflows().apply_action(
-        plan,
-        confirmation=confirm,
-    )
-    _emit({"deleted_roots": result.completed_ids, "plan_sha256": plan.plan_sha256})
-
-
 @backup_app.command("create")
 def backup_create(
     destination: Path,
@@ -974,43 +941,6 @@ def restore_plan(
         _emit({"plan": plan, "path": path, "backup_manifest": manifest.manifest_sha256})
 
 
-@restore_app.command("apply")
-def restore_apply(
-    plan_path: Path,
-    source: Path,
-    confirm: Annotated[str, typer.Option("--confirm")],
-    identity: Annotated[Path | None, typer.Option("--identity")] = None,
-    passphrase: Annotated[bool, typer.Option("--passphrase")] = False,
-) -> None:
-    """第二遍解密后创建新任务并注入逻辑历史，不重放工具。"""
-
-    plan = load_plan_as(plan_path, ImportPlan)
-    if confirm != plan.plan_id:
-        raise typer.BadParameter("--confirm 必须等于精确 plan_id")
-    decryption = _identity_spec(identity, passphrase)
-    reader = BackupReader(AgeBackend())
-    verification = reader.verify(source, decryption=decryption)
-    manifest = verification.manifest
-    records = tuple(
-        record_from_backup_json(value)
-        for entry, value in reader.iter_logical_json(
-            source, decryption=decryption, verified_manifest=manifest
-        )
-        if entry.kind == "logical"
-    )
-    paths = get_paths()
-    workflows = ApplicationWorkflows(paths=paths, request_timeout=30)
-    with workflows.session() as session:
-        client, capabilities, _inventory = session.services()
-        created = LogicalImportExecutor(
-            client=client,
-            capabilities=capabilities,
-            paths=paths,
-            audit=session.audit,
-        ).apply(plan, source=source, records=records)
-        _emit({"created": created})
-
-
 @chatgpt_app.command("plan")
 def chatgpt_plan(
     source: Path,
@@ -1037,32 +967,6 @@ def chatgpt_plan(
         _emit({"plan": plan, "path": path})
 
 
-@chatgpt_app.command("apply")
-def chatgpt_apply(
-    plan_path: Path,
-    source: Path,
-    confirm: Annotated[str, typer.Option("--confirm")],
-    source_account: Annotated[str | None, typer.Option("--source-account")] = None,
-) -> None:
-    """复读原导出、校验 SHA 后创建新任务，不执行 sidecar 工具。"""
-
-    plan = load_plan_as(plan_path, ImportPlan)
-    if confirm != plan.plan_id:
-        raise typer.BadParameter("--confirm 必须等于精确 plan_id")
-    records = tuple(chatgpt_records(source, source_account=source_account))
-    paths = get_paths()
-    workflows = ApplicationWorkflows(paths=paths, request_timeout=30)
-    with workflows.session() as session:
-        client, capabilities, _inventory = session.services()
-        created = LogicalImportExecutor(
-            client=client,
-            capabilities=capabilities,
-            paths=paths,
-            audit=session.audit,
-        ).apply(plan, source=source, records=records)
-        _emit({"created": created})
-
-
 @codex_import_app.command("plan")
 def codex_import_plan(
     source: Path,
@@ -1087,32 +991,6 @@ def codex_import_plan(
         )
         path = session.plans.save(plan)
         _emit({"plan": plan, "path": path})
-
-
-@codex_import_app.command("apply")
-def codex_import_apply(
-    plan_path: Path,
-    source: Path,
-    confirm: Annotated[str, typer.Option("--confirm")],
-    source_account: Annotated[str | None, typer.Option("--source-account")] = None,
-) -> None:
-    """复读并校验 Codex rollout 后创建新任务；工具项保持惰性。"""
-
-    plan = load_plan_as(plan_path, ImportPlan)
-    if confirm != plan.plan_id:
-        raise typer.BadParameter("--confirm 必须等于精确 plan_id")
-    records = tuple(codex_records(source, source_account=source_account))
-    paths = get_paths()
-    workflows = ApplicationWorkflows(paths=paths, request_timeout=30)
-    with workflows.session() as session:
-        client, capabilities, _inventory = session.services()
-        created = LogicalImportExecutor(
-            client=client,
-            capabilities=capabilities,
-            paths=paths,
-            audit=session.audit,
-        ).apply(plan, source=source, records=records)
-        _emit({"created": created})
 
 
 @trim_app.command("review")
@@ -1174,20 +1052,6 @@ def trim_suggest(thread_id: str) -> None:
     path = workflows.save_plan(plan)
     projection = build_projection(result.snapshot, plan)
     _emit({"plan": plan, "path": path, "projection": projection})
-
-
-@trim_app.command("apply")
-def trim_apply(
-    plan_path: Path,
-    confirm: Annotated[str, typer.Option("--confirm")],
-) -> None:
-    """任务 idle/notLoaded 且 fingerprint 一致时创建派生精简任务。"""
-
-    plan = load_plan_as(plan_path, TrimPlan)
-    if confirm != plan.plan_id:
-        raise typer.BadParameter("--confirm 必须等于精确 plan_id")
-    target_id = _workflows().apply_trim(plan)
-    _emit({"source_thread_id": plan.source_thread_id, "derived_thread_id": target_id})
 
 
 @hook_app.command("status")

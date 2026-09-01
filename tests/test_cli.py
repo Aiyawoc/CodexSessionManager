@@ -11,7 +11,7 @@ import codex_session_manager.cli as cli
 from codex_session_manager.acceptance import AcceptanceReport
 from codex_session_manager.cli import _aware_datetime, _jsonable, app
 from codex_session_manager.doctor import _qt_plugin_directory
-from codex_session_manager.models import CapabilityMatrix
+from codex_session_manager.models import CapabilityMatrix, PlanAction
 from codex_session_manager.schema_audit import SchemaAuditReport, build_schema_audit_report
 from codex_session_manager.workflows import InventoryResult
 
@@ -23,7 +23,6 @@ def test_cli_exposes_planned_command_surface() -> None:
     for command in (
         "threads",
         "cleanup",
-        "purge",
         "backup",
         "restore",
         "import",
@@ -37,11 +36,28 @@ def test_cli_exposes_planned_command_surface() -> None:
         "memory",
     ):
         assert command in root.stdout
+    assert "purge" not in root.stdout
+    assert "purge" not in {action.value for action in PlanAction}
 
-    codex_import = runner.invoke(app, ["import", "codex", "--help"])
-    assert codex_import.exit_code == 0
-    assert "plan" in codex_import.stdout
-    assert "apply" in codex_import.stdout
+    for plan_command in (
+        ["restore", "plan", "--help"],
+        ["import", "chatgpt", "plan", "--help"],
+        ["import", "codex", "plan", "--help"],
+        ["trim", "review", "--help"],
+        ["trim", "suggest", "--help"],
+    ):
+        planned = runner.invoke(app, plan_command)
+        assert planned.exit_code == 0, planned.output
+
+    for removed_command in (
+        ["restore", "apply", "--help"],
+        ["import", "chatgpt", "apply", "--help"],
+        ["import", "codex", "apply", "--help"],
+        ["trim", "apply", "--help"],
+        ["purge", "--help"],
+    ):
+        removed = runner.invoke(app, removed_command)
+        assert removed.exit_code != 0, removed_command
 
     gui = runner.invoke(app, ["gui", "open", "--help"])
     assert gui.exit_code == 0
@@ -61,12 +77,6 @@ def test_cli_exposes_planned_command_surface() -> None:
     assert cleanup_review.exit_code == 0
     assert "--older-than-days" in cleanup_review.stdout
     assert "--request" in cleanup_review.stdout
-
-    purge_apply = runner.invoke(app, ["purge", "apply", "--help"])
-    assert purge_apply.exit_code == 0
-    assert "--confirm" in purge_apply.stdout
-    assert "确认删除" in purge_apply.stdout
-    assert "--permanent-phrase" not in purge_apply.stdout
 
     memory = runner.invoke(app, ["memory", "--help"])
     assert memory.exit_code == 0

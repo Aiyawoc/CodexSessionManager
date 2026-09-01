@@ -106,7 +106,6 @@ class CleanupCandidateInventory:
     snapshots: tuple[ThreadSnapshot, ...]
     verified_backup_ids: frozenset[str]
     supplemental_root_ids: tuple[str, ...] = ()
-    purge_root_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,7 +251,7 @@ class ApplicationWorkflows:
         self,
         root_ids: tuple[str, ...],
     ) -> CleanupCandidateInventory:
-        """Inspect suggested, supplemental, and purge-eligible cleanup roots."""
+        """Inspect suggested and supplemental cleanup roots."""
 
         with self.session() as session:
             _client, capabilities, inventory = session.services()
@@ -264,13 +263,11 @@ class ApplicationWorkflows:
             planner = CleanupPlanner()
             requested_hydration_ids = target_closure_ids(summaries, root_ids) if root_ids else ()
             supplemental_hydration_ids = planner.manual_archive_hydration_ids(summaries)
-            purge_hydration_ids = planner.purge_hydration_ids(summaries)
             hydration_ids = tuple(
                 dict.fromkeys(
                     (
                         *requested_hydration_ids,
                         *supplemental_hydration_ids,
-                        *purge_hydration_ids,
                     )
                 )
             )
@@ -292,32 +289,12 @@ class ApplicationWorkflows:
                 for root in planner.manual_archive_candidates(snapshots)
                 if root.id not in requested
             )
-            purge_roots = tuple(
-                root.id for root in planner.purge_candidates(snapshots, session.audit)
-            )
             return CleanupCandidateInventory(
                 capabilities,
                 snapshots,
                 frozenset(verified),
                 supplemental_roots,
-                purge_roots,
             )
-
-    def list_purge_candidates(self) -> InventoryResult:
-        """Return read-only roots satisfying all current purge evidence gates."""
-
-        with self.session() as session:
-            _client, capabilities, inventory = session.services()
-            summaries = inventory.list(
-                include_active=True,
-                include_archived=True,
-                include_turns=False,
-            )
-            planner = CleanupPlanner()
-            hydration_ids = planner.purge_hydration_ids(summaries)
-            snapshots = inventory.hydrate(summaries, hydration_ids) if hydration_ids else summaries
-            roots = planner.purge_candidates(snapshots, session.audit)
-            return InventoryResult(capabilities, roots)
 
     def save_plan(self, plan: PlanModel) -> Path:
         """Persist an already-validated immutable plan through the shared Seam."""
@@ -435,34 +412,13 @@ class ApplicationWorkflows:
             )
             return PreparedAction(plan, session.plans.save(plan))
 
-    def prepare_selected_purge(self, selected_ids: tuple[str, ...]) -> PreparedAction:
-        with self.session(experimental_api=True) as session:
-            _client, capabilities, inventory = session.services()
-            snapshots = inventory.list_for_targets(selected_ids)
-            plan = CleanupPlanner().plan_selected_purge(
-                snapshots,
-                capabilities,
-                session.audit,
-                selected_ids,
-            )
-            return PreparedAction(plan, session.plans.save(plan))
-
-    def prepare_purge_plan(self, *, policy: CleanupPolicy | None = None) -> PreparedAction:
-        """Prepare the global manual purge plan; audit eligibility needs full content."""
-
-        with self.session() as session:
-            _client, capabilities, inventory = session.services()
-            snapshots = inventory.list(include_turns=True)
-            plan = CleanupPlanner(policy).plan_purge(snapshots, capabilities, session.audit)
-            return PreparedAction(plan, session.plans.save(plan))
-
     def apply_action(
         self,
         plan: ActionPlan,
         *,
         confirmation: str,
     ) -> ActionExecutionResult:
-        with self.session(experimental_api=plan.action is PlanAction.PURGE) as session:
+        with self.session() as session:
             client, capabilities, inventory = session.services()
             completed = CleanupExecutor(
                 client=client,

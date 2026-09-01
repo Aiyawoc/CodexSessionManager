@@ -212,7 +212,7 @@ test_skill_phase() {
   diff -qr "$CSM_BUNDLE_SKILL" "$CSM_TEST_SKILL"
 
   run_launcher --help > "$CSM_WORKFLOW_ROOT/csm-help.txt"
-  for CSM_COMMAND in doctor threads cleanup purge backup restore import trim hook audit; do
+  for CSM_COMMAND in doctor threads cleanup backup restore import trim hook audit; do
     grep -q "$CSM_COMMAND" "$CSM_WORKFLOW_ROOT/csm-help.txt"
   done
 }

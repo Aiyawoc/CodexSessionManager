@@ -76,7 +76,7 @@ fi
 printf '%s\n' '[full 2/4] Accept the standalone bundle with no development runtime on PATH'
 "$CSM_REPO_ROOT/scripts/accept_macos_bundle.sh" "$CSM_TEST_APP"
 
-printf '%s\n' '[full 3/4] Run real age backup, archive, and isolated purge lifecycle'
+printf '%s\n' '[full 3/4] Run real age backup, archive, and unarchive lifecycle'
 CSM_TEST_AGE_BIN="$CSM_TEST_APP/Contents/Resources/bin/age" \
   UV_CACHE_DIR="${UV_CACHE_DIR:-$CSM_REPO_ROOT/.uv-cache}" \
   uv run --locked pytest -q tests/test_lifecycle_integration.py

@@ -64,7 +64,6 @@ class ItemKind(StrEnum):
 class PlanAction(StrEnum):
     ARCHIVE = "archive"
     UNARCHIVE = "unarchive"
-    PURGE = "purge"
     RENAME = "rename"
     BACKUP = "backup"
     RESTORE = "restore"

@@ -15,7 +15,7 @@ from codex_session_manager.backup import (
     DecryptionSpec,
     EncryptionSpec,
 )
-from codex_session_manager.cleanup import CleanupExecutor, CleanupPlanner, ProcessGuard
+from codex_session_manager.cleanup import CleanupExecutor, CleanupPlanner
 from codex_session_manager.inventory import normalize_thread
 
 PROJECT_ROOT = Path(__file__).parents[1]
@@ -27,7 +27,6 @@ class _LifecycleClient:
     def __init__(self, raw_thread: dict[str, object]) -> None:
         self.raw_thread = raw_thread
         self.archived = False
-        self.deleted = False
 
     def read_thread(self, thread_id: str, *, include_turns: bool = False):
         assert thread_id == "thread-1"
@@ -37,17 +36,13 @@ class _LifecycleClient:
     def loaded_thread_ids(self):
         return ()
 
-    def background_terminals(self, thread_id: str):
-        assert thread_id == "thread-1"
-        return ()
-
     def archive_thread(self, thread_id: str) -> None:
         assert thread_id == "thread-1"
         self.archived = True
 
-    def delete_thread(self, thread_id: str) -> None:
+    def unarchive_thread(self, thread_id: str) -> None:
         assert thread_id == "thread-1"
-        self.deleted = True
+        self.archived = False
 
 
 class _LifecycleInventory:
@@ -56,8 +51,6 @@ class _LifecycleInventory:
         self.snapshot = snapshot
 
     def list(self, **_kwargs):
-        if self.client.deleted:
-            return ()
         return (self.snapshot.model_copy(update={"archived": self.client.archived}),)
 
     def list_for_targets(self, _target_ids, **kwargs):
@@ -73,8 +66,8 @@ def _age_executable() -> Path | None:
 
 
 @pytest.mark.integration
-def test_real_age_backup_archive_and_purge_lifecycle(
-    tmp_path: Path, app_paths, capabilities, monkeypatch
+def test_real_age_backup_archive_and_unarchive_lifecycle(
+    tmp_path: Path, app_paths, capabilities
 ) -> None:
     age_executable = _age_executable()
     ssh_keygen = shutil.which("ssh-keygen")
@@ -157,38 +150,26 @@ def test_real_age_backup_archive_and_purge_lifecycle(
         assert archived == ("thread-1",)
         assert client.archived
 
-        trusted = audit.trusted_archive("thread-1")
-        assert trusted is not None
-        assert trusted.plan_sha256 == archive_plan.plan_sha256
-        assert trusted.manifest_sha256 == manifest.manifest_sha256
         archived_snapshot = snapshot.model_copy(update={"archived": True})
-        purge_plan = CleanupPlanner().plan_purge((archived_snapshot,), capabilities, audit, now=now)
-        assert tuple(target.root_thread_id for target in purge_plan.targets) == ("thread-1",)
-        monkeypatch.setattr(
-            ProcessGuard,
-            "assert_no_other_codex_processes",
-            staticmethod(lambda *, controlled_pid: None),
-        )
-        monkeypatch.setattr("codex_session_manager.cleanup.PURGE_EXECUTION_ENABLED", True)
-        purged = CleanupExecutor(
+        unarchive_plan = CleanupPlanner().plan_unarchive((archived_snapshot,), capabilities)
+        unarchived = CleanupExecutor(
             client=client,  # type: ignore[arg-type]
             inventory=inventory,  # type: ignore[arg-type]
             capabilities=capabilities,
             audit=audit,
         ).apply(
-            purge_plan,
-            confirmation="确认删除",
+            unarchive_plan,
+            confirmation=unarchive_plan.plan_id,
         )
-        assert purged == ("thread-1",)
-        assert client.deleted
+        assert unarchived == ("thread-1",)
+        assert not client.archived
         audit.verify_chain()
         event_types = {event.event_type for event in audit.iter_events(limit=100)}
         assert {
             "backup.evidence",
             "backup.verify",
             "archive.apply",
-            "archive.evidence",
-            "purge.apply",
+            "unarchive.apply",
         }.issubset(event_types)
 
         private_key = identity.read_bytes()

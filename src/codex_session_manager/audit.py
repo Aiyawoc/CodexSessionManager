@@ -1,4 +1,4 @@
-"""Application-owned append-only audit chain and trusted safety evidence."""
+"""Application-owned append-only audit chain and backup evidence."""
 
 from __future__ import annotations
 
@@ -53,14 +53,6 @@ class VerifiedBackupEvidence:
         except (OSError, ValueError):
             return False
         return digest == self.ciphertext_sha256 and size == self.ciphertext_size
-
-
-@dataclass(frozen=True, slots=True)
-class TrustedArchiveEvidence:
-    archived_at: datetime
-    plan_sha256: str
-    manifest_sha256: str
-    evidence_event_sha256: str
 
 
 def _safe_details(value: Any, *, key: str | None = None) -> Any:
@@ -130,13 +122,6 @@ class AuditStore:
                 evidence_event_sha256 TEXT,
                 PRIMARY KEY (thread_id, source_fingerprint, manifest_sha256)
             );
-            CREATE TABLE IF NOT EXISTS trusted_archives (
-                thread_id TEXT PRIMARY KEY,
-                archived_at TEXT NOT NULL,
-                plan_sha256 TEXT NOT NULL,
-                manifest_sha256 TEXT NOT NULL,
-                evidence_event_sha256 TEXT
-            );
             CREATE TABLE IF NOT EXISTS operations (
                 plan_sha256 TEXT PRIMARY KEY,
                 action TEXT NOT NULL,
@@ -159,13 +144,6 @@ class AuditStore:
         if "evidence_event_sha256" not in columns:
             self.connection.execute(
                 "ALTER TABLE backup_coverage ADD COLUMN evidence_event_sha256 TEXT"
-            )
-        archive_columns = {
-            str(row[1]) for row in self.connection.execute("PRAGMA table_info(trusted_archives)")
-        }
-        if "evidence_event_sha256" not in archive_columns:
-            self.connection.execute(
-                "ALTER TABLE trusted_archives ADD COLUMN evidence_event_sha256 TEXT"
             )
         self.connection.commit()
 
@@ -377,98 +355,6 @@ class AuditStore:
             ciphertext_size=size,
             evidence_event_sha256=evidence_event_sha256,
         )
-
-    def record_trusted_archive(
-        self,
-        *,
-        thread_id: str,
-        plan_sha256: str,
-        manifest_sha256: str,
-        archived_at: datetime | None = None,
-    ) -> None:
-        effective_archived_at = archived_at or utc_now()
-        event = self.append(
-            event_type="archive.evidence",
-            actor="csm-postcondition-verifier",
-            result="succeeded",
-            plan_sha256=plan_sha256,
-            target_ids=(thread_id,),
-            details={
-                "manifest_sha256": manifest_sha256,
-                "archived_at": effective_archived_at.isoformat(),
-            },
-        )
-        with self.connection:
-            self.connection.execute(
-                """
-                INSERT OR REPLACE INTO trusted_archives (
-                    thread_id, archived_at, plan_sha256, manifest_sha256,
-                    evidence_event_sha256
-                ) VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    thread_id,
-                    effective_archived_at.isoformat(),
-                    plan_sha256,
-                    manifest_sha256,
-                    event.event_sha256,
-                ),
-            )
-
-    def trusted_archive(self, thread_id: str) -> TrustedArchiveEvidence | None:
-        row = self.connection.execute(
-            """
-            SELECT archived_at, plan_sha256, manifest_sha256, evidence_event_sha256
-            FROM trusted_archives WHERE thread_id = ?
-            """,
-            (thread_id,),
-        ).fetchone()
-        if not row:
-            return None
-        evidence_event_sha256 = row["evidence_event_sha256"]
-        if not isinstance(evidence_event_sha256, str):
-            return None
-        archived_at = datetime.fromisoformat(row["archived_at"])
-        plan_sha256 = str(row["plan_sha256"])
-        manifest_sha256 = str(row["manifest_sha256"])
-        event = self._event_by_sha256(evidence_event_sha256)
-        if (
-            event.event_type != "archive.evidence"
-            or event.result != "succeeded"
-            or event.plan_sha256 != plan_sha256
-            or event.target_ids != (thread_id,)
-            or event.details.get("manifest_sha256") != manifest_sha256
-            or event.details.get("archived_at") != archived_at.isoformat()
-        ):
-            raise ValueError("trusted archive row is not bound to its audit event")
-        return TrustedArchiveEvidence(
-            archived_at=archived_at,
-            plan_sha256=plan_sha256,
-            manifest_sha256=manifest_sha256,
-            evidence_event_sha256=evidence_event_sha256,
-        )
-
-    def invalidate_trusted_archive(self, *, thread_id: str, plan_sha256: str) -> None:
-        """Remove trusted archive evidence before attempting an unarchive."""
-
-        trusted = self.trusted_archive(thread_id)
-        if trusted is None:
-            return
-        self.append(
-            event_type="archive.evidence.invalidate",
-            actor="csm-pre-unarchive-gate",
-            result="succeeded",
-            plan_sha256=plan_sha256,
-            target_ids=(thread_id,),
-            details={
-                "previous_archive_event_sha256": trusted.evidence_event_sha256,
-                "previous_manifest_sha256": trusted.manifest_sha256,
-            },
-        )
-        with self.connection:
-            self.connection.execute(
-                "DELETE FROM trusted_archives WHERE thread_id = ?", (thread_id,)
-            )
 
     def begin_operation(self, *, plan_sha256: str, action: str) -> None:
         with self.connection:

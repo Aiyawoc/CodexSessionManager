@@ -194,6 +194,7 @@ def test_selected_unarchive_workflow_hydrates_only_target_closure(app_paths, cap
     assert prepared.plan.action is PlanAction.UNARCHIVE
     assert prepared.plan.targets[0].affected_thread_ids == ("root", "child")
 
+
 def test_pending_trim_workflow_rechecks_current_state_before_ready(app_paths, capabilities) -> None:
     client = _WorkflowClient()
 
@@ -264,7 +265,6 @@ def test_cleanup_inspection_offers_current_safe_supplemental_root(app_paths, cap
     ).inspect_cleanup_candidates(("root",))
 
     assert result.supplemental_root_ids == ("recent",)
-    assert result.purge_root_ids == ()
     hydrated = {snapshot.id for snapshot in result.snapshots if snapshot.content_complete}
     assert hydrated == {"root", "child", "recent"}
 

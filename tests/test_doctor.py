@@ -36,17 +36,12 @@ def test_doctor_reports_capabilities_and_closes_connection(
         capability["operation"] for capability in report["capabilities"]["operation_capabilities"]
     } == {operation.value for operation in OperationName}
     assert "write_enabled" not in report["capabilities"]
-    assert report["capabilities"]["purge_execution_enabled"] is False
     assert _check(report, "Codex App Server")["ok"] is True
     assert _check(report, OperationName.ARCHIVE.value)["ok"] is True
     assert _check(report, OperationName.UNARCHIVE.value)["ok"] is True
     assert _check(report, OperationName.HISTORY_PAGINATED.value)["ok"] is True
     assert _check(report, "Codex App Server")["required"] is True
     assert not any(check["name"] == "Codex App Server writes" for check in report["checks"])
-    purge = _check(report, "permanent purge application")
-    assert purge["ok"] is False
-    assert purge["required"] is False
-    assert "CLOSED_WITH_UPSTREAM_BLOCKER" in purge["detail"]
 
 
 def test_doctor_turns_app_server_start_failure_into_a_failed_check(app_paths, monkeypatch) -> None:

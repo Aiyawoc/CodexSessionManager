@@ -6,9 +6,9 @@ This build is provided only for isolated evaluation. It is not a production rele
 - macOS test artifacts are ad-hoc signed and are not notarized.
 - Windows test artifacts are unsigned and have no SmartScreen reputation.
 - Verify the SHA-256 file published beside the archive before installation.
-- Back up important conversations and keep permanent deletion disabled while evaluating.
+- Back up important conversations before testing archive management.
 
 - macOS 测试产物仅作 ad-hoc 签名，未经 Apple 公证。
 - Windows 测试产物未签名，也没有 SmartScreen 信誉。
 - 安装前请核对与压缩包一同发布的 SHA-256 文件。
-- 测试期间请先备份重要对话，并保持永久删除功能关闭。
+- 测试归档管理前，请先备份重要对话。

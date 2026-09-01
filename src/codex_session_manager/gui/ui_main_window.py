@@ -15,13 +15,12 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QFont, QFontDatabase, QGradient, QIcon,
     QImage, QKeySequence, QLinearGradient, QPainter,
     QPalette, QPixmap, QRadialGradient, QTransform)
-from PySide6.QtWidgets import (QAbstractItemView, QAbstractSpinBox, QApplication, QCheckBox,
-    QComboBox, QFrame, QGridLayout, QHBoxLayout,
-    QHeaderView, QLabel, QLineEdit, QMainWindow,
-    QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy,
-    QSpacerItem, QSpinBox, QTextBrowser, QTextEdit,
-    QToolButton, QTreeView, QTreeWidget, QTreeWidgetItem,
-    QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox,
+    QFrame, QHBoxLayout, QHeaderView, QLabel,
+    QLineEdit, QMainWindow, QPlainTextEdit, QProgressBar,
+    QPushButton, QSizePolicy, QSpacerItem, QTextBrowser,
+    QTextEdit, QToolButton, QTreeView, QTreeWidget,
+    QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from codex_session_manager.gui.widgets import CenteredHandleSplitter
 
@@ -186,55 +185,16 @@ class Ui_MainWindow(object):
 
         self.manualTaskLayout.addWidget(self.loadButton)
 
+        self.taskFilterButton = QPushButton(self.taskPane)
+        self.taskFilterButton.setObjectName(u"taskFilterButton")
+
+        self.manualTaskLayout.addWidget(self.taskFilterButton)
+
 
         self.taskTopLayout.addLayout(self.manualTaskLayout)
 
-        self.taskFilterLayout = QHBoxLayout()
-        self.taskFilterLayout.setSpacing(6)
-        self.taskFilterLayout.setObjectName(u"taskFilterLayout")
-        self.taskFilterLayout.setAlignment(Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter)
-        self.olderThanDaysLabel = QLabel(self.taskPane)
-        self.olderThanDaysLabel.setObjectName(u"olderThanDaysLabel")
-        self.olderThanDaysLabel.setMinimumSize(QSize(0, 36))
-        self.olderThanDaysLabel.setAlignment(Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter)
-
-        self.taskFilterLayout.addWidget(self.olderThanDaysLabel)
-
-        self.olderThanDaysSpinBox = QSpinBox(self.taskPane)
-        self.olderThanDaysSpinBox.setObjectName(u"olderThanDaysSpinBox")
-        self.olderThanDaysSpinBox.setMinimumSize(QSize(84, 36))
-        self.olderThanDaysSpinBox.setMaximumSize(QSize(84, 36))
-        self.olderThanDaysSpinBox.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.olderThanDaysSpinBox.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
-        self.olderThanDaysSpinBox.setMinimum(0)
-        self.olderThanDaysSpinBox.setMaximum(36500)
-        self.olderThanDaysSpinBox.setValue(0)
-
-        self.taskFilterLayout.addWidget(self.olderThanDaysSpinBox)
-
-        self.olderThanDaysUnitLabel = QLabel(self.taskPane)
-        self.olderThanDaysUnitLabel.setObjectName(u"olderThanDaysUnitLabel")
-        self.olderThanDaysUnitLabel.setMinimumSize(QSize(18, 36))
-        self.olderThanDaysUnitLabel.setAlignment(Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter)
-
-        self.taskFilterLayout.addWidget(self.olderThanDaysUnitLabel)
-
-        self.taskFilterSpacer = QSpacerItem(20, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-
-        self.taskFilterLayout.addItem(self.taskFilterSpacer)
-
-
-        self.taskTopLayout.addLayout(self.taskFilterLayout)
-
 
         self.taskLayout.addLayout(self.taskTopLayout)
-
-        self.taskContextStatusLabel = QLabel(self.taskPane)
-        self.taskContextStatusLabel.setObjectName(u"taskContextStatusLabel")
-        self.taskContextStatusLabel.setMaximumSize(QSize(16777215, 28))
-        self.taskContextStatusLabel.setWordWrap(False)
-
-        self.taskLayout.addWidget(self.taskContextStatusLabel)
 
         self.taskListView = QTreeWidget(self.taskPane)
         self.taskListView.setObjectName(u"taskListView")
@@ -253,31 +213,25 @@ class Ui_MainWindow(object):
 
         self.taskLayout.addWidget(self.taskListStatusLabel)
 
-        self.taskActionLayout = QGridLayout()
+        self.taskActionLayout = QHBoxLayout()
         self.taskActionLayout.setSpacing(6)
         self.taskActionLayout.setObjectName(u"taskActionLayout")
         self.taskRefreshButton = QPushButton(self.taskPane)
         self.taskRefreshButton.setObjectName(u"taskRefreshButton")
 
-        self.taskActionLayout.addWidget(self.taskRefreshButton, 0, 0, 1, 1)
+        self.taskActionLayout.addWidget(self.taskRefreshButton)
 
         self.taskBackupButton = QPushButton(self.taskPane)
         self.taskBackupButton.setObjectName(u"taskBackupButton")
         self.taskBackupButton.setEnabled(False)
 
-        self.taskActionLayout.addWidget(self.taskBackupButton, 0, 1, 1, 1)
+        self.taskActionLayout.addWidget(self.taskBackupButton)
 
         self.taskArchiveButton = QPushButton(self.taskPane)
         self.taskArchiveButton.setObjectName(u"taskArchiveButton")
         self.taskArchiveButton.setEnabled(False)
 
-        self.taskActionLayout.addWidget(self.taskArchiveButton, 1, 0, 1, 1)
-
-        self.taskDeleteButton = QPushButton(self.taskPane)
-        self.taskDeleteButton.setObjectName(u"taskDeleteButton")
-        self.taskDeleteButton.setEnabled(False)
-
-        self.taskActionLayout.addWidget(self.taskDeleteButton, 1, 1, 1, 1)
+        self.taskActionLayout.addWidget(self.taskArchiveButton)
 
 
         self.taskLayout.addLayout(self.taskActionLayout)
@@ -528,20 +482,18 @@ class Ui_MainWindow(object):
 
         MainWindow.setCentralWidget(self.centralwidget)
 #if QT_CONFIG(shortcut)
-        self.olderThanDaysLabel.setBuddy(self.olderThanDaysSpinBox)
         self.summaryLabel.setBuddy(self.summaryEdit)
 #endif // QT_CONFIG(shortcut)
         QWidget.setTabOrder(self.languageCombo, self.projectTaskRailButton)
         QWidget.setTabOrder(self.projectTaskRailButton, self.memoryRailButton)
         QWidget.setTabOrder(self.memoryRailButton, self.threadIdEdit)
         QWidget.setTabOrder(self.threadIdEdit, self.loadButton)
-        QWidget.setTabOrder(self.loadButton, self.olderThanDaysSpinBox)
-        QWidget.setTabOrder(self.olderThanDaysSpinBox, self.taskListView)
+        QWidget.setTabOrder(self.loadButton, self.taskFilterButton)
+        QWidget.setTabOrder(self.taskFilterButton, self.taskListView)
         QWidget.setTabOrder(self.taskListView, self.taskRefreshButton)
         QWidget.setTabOrder(self.taskRefreshButton, self.taskBackupButton)
         QWidget.setTabOrder(self.taskBackupButton, self.taskArchiveButton)
-        QWidget.setTabOrder(self.taskArchiveButton, self.taskDeleteButton)
-        QWidget.setTabOrder(self.taskDeleteButton, self.taskPaneCollapseButton)
+        QWidget.setTabOrder(self.taskArchiveButton, self.taskPaneCollapseButton)
         QWidget.setTabOrder(self.taskPaneCollapseButton, self.timelineView)
         QWidget.setTabOrder(self.timelineView, self.contentBrowser)
         QWidget.setTabOrder(self.contentBrowser, self.actionCombo)
@@ -607,15 +559,10 @@ class Ui_MainWindow(object):
 #if QT_CONFIG(accessibility)
         self.loadButton.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u6309 Codex \u5bf9\u8bdd ID \u52a0\u8f7d", None))
 #endif // QT_CONFIG(accessibility)
-        self.olderThanDaysLabel.setText(QCoreApplication.translate("MainWindow", u"\u7b5b\u9009\u5929\u6570 >", None))
+        self.taskFilterButton.setText(QCoreApplication.translate("MainWindow", u"\u7b5b\u9009", None))
 #if QT_CONFIG(accessibility)
-        self.olderThanDaysSpinBox.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u6309\u672a\u66f4\u65b0\u65f6\u95f4\u7b5b\u9009\u4efb\u52a1\uff0c\u96f6\u8868\u793a\u5168\u90e8", None))
+        self.taskFilterButton.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u7b5b\u9009 Codex \u9879\u76ee\u548c\u4efb\u52a1", None))
 #endif // QT_CONFIG(accessibility)
-        self.olderThanDaysUnitLabel.setText(QCoreApplication.translate("MainWindow", u"\u5929", None))
-        self.taskContextStatusLabel.setText(QCoreApplication.translate("MainWindow", u"\u5c1a\u672a\u52a0\u8f7d\u4efb\u52a1", None))
-#if QT_CONFIG(tooltip)
-        self.taskContextStatusLabel.setToolTip(QCoreApplication.translate("MainWindow", u"\u5f53\u524d\u6b63\u5728\u5ba1\u67e5\u7684\u4efb\u52a1\u72b6\u6001", None))
-#endif // QT_CONFIG(tooltip)
         ___qtreewidgetitem = self.taskListView.headerItem()
         ___qtreewidgetitem.setText(1, QCoreApplication.translate("MainWindow", u"\u8ddd\u4eca", None))
         ___qtreewidgetitem.setText(0, QCoreApplication.translate("MainWindow", u"\u4efb\u52a1\u540d\u79f0", None))
@@ -627,17 +574,13 @@ class Ui_MainWindow(object):
 #if QT_CONFIG(accessibility)
         self.taskRefreshButton.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u5237\u65b0 Codex \u9879\u76ee\u548c\u4efb\u52a1\u5217\u8868", None))
 #endif // QT_CONFIG(accessibility)
-        self.taskBackupButton.setText(QCoreApplication.translate("MainWindow", u"\u5907\u4efd\u5e76\u590d\u9a8c\u2026", None))
+        self.taskBackupButton.setText(QCoreApplication.translate("MainWindow", u"\u5907\u4efd", None))
 #if QT_CONFIG(accessibility)
         self.taskBackupButton.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u5907\u4efd\u5e76\u5b8c\u6574\u590d\u9a8c\u6240\u9009 Codex \u5bf9\u8bdd", None))
 #endif // QT_CONFIG(accessibility)
         self.taskArchiveButton.setText(QCoreApplication.translate("MainWindow", u"\u5f52\u6863", None))
 #if QT_CONFIG(accessibility)
-        self.taskArchiveButton.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u5f52\u6863\u6240\u9009 Codex \u5bf9\u8bdd", None))
-#endif // QT_CONFIG(accessibility)
-        self.taskDeleteButton.setText(QCoreApplication.translate("MainWindow", u"\u5220\u9664\u2026", None))
-#if QT_CONFIG(accessibility)
-        self.taskDeleteButton.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u6c38\u4e45\u5220\u9664\u6240\u9009 Codex \u5bf9\u8bdd", None))
+        self.taskArchiveButton.setAccessibleName(QCoreApplication.translate("MainWindow", u"\u5f52\u6863\u6216\u53cd\u5f52\u6863\u6240\u9009 Codex \u5bf9\u8bdd", None))
 #endif // QT_CONFIG(accessibility)
         self.timelineTitle.setText(QCoreApplication.translate("MainWindow", u"\u65f6\u95f4\u7ebf", None))
         self.timelineHelp.setText(QCoreApplication.translate("MainWindow", u"\u9690\u85cf 0 \u00b7 \u8f93\u5165 0 \u00b7 \u8f93\u51fa 0", None))

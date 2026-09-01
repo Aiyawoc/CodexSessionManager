@@ -2,6 +2,8 @@
   <qresource prefix="/csm">
     <file>branch-closed.svg</file>
     <file>branch-open.svg</file>
+    <file>check.svg</file>
+    <file>check-partial.svg</file>
     <file>combo-down.svg</file>
   </qresource>
 </RCC>

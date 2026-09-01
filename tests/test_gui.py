@@ -11,7 +11,6 @@ from PySide6.QtCore import QModelIndex, QPoint, Qt, QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QAbstractSpinBox,
     QApplication,
     QFileDialog,
     QHeaderView,
@@ -25,18 +24,21 @@ from codex_session_manager.gui import controller as controller_module
 from codex_session_manager.gui.controller import ReviewDocument, TrimReviewWindow
 from codex_session_manager.gui.i18n import GuiLanguage, compact_number, missing_translation_keys
 from codex_session_manager.gui.prompt import PrecompactPromptDialog
-from codex_session_manager.gui.theme import APP_STYLESHEET, DANGER, SPLITTER_LINE, TEXT
+from codex_session_manager.gui.theme import (
+    ACCENT,
+    APP_STYLESHEET,
+    DANGER,
+    OUTLINE_STRONG,
+    SPLITTER_LINE,
+    TEXT,
+)
 from codex_session_manager.gui.widgets import CenteredHandleSplitter
 from codex_session_manager.hashing import utc_now
-from codex_session_manager.inventory import InventoryFilter
 from codex_session_manager.models import (
-    ActionPlan,
     BackupManifest,
     ContractIssue,
     ItemKind,
     OperationName,
-    PlanAction,
-    PlanTarget,
     ThreadHistoryMode,
     ThreadItemSnapshot,
     ThreadStatus,
@@ -112,12 +114,27 @@ def test_review_window_layout_and_stale_worker_result(
     assert window.ui.reasonBrowser.maximumHeight() == 140
     assert window.ui.taskListView.columnCount() == 2
     assert window.ui.taskListView.headerItem().text(1) == "距今"
+    assert window._task_select_all_checkbox.accessibleName() == "全选当前筛选的任务"
     assert window.ui.threadIdEdit.parent() is window.ui.taskPane
-    assert window.ui.taskContextStatusLabel.text() == "尚未加载任务"
+    assert window.ui.manualTaskLayout.indexOf(window.ui.threadIdEdit) == 0
+    assert window.ui.manualTaskLayout.indexOf(window.ui.loadButton) == 1
+    assert window.ui.manualTaskLayout.indexOf(window.ui.taskFilterButton) == 2
+    assert window.ui.taskListStatusLabel.text() == "尚未加载任务列表"
+    assert not hasattr(window.ui, "olderThanDaysSpinBox")
+    assert not hasattr(window.ui, "taskContextStatusLabel")
+    assert not hasattr(window.ui, "taskDeleteButton")
     assert not hasattr(window.ui, "taskHelp")
     assert window.ui.taskPaneCollapseButton.text() == "收起"
-    assert window.ui.taskBackupButton.text() == "备份并复验…"
+    assert window.ui.taskBackupButton.text() == "备份"
     assert not window.ui.taskBackupButton.isEnabled()
+    assert [
+        window.ui.taskActionLayout.itemAt(index).widget().objectName()
+        for index in range(window.ui.taskActionLayout.count())
+    ] == ["taskRefreshButton", "taskBackupButton", "taskArchiveButton"]
+    assert [
+        window.ui.taskActionLayout.stretch(index)
+        for index in range(window.ui.taskActionLayout.count())
+    ] == [1, 1, 1]
     assert window.ui.taskPaneCollapseButton.icon().isNull()
     assert window.ui.toolRail.minimumWidth() == 44
     assert window.ui.toolRail.maximumWidth() == 44
@@ -165,7 +182,6 @@ def test_review_window_layout_and_stale_worker_result(
 
     current = _document(snapshot_factory("current"), capabilities)
     window.task_snapshots = (current.snapshot,)
-    window._task_capabilities = capabilities
     window._populate_task_list(window.task_snapshots)
     window._document_loaded(0, current)
     assert window.document == current
@@ -178,70 +194,150 @@ def test_review_window_layout_and_stale_worker_result(
     assert current_item.data(0, Qt.ItemDataRole.UserRole) == "current"
 
 
-def test_task_age_filter_defaults_to_all_and_builds_csm_criteria(qtbot, app_paths) -> None:
+def test_task_filter_defaults_to_active_and_switches_visible_inventory(
+    qtbot, app_paths, snapshot_factory, monkeypatch
+) -> None:
     window = TrimReviewWindow(paths=app_paths, load_task_list=False)
     qtbot.addWidget(window)
-
-    age_spin = getattr(window.ui, "olderThanDaysSpinBox", None)
-    assert age_spin is not None
-    assert age_spin.value() == 0
-    assert window.ui.olderThanDaysLabel.text() == "筛选天数 >"
-    assert age_spin.prefix() == ""
-    assert age_spin.suffix() == ""
-    assert age_spin.specialValueText() == ""
-    assert window.ui.olderThanDaysUnitLabel.text() == "天"
-    assert age_spin.buttonSymbols() is QAbstractSpinBox.ButtonSymbols.NoButtons
-    assert age_spin.alignment() & Qt.AlignmentFlag.AlignHCenter
-    assert age_spin.minimumWidth() == 84
-    assert age_spin.maximumWidth() == 84
-    assert "QLabel#olderThanDaysLabel, QLabel#olderThanDaysUnitLabel" in APP_STYLESHEET
-
-    window.show()
-    QApplication.processEvents()
-    assert age_spin.height() == 36
-    assert window.ui.olderThanDaysUnitLabel.isVisible()
-    assert (
-        window.ui.olderThanDaysUnitLabel.geometry().left()
-        > window.ui.olderThanDaysSpinBox.geometry().right()
+    now = datetime.now(UTC)
+    active = snapshot_factory("active").model_copy(update={"updated_at": now})
+    archived = snapshot_factory("archived", archived=True).model_copy(
+        update={"updated_at": now - timedelta(days=120)}
     )
-    assert (
-        window.ui.olderThanDaysUnitLabel.geometry().right()
-        <= window.ui.taskPane.contentsRect().right()
+    old_active = snapshot_factory("old-active").model_copy(
+        update={"updated_at": now - timedelta(days=100)}
     )
+    window.task_snapshots = (active, archived, old_active)
+    window._all_task_snapshots = window.task_snapshots
 
-    build_filter = getattr(window, "_task_inventory_filter", None)
-    assert callable(build_filter)
-    assert build_filter() is None
+    window._populate_task_list(window.task_snapshots)
+    assert set(window._visible_task_ids()) == {"active", "old-active"}
+    assert window.ui.taskFilterButton.text() == "筛选"
+    assert [action.text() for action in window.ui.taskFilterButton.menu().actions()] == [
+        "天数 > N 天",
+        "全部",
+        "活跃",
+        "已归档",
+    ]
 
-    age_spin.setValue(90)
-    criteria = build_filter()
-    assert isinstance(criteria, InventoryFilter)
-    assert criteria.updated_before is not None
-    age = datetime.now(UTC) - criteria.updated_before
-    assert 89 * 86_400 < age.total_seconds() < 91 * 86_400
+    window._set_task_filter("all")
+    assert set(window._visible_task_ids()) == {"active", "archived", "old-active"}
+    window._set_task_filter("archived")
+    assert window._visible_task_ids() == ("archived",)
+    monkeypatch.setattr(QInputDialog, "getInt", lambda *_args, **_kwargs: (90, True))
+    window._set_task_filter("older")
+    assert set(window._visible_task_ids()) == {"archived", "old-active"}
 
 
-def test_task_age_filter_is_forwarded_to_workflow(qtbot, app_paths, capabilities) -> None:
-    captured: dict[str, object] = {}
-
-    class FakeWorkflows:
-        def list_threads(self, *, criteria=None, include_active=True, include_archived=True):
-            captured["criteria"] = criteria
-            return InventoryResult(capabilities, ())
-
-    window = TrimReviewWindow(
-        paths=app_paths,
-        workflows=FakeWorkflows(),  # type: ignore[arg-type]
-        load_task_list=False,
-    )
+def test_task_header_selects_only_currently_filtered_tasks(
+    qtbot, app_paths, snapshot_factory
+) -> None:
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
     qtbot.addWidget(window)
-    window.ui.olderThanDaysSpinBox.setValue(90)
-    window.load_task_list()
-    qtbot.waitUntil(lambda: "criteria" in captured, timeout=3000)
+    active = snapshot_factory("active")
+    archived = snapshot_factory("archived", archived=True)
+    window.task_snapshots = (active, archived)
+    window._all_task_snapshots = window.task_snapshots
+    window._populate_task_list(window.task_snapshots)
 
-    criteria = captured["criteria"]
-    assert isinstance(criteria, InventoryFilter)
-    assert criteria.updated_before is not None
+    window._task_select_all_checkbox.setCheckState(Qt.CheckState.Checked)
+    assert window._selected_task_ids() == ("active",)
+    assert window.ui.taskListView.headerItem().checkState(0) is Qt.CheckState.Checked
+
+    window._task_select_all_checkbox.setCheckState(Qt.CheckState.Unchecked)
+    assert window._selected_task_ids() == ()
+    assert window.ui.taskListView.headerItem().checkState(0) is Qt.CheckState.Unchecked
+
+
+def test_task_checkboxes_drive_batch_selection_and_header_state(
+    qtbot, app_paths, capabilities, snapshot_factory
+) -> None:
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+    first = snapshot_factory("first")
+    second = snapshot_factory("second")
+    window.task_snapshots = (first, second)
+    window._all_task_snapshots = window.task_snapshots
+    window._task_capabilities = capabilities
+    window._populate_task_list(window.task_snapshots)
+    group = window.ui.taskListView.topLevelItem(0)
+    assert group is not None
+    items = {
+        group.child(index).data(0, Qt.ItemDataRole.UserRole): group.child(index)
+        for index in range(group.childCount())
+    }
+    first_item = items["first"]
+    second_item = items["second"]
+    assert first_item.flags() & Qt.ItemFlag.ItemIsUserCheckable
+    assert second_item.flags() & Qt.ItemFlag.ItemIsUserCheckable
+    assert first_item.data(0, Qt.ItemDataRole.CheckStateRole) is not None
+    assert second_item.data(0, Qt.ItemDataRole.CheckStateRole) is not None
+
+    first_item.setCheckState(0, Qt.CheckState.Checked)
+    second_item.setCheckState(0, Qt.CheckState.Checked)
+    assert set(window._selected_task_ids()) == {"first", "second"}
+    assert window._task_select_all_checkbox.checkState() is Qt.CheckState.Checked
+    assert window.ui.taskArchiveButton.isEnabled()
+
+    first_item.setCheckState(0, Qt.CheckState.Unchecked)
+    assert window._selected_task_ids() == ("second",)
+    assert window._task_select_all_checkbox.checkState() is Qt.CheckState.PartiallyChecked
+
+
+def test_task_row_selection_checks_the_task(
+    qtbot, app_paths, capabilities, snapshot_factory
+) -> None:
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+    snapshot = snapshot_factory("selected")
+    window.task_snapshots = (snapshot,)
+    window._all_task_snapshots = window.task_snapshots
+    window._task_capabilities = capabilities
+    window._populate_task_list(window.task_snapshots)
+    group = window.ui.taskListView.topLevelItem(0)
+    assert group is not None
+    item = group.child(0)
+    assert item is not None
+
+    window.ui.taskListView.setCurrentItem(item)
+
+    assert item.checkState(0) is Qt.CheckState.Checked
+    assert window._selected_task_ids() == ("selected",)
+    assert window.ui.taskArchiveButton.isEnabled()
+
+
+def test_task_checkbox_states_have_visible_light_theme_contrast(qtbot, app_paths) -> None:
+    application = QApplication.instance()
+    assert application is not None
+    previous_stylesheet = application.styleSheet()
+    application.setStyleSheet(previous_stylesheet + APP_STYLESHEET)
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    try:
+        qtbot.addWidget(window)
+        window.show()
+        qtbot.wait(10)
+        checkbox = window._task_select_all_checkbox
+        unchecked = checkbox.grab().toImage()
+        unchecked_colors = {
+            unchecked.pixelColor(x, y).name()
+            for x in range(unchecked.width())
+            for y in range(unchecked.height())
+        }
+
+        checkbox.blockSignals(True)
+        checkbox.setCheckState(Qt.CheckState.Checked)
+        checked = checkbox.grab().toImage()
+        checkbox.blockSignals(False)
+        checked_colors = {
+            checked.pixelColor(x, y).name()
+            for x in range(checked.width())
+            for y in range(checked.height())
+        }
+
+        assert OUTLINE_STRONG in unchecked_colors
+        assert ACCENT in checked_colors
+    finally:
+        application.setStyleSheet(previous_stylesheet)
 
 
 def test_footer_action_buttons_are_equal_fixed_width_and_right_aligned(qtbot, app_paths) -> None:
@@ -359,14 +455,11 @@ def test_protected_gui_target_refuses_exclusion(
     assert "硬保护" in window.ui.errorLabel.text()
 
 
-def test_task_list_selection_loads_selected_thread_id(
-    qtbot, app_paths, capabilities, snapshot_factory
-) -> None:
+def test_task_list_selection_loads_selected_thread_id(qtbot, app_paths, snapshot_factory) -> None:
     window = TrimReviewWindow(paths=app_paths, load_task_list=False)
     qtbot.addWidget(window)
     snapshot = snapshot_factory("selected-task")
     window.task_snapshots = (snapshot,)
-    window._task_capabilities = capabilities
     window._populate_task_list(window.task_snapshots)
 
     loaded_ids: list[str] = []
@@ -382,7 +475,7 @@ def test_task_list_selection_loads_selected_thread_id(
     assert window.ui.threadIdEdit.text() == ""
 
 
-def test_archived_task_switches_to_unarchive_and_rejects_mixed_selection(
+def test_archive_button_switches_to_unarchive_and_rejects_mixed_selection(
     qtbot, app_paths, capabilities, snapshot_factory
 ) -> None:
     archived = snapshot_factory("archived", archived=True)
@@ -391,28 +484,43 @@ def test_archived_task_switches_to_unarchive_and_rejects_mixed_selection(
     window = TrimReviewWindow(paths=app_paths, load_task_list=False)
     qtbot.addWidget(window)
     window.task_snapshots = (archived, active, running)
+    window._all_task_snapshots = window.task_snapshots
     window._task_capabilities = capabilities
+    window._set_task_filter("all")
     window._populate_task_list(window.task_snapshots)
 
     window._select_task_in_list("archived")
     assert window.ui.taskArchiveButton.isEnabled()
     assert window.ui.taskArchiveButton.text() == "反归档"
-    assert not window.ui.taskDeleteButton.isEnabled()
 
     window._select_task_in_list("active")
     assert window.ui.taskArchiveButton.isEnabled()
-    assert not window.ui.taskDeleteButton.isEnabled()
+    assert window.ui.taskArchiveButton.text() == "归档"
 
-    group = window.ui.taskListView.topLevelItem(0)
-    assert group is not None
-    for index in range(group.childCount()):
-        if group.child(index).data(0, Qt.ItemDataRole.UserRole) in {"active", "archived"}:
-            group.child(index).setSelected(True)
+    window._select_task_ids(("active", "archived"))
     assert not window.ui.taskArchiveButton.isEnabled()
+    assert window.ui.taskArchiveButton.text() == "归档"
 
     window._select_task_in_list("running")
     assert not window.ui.taskArchiveButton.isEnabled()
-    assert not window.ui.taskDeleteButton.isEnabled()
+
+
+def test_archive_button_accepts_safe_lightweight_inventory_summary(
+    qtbot, app_paths, capabilities, snapshot_factory
+) -> None:
+    summary = snapshot_factory("summary", content_complete=False)
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+    window.task_snapshots = (summary,)
+    window._all_task_snapshots = window.task_snapshots
+    window._task_capabilities = capabilities
+    window._populate_task_list(window.task_snapshots)
+
+    window._select_task_in_list("summary")
+
+    assert window._selected_task_ids() == ("summary",)
+    assert window.ui.taskArchiveButton.isEnabled()
+    assert window.ui.taskArchiveButton.text() == "归档"
 
 
 def test_failed_task_operation_refreshes_inventory(qtbot, app_paths) -> None:
@@ -435,7 +543,7 @@ def test_message_box_message_label_uses_application_text_color(qtbot) -> None:
     message_box = QMessageBox()
     try:
         qtbot.addWidget(message_box)
-        message_box.setText("永久删除确认文本")
+        message_box.setText("高风险确认文本")
         message_box.show()
         qtbot.wait(10)
 
@@ -467,51 +575,6 @@ def test_input_dialog_label_uses_application_text_color(qtbot) -> None:
         application.setStyleSheet(previous_stylesheet)
 
 
-def test_gui_purge_uses_one_exact_confirmation_phrase(
-    qtbot, app_paths, capabilities, snapshot_factory, monkeypatch
-) -> None:
-    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
-    qtbot.addWidget(window)
-    snapshot = snapshot_factory("root", archived=True)
-    plan = ActionPlan.create(
-        action=PlanAction.PURGE,
-        capability_fingerprint=capabilities.fingerprint,
-        targets=(
-            PlanTarget(
-                root_thread_id=snapshot.id,
-                affected_thread_ids=(snapshot.id,),
-                snapshot_fingerprints={snapshot.id: snapshot.management_fingerprint},
-            ),
-        ),
-    )
-    prompts: list[str] = []
-    applied: list[tuple[ActionPlan, str]] = []
-
-    monkeypatch.setattr(
-        QInputDialog,
-        "getText",
-        lambda _parent, _title, prompt, *_args, **_kwargs: (
-            prompts.append(prompt) or ("确认删除", True)
-        ),
-    )
-    monkeypatch.setattr(
-        window,
-        "_apply_prepared_purge",
-        lambda selected_plan, confirmation: applied.append((selected_plan, confirmation)),
-    )
-    monkeypatch.setattr(
-        window,
-        "_start_task_operation",
-        lambda _message, function, _on_success: function(),
-    )
-
-    window._confirm_prepared_purge(plan)
-
-    assert len(prompts) == 1
-    assert plan.plan_id in prompts[0]
-    assert applied == [(plan, "确认删除")]
-
-
 def test_shared_task_query_filters_and_supports_multi_selection(
     qtbot, app_paths, capabilities, snapshot_factory
 ) -> None:
@@ -520,6 +583,7 @@ def test_shared_task_query_filters_and_supports_multi_selection(
     first = snapshot_factory("first").model_copy(update={"title": "Alpha conversation"})
     second = snapshot_factory("second").model_copy(update={"title": "Beta conversation"})
     window.task_snapshots = (first, second)
+    window._all_task_snapshots = window.task_snapshots
     window._task_capabilities = capabilities
     window._populate_task_list(window.task_snapshots)
     group = window.ui.taskListView.topLevelItem(0)
@@ -530,7 +594,6 @@ def test_shared_task_query_filters_and_supports_multi_selection(
     assert set(window._selected_task_ids()) == {"first", "second"}
     assert window.ui.taskBackupButton.isEnabled()
     assert window.ui.taskArchiveButton.isEnabled()
-    assert not window.ui.taskDeleteButton.isEnabled()
     window._populate_task_list(window.task_snapshots)
     assert set(window._selected_task_ids()) == {"first", "second"}
 
@@ -567,7 +630,28 @@ def test_incomplete_mapping_loads_timeline_as_read_only_review(
     assert not window.ui.savePlanButton.isEnabled()
     assert not window.ui.applyButton.isEnabled()
     assert window.ui.contentBrowser.isReadOnly()
-    assert "只读浏览" in window.ui.taskContextStatusLabel.text()
+    assert "只读浏览" in window.ui.taskListStatusLabel.text()
+
+
+def test_read_only_error_identifies_the_actual_codex_runtime(
+    qtbot, app_paths, capabilities, snapshot_factory
+) -> None:
+    snapshot = snapshot_factory("read-only-runtime")
+    read_only = capabilities.model_copy(
+        update={
+            "codex_version": "0.151.0-alpha.7.2",
+            "codex_binary_path": "/Applications/ChatGPT.app/Contents/Resources/codex",
+            "schema_sha256": "7" * 64,
+        }
+    )
+    window = TrimReviewWindow(paths=app_paths, load_task_list=False)
+    qtbot.addWidget(window)
+
+    window._document_loaded(0, _document(snapshot, read_only))
+
+    assert window.ui.errorLabel.isHidden()
+    assert not window.ui.applyButton.isEnabled()
+    assert "当前仅支持审查与投影计划" in window.ui.applyButton.toolTip()
 
 
 def test_gui_backup_request_uses_managed_identity_and_expands_descendants(qtbot, app_paths) -> None:
@@ -650,7 +734,7 @@ def test_gui_backup_settings_auto_selects_managed_identity(
         ),
     )
 
-    settings = window._request_backup_settings(("root",), combined_archive=True)
+    settings = window._request_backup_settings(("root",))
 
     assert settings == destination
     assert len(questions) == 2
@@ -1140,7 +1224,7 @@ def test_compact_timeline_numbers_and_runtime_language_switch(
     window.ui.languageCombo.setCurrentIndex(1)
     assert (app_paths.config_dir / "gui-preferences.json").is_file()
     assert window.ui.headerBadge.text() == "Source task is read-only"
-    assert window.ui.taskListView.headerItem().text(0) == "Task"
+    assert window.ui.taskListView.headerItem().text(0).strip() == "Task"
     assert window.ui.timelineView.model().headerData(0, Qt.Orientation.Horizontal) == "Timeline"
     assert window.ui.contentTitle.text() == "Context"
     assert window.ui.savePlanButton.text() == "Save plan"
@@ -1281,23 +1365,16 @@ def test_task_inventory_keeps_capabilities_for_archive_eligibility(
     qtbot, app_paths, capabilities, snapshot_factory
 ) -> None:
     snapshot = snapshot_factory("inventory-capability")
-    runtime_capabilities = capabilities.model_copy(
-        update={
-            "codex_version": "0.151.0-alpha.7.2",
-            "codex_binary_sha256": "c" * 64,
-            "schema_sha256": "d" * 64,
-        }
-    )
     window = TrimReviewWindow(paths=app_paths, load_task_list=False)
     qtbot.addWidget(window)
 
     window._task_list_loaded(
         window._task_generation,
-        InventoryResult(runtime_capabilities, (snapshot,)),
+        InventoryResult(capabilities, (snapshot,)),
     )
     window._select_task_in_list(snapshot.id)
 
-    assert window._task_capabilities is runtime_capabilities
+    assert window._task_capabilities is capabilities
     assert window.ui.taskArchiveButton.isEnabled()
 
 
@@ -1336,6 +1413,7 @@ def test_archive_and_unarchive_contracts_are_independent_in_gui(
     blocked = _block_operation(capabilities, OperationName.ARCHIVE, "archive response mismatch")
     window = TrimReviewWindow(paths=app_paths, load_task_list=False)
     qtbot.addWidget(window)
+    window._set_task_filter("all")
     window._task_list_loaded(
         window._task_generation,
         InventoryResult(blocked, (archived,)),
@@ -1398,15 +1476,6 @@ def test_task_context_menu_has_no_rename_write_action(
         def setEnabled(self, _enabled: bool) -> None:
             pass
 
-        def setVisible(self, _visible: bool) -> None:
-            pass
-
-        def setToolTip(self, _tooltip: str) -> None:
-            pass
-
-        def setStatusTip(self, _status: str) -> None:
-            pass
-
     class FakeMenu:
         def __init__(self, _parent) -> None:
             self._actions: list[FakeAction] = []
@@ -1423,9 +1492,10 @@ def test_task_context_menu_has_no_rename_write_action(
             pass
 
     menus: list[FakeMenu] = []
+    original_menu = FakeMenu
 
     def make_menu(parent) -> FakeMenu:
-        menu = FakeMenu(parent)
+        menu = original_menu(parent)
         menus.append(menu)
         return menu
 

@@ -102,7 +102,7 @@ def review_precompact(
 
     window.plan_saved.connect(saved)
     window.window_closed.connect(loop.quit)
-    window.ui.taskContextStatusLabel.setToolTip(f"cwd={cwd}")
+    window.ui.taskListStatusLabel.setToolTip(f"cwd={cwd}")
     window.show()
     deadline_timer.start(remaining_ms)
     loop.exec()

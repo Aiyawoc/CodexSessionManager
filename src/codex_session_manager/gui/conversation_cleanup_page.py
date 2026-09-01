@@ -66,7 +66,7 @@ class ConversationCleanupPage(QWidget):
         title.setObjectName("workspacePageTitle")
         root.addWidget(title)
 
-        self.status_label = QLabel("尚未加载审查请求。当前页面只调整建议选择，不执行归档或删除。")
+        self.status_label = QLabel("尚未加载审查请求。当前页面只调整建议选择，不执行任务写入。")
         self.status_label.setWordWrap(True)
         self.status_label.setObjectName("workspacePageStatus")
         root.addWidget(self.status_label)
@@ -77,8 +77,8 @@ class ConversationCleanupPage(QWidget):
         notice_layout.setContentsMargins(12, 10, 12, 10)
         notice_layout.addWidget(
             QLabel(
-                "安全边界：建议不是执行授权。后续“备份并归档”流程必须重新读取真实状态、"
-                "展开全部派生后代、创建并验证 age 备份，再生成最终不可变计划。"
+                "安全边界：建议不是执行授权。备份、归档和反归档由项目与任务界面"
+                "分别发起，并在执行前重新读取真实状态、展开全部派生后代和复核不可变计划。"
             )
         )
         root.addWidget(notice)
@@ -106,10 +106,6 @@ class ConversationCleanupPage(QWidget):
         )
         self.create_plan_button.clicked.connect(self._create_plan)
         footer.addWidget(self.create_plan_button)
-        self.backup_archive_button = QPushButton("备份并归档")
-        self.backup_archive_button.setEnabled(False)
-        self.backup_archive_button.setToolTip("归档前加密备份闭环将在阶段 2 启用。")
-        footer.addWidget(self.backup_archive_button)
         root.addLayout(footer)
 
     def load_request(self, request: ReviewRequest) -> None:

@@ -154,7 +154,7 @@ QLabel#appSubtitleLabel {{
     font-size: 12px;
 }}
 
-QLabel#timelineHelp, QLabel#taskContextStatusLabel, QLabel#taskListStatusLabel {{
+QLabel#timelineHelp, QLabel#taskListStatusLabel {{
     color: {TEXT_MUTED};
 }}
 
@@ -166,15 +166,6 @@ QLabel#tokenLabel {{
 QLabel#reasonLabel, QLabel#summaryLabel {{
     color: {TEXT_MUTED};
     font-weight: 500;
-}}
-
-QLabel#olderThanDaysLabel, QLabel#olderThanDaysUnitLabel {{
-    color: {TEXT_MUTED};
-    font-weight: 500;
-}}
-
-QLabel#taskContextStatusLabel {{
-    font-size: 11px;
 }}
 
 QLabel#headerBadge {{
@@ -313,17 +304,6 @@ QPushButton#reviewButton:hover {{
     border-color: {ACCENT_HOVER};
 }}
 
-QPushButton#taskDeleteButton {{
-    background: {DANGER_SOFT};
-    border-color: #f1c6c1;
-    color: {DANGER};
-}}
-
-QPushButton#taskDeleteButton:hover {{
-    background: #ffe5e2;
-    border-color: {DANGER};
-}}
-
 QPushButton#taskBackupButton {{
     background: {ACCENT_SOFT};
     border-color: {ACCENT};
@@ -360,7 +340,7 @@ QPushButton#sensitiveScanButton:checked:hover {{
 
 QPushButton#loadButton:disabled, QPushButton#suggestButton:disabled,
 QPushButton#taskRefreshButton:disabled, QPushButton#taskArchiveButton:disabled,
-QPushButton#taskBackupButton:disabled, QPushButton#taskDeleteButton:disabled,
+QPushButton#taskBackupButton:disabled,
 QPushButton#savePlanButton:disabled,
 QPushButton#sensitiveScanButton:disabled, QPushButton#reviewButton:disabled {{
     background: #eef2f7;
@@ -481,9 +461,28 @@ QCheckBox {{
     color: {TEXT_MUTED};
 }}
 
-QCheckBox::indicator {{
+QCheckBox::indicator, QTreeWidget::indicator {{
     width: 16px;
     height: 16px;
+    border: 2px solid {OUTLINE_STRONG};
+    border-radius: 4px;
+    background: {PANEL};
+}}
+
+QCheckBox::indicator:hover, QTreeWidget::indicator:hover {{
+    border-color: {ACCENT};
+}}
+
+QCheckBox::indicator:checked, QTreeWidget::indicator:checked {{
+    background: {ACCENT};
+    border-color: {ACCENT};
+    image: url(:/csm/check.svg);
+}}
+
+QCheckBox::indicator:indeterminate, QTreeWidget::indicator:indeterminate {{
+    background: {ACCENT};
+    border-color: {ACCENT};
+    image: url(:/csm/check-partial.svg);
 }}
 
 QDialog#PrecompactPrompt {{

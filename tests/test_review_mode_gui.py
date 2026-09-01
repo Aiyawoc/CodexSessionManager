@@ -162,8 +162,8 @@ def test_memory_request_injects_llm_suggestions_with_local_protection_veto(
     assert window.memory_selections[paragraph.segment_id].action is MemoryAction.REPLACE
     assert window.memory_selections[paragraph.segment_id].replacement == "Likes green tea."
     assert window.memory_selections[heading.segment_id].action is MemoryAction.PROTECT
-    assert "已灌入 1 条 LLM 建议" in window.ui.taskContextStatusLabel.text()
-    assert "1 条" in window.ui.taskContextStatusLabel.text()
+    assert "已灌入 1 条 LLM 建议" in window.ui.taskListStatusLabel.text()
+    assert "1 条" in window.ui.taskListStatusLabel.text()
 
 
 def test_ready_pending_trim_plan_loads_exact_saved_selection_and_marks_applied(
@@ -236,7 +236,6 @@ def test_cleanup_request_is_injected_into_original_project_list(
         update={"size_bytes": 1024}
     )
     supplemental = snapshot_factory("supplemental-root").model_copy(update={"size_bytes": 4096})
-    purge = snapshot_factory("purge-root", archived=True).model_copy(update={"size_bytes": 8192})
     bundle = SuggestionBundle.create(
         operation=ReviewOperation.CONVERSATION_CLEANUP,
         source=ReviewSource.MCP,
@@ -267,20 +266,18 @@ def test_cleanup_request_is_injected_into_original_project_list(
         window._task_generation,
         CleanupCandidateInventory(
             capabilities,
-            (root, child, supplemental, purge),
+            (root, child, supplemental),
             frozenset({root.id}),
             (supplemental.id,),
-            (purge.id,),
         ),
     )
 
     assert window.review_mode is ReviewMode.CONVERSATION_CLEANUP
     assert window.property("csmReviewRequestId") == request.request_id
     assert window._selected_task_ids() == ()
-    assert window.ui.taskArchiveButton.isHidden()
-    assert window.ui.taskBackupButton.text() == "备份并归档…"
+    assert not window.ui.taskArchiveButton.isHidden()
+    assert window.ui.taskBackupButton.text() == "备份"
     assert not window.ui.taskBackupButton.isEnabled()
-    assert window.ui.taskDeleteButton.isHidden()
     project_group = next(
         window.ui.taskListView.topLevelItem(index)
         for index in range(window.ui.taskListView.topLevelItemCount())
@@ -307,15 +304,6 @@ def test_cleanup_request_is_injected_into_original_project_list(
     assert supplemental_item.text(0) == "＋ supplemental-root"
     assert not supplemental_item.isSelected()
     assert "默认不选中" in supplemental_item.toolTip(0)
-    purge_group = next(
-        window.ui.taskListView.topLevelItem(index)
-        for index in range(window.ui.taskListView.topLevelItemCount())
-        if window.ui.taskListView.topLevelItem(index).text(0).startswith("永久删除资格")
-    )
-    assert purge_group.childCount() == 1
-    purge_item = purge_group.child(0)
-    assert purge_item.text(0) == "高风险：purge-root"
-    assert not bool(purge_item.flags() & Qt.ItemFlag.ItemIsSelectable)
 
 
 def test_cleanup_exact_id_load_adds_and_selects_safe_candidate(
@@ -333,13 +321,11 @@ def test_cleanup_exact_id_load_adds_and_selects_safe_candidate(
         (suggested, target_summary, child_summary),
         frozenset(),
         (),
-        (),
     )
     expanded = CleanupCandidateInventory(
         capabilities,
         (suggested, target, child),
         frozenset(),
-        (),
         (),
     )
     calls: list[tuple[str, ...]] = []
@@ -541,4 +527,4 @@ def test_context_request_injects_external_suggestions_into_original_timeline(
     assert selection.summary == "注入原 GUI 的外部摘要"
     assert window.document is not None
     assert window.document.external_applied_target_ids == (turn.id,)
-    assert "已灌入 1 条 LLM 建议" in window.ui.taskContextStatusLabel.text()
+    assert "已灌入 1 条 LLM 建议" in window.ui.taskListStatusLabel.text()

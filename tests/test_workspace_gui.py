@@ -79,7 +79,6 @@ def test_cleanup_page_loads_suggestions_and_builds_plan_from_final_selection(
     assert window.current_page is DesktopPage.CLEANUP
     assert window.cleanup_page.selected_target_ids() == ("thread-1",)
     assert window.cleanup_page.create_plan_button.isEnabled()
-    assert not window.cleanup_page.backup_archive_button.isEnabled()
 
     item = window.cleanup_page.tree.topLevelItem(0)
     assert item is not None
@@ -107,7 +106,6 @@ def test_cleanup_page_loads_suggestions_and_builds_plan_from_final_selection(
     assert emitted.args == [plan]
     assert selected == [("thread-1",)]
     assert window.cleanup_page.current_plan == plan
-    assert not window.cleanup_page.backup_archive_button.isEnabled()
 
 
 def test_pending_page_routes_saved_trim_plan_back_to_context_review(

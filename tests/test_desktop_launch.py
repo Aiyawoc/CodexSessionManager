@@ -114,7 +114,7 @@ def test_window_manager_opens_each_review_request_once(qtbot, app_paths, monkeyp
     assert window.property("csmReviewOperation") == request.operation.value
     assert window.review_mode is ReviewMode.CONVERSATION_CLEANUP
     assert window.windowTitle() == "CodexSessionManager · 对话清理审查"
-    assert window.ui.taskDeleteButton.isHidden()
+    assert not hasattr(window.ui, "taskDeleteButton")
 
     _request, pending_path = queue.enqueue(request_path)
     second = manager.handle_command(DesktopCommand.open_review_request(pending_path))

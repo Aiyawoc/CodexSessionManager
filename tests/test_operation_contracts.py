@@ -388,7 +388,9 @@ def test_all_of_applies_all_request_constraints() -> None:
     capabilities = _by_name(_evaluate(changed))
 
     assert not capabilities[OperationName.ARCHIVE].available
-    assert any(issue.code == "schema_combiner" for issue in capabilities[OperationName.ARCHIVE].issues)
+    assert any(
+        issue.code == "schema_combiner" for issue in capabilities[OperationName.ARCHIVE].issues
+    )
 
 
 def test_enum_presence_is_fail_closed_but_unknown_values_are_compatible() -> None:
@@ -414,20 +416,14 @@ def test_enum_presence_is_fail_closed_but_unknown_values_are_compatible() -> Non
 
 def test_cyclic_refs_and_invalid_combiners_fail_closed_without_recursion_error() -> None:
     cyclic = deepcopy(_baseline_documents())
-    cyclic["v2/ThreadListResponse.json"]["definitions"]["Thread"] = {
-        "$ref": "#/definitions/Thread"
-    }
+    cyclic["v2/ThreadListResponse.json"]["definitions"]["Thread"] = {"$ref": "#/definitions/Thread"}
     cyclic_capability = _by_name(_evaluate(cyclic))[OperationName.INVENTORY_COMMON]
     assert not cyclic_capability.available
     assert any(issue.code == "reference_cycle" for issue in cyclic_capability.issues)
 
     mutual = deepcopy(_baseline_documents())
-    mutual["v2/ThreadListResponse.json"]["definitions"]["Thread"] = {
-        "$ref": "#/definitions/Other"
-    }
-    mutual["v2/ThreadListResponse.json"]["definitions"]["Other"] = {
-        "$ref": "#/definitions/Thread"
-    }
+    mutual["v2/ThreadListResponse.json"]["definitions"]["Thread"] = {"$ref": "#/definitions/Other"}
+    mutual["v2/ThreadListResponse.json"]["definitions"]["Other"] = {"$ref": "#/definitions/Thread"}
     mutual_capability = _by_name(_evaluate(mutual))[OperationName.INVENTORY_COMMON]
     assert not mutual_capability.available
     assert any(issue.code == "reference_cycle" for issue in mutual_capability.issues)
@@ -441,9 +437,7 @@ def test_cyclic_refs_and_invalid_combiners_fail_closed_without_recursion_error()
     assert any(issue.code == "schema_branch" for issue in invalid_capability.issues)
 
     invalid_combiner = deepcopy(_baseline_documents())
-    invalid_combiner["v2/ThreadListResponse.json"]["properties"]["data"] = {
-        "oneOf": "not-an-array"
-    }
+    invalid_combiner["v2/ThreadListResponse.json"]["properties"]["data"] = {"oneOf": "not-an-array"}
     combiner_capability = _by_name(_evaluate(invalid_combiner))[OperationName.INVENTORY_COMMON]
     assert not combiner_capability.available
     assert any(issue.code == "schema_combiner" for issue in combiner_capability.issues)
@@ -600,9 +594,9 @@ def test_unsatisfiable_combiner_cannot_be_revived_by_a_later_union() -> None:
 
 def test_declared_unsatisfiable_optional_field_is_not_treated_as_missing() -> None:
     changed = deepcopy(_baseline_documents())
-    changed["v2/ThreadListResponse.json"]["definitions"]["Thread"]["properties"][
-        "historyMode"
-    ] = {"allOf": [{"type": "string"}, {"type": "integer"}]}
+    changed["v2/ThreadListResponse.json"]["definitions"]["Thread"]["properties"]["historyMode"] = {
+        "allOf": [{"type": "string"}, {"type": "integer"}]
+    }
 
     capability = _by_name(_evaluate(changed))[OperationName.INVENTORY_COMMON]
 
@@ -610,9 +604,7 @@ def test_declared_unsatisfiable_optional_field_is_not_treated_as_missing() -> No
     assert any("historyMode" in issue.subject for issue in capability.issues)
 
     missing = deepcopy(_baseline_documents())
-    del missing["v2/ThreadListResponse.json"]["definitions"]["Thread"]["properties"][
-        "historyMode"
-    ]
+    del missing["v2/ThreadListResponse.json"]["definitions"]["Thread"]["properties"]["historyMode"]
     assert _by_name(_evaluate(missing))[OperationName.INVENTORY_COMMON].available
 
     unrelated = deepcopy(_baseline_documents())

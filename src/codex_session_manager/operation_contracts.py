@@ -815,9 +815,9 @@ class _Evaluation:
             key: value for key, value in node.items() if key not in {"allOf", "anyOf", "oneOf"}
         }
         direct_shape = self._direct_shape(direct_node, document, subject, ref_stack, depth + 1)
-        variants = [direct_shape] if direct_shape is not None else [
-            _SchemaShape(unsatisfiable=True)
-        ]
+        variants = (
+            [direct_shape] if direct_shape is not None else [_SchemaShape(unsatisfiable=True)]
+        )
         for keyword in ("allOf", "anyOf", "oneOf"):
             if keyword not in node:
                 continue

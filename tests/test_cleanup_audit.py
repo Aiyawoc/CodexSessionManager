@@ -157,6 +157,40 @@ def test_archive_planner_keeps_legacy_when_paginated_contract_is_blocked(
     assert tuple(target.root_thread_id for target in plan.targets) == ("legacy",)
 
 
+def test_archive_planner_filters_blocked_roots_before_root_ceiling(
+    capabilities, snapshot_factory
+) -> None:
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    snapshots = attach_descendant_closures(
+        tuple(
+            snapshot_factory(
+                thread_id,
+                history_mode=(
+                    ThreadHistoryMode.PAGINATED
+                    if thread_id.startswith("blocked")
+                    else ThreadHistoryMode.LEGACY
+                ),
+                updated_at=now - timedelta(days=200 - index),
+            )
+            for index, thread_id in enumerate(
+                ("blocked-0", "blocked-1", "eligible-1", "eligible-2")
+            )
+        )
+    )
+    capabilities = _block_operation(capabilities, OperationName.HISTORY_PAGINATED)
+
+    plan = CleanupPlanner(CleanupPolicy(maximum_roots=2)).plan_archive(
+        snapshots,
+        capabilities,
+        now=now,
+    )
+
+    assert tuple(target.root_thread_id for target in plan.targets) == (
+        "eligible-1",
+        "eligible-2",
+    )
+
+
 @pytest.mark.parametrize(
     ("action", "archived"),
     ((PlanAction.ARCHIVE, False), (PlanAction.UNARCHIVE, True)),

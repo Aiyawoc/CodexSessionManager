@@ -176,7 +176,7 @@ class CleanupPlanner:
             cutoff=cutoff,
             criteria=criteria,
             require_content=True,
-            maximum_roots=self.policy.maximum_roots,
+            maximum_roots=None,
         )
         roots = [
             root
@@ -189,6 +189,7 @@ class CleanupPlanner:
             )
             is None
         ]
+        roots = roots[: self.policy.maximum_roots]
         targets = tuple(self._target(root, all_snapshots, cutoff) for root in roots)
         return ActionPlan.create(
             action=PlanAction.ARCHIVE,

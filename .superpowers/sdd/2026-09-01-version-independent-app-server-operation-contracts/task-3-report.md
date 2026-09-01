@@ -55,3 +55,17 @@ env UV_CACHE_DIR=/private/tmp/csm-uv-cache uv run --locked pytest \
 - `git archive HEAD` 解包至 `/private/tmp/csm-task3fix1-qjr6De/repo` 后，`pytest tests/test_trim.py tests/test_importing.py -q`：`23 passed`。
 - 同一快照的 Task 3 集合使用 `pytest tests/test_inventory.py tests/test_cleanup_audit.py tests/test_workflows.py tests/test_lifecycle_integration.py tests/test_hooks.py -q -k 'not purge'`：`64 passed, 9 deselected`。未过滤的同路径集合为 `71 passed, 1 failed, 1 skipped`；失败是 route 排除的历史 purge `thread/delete` 成功路径。
 - clean snapshot 目标文件 `ruff format --check`、`ruff check` 与目标源码 mypy 均通过；`ruff check .` 通过。仓库级 format check 仍报告既有 `operation_contracts.py`、`tests/test_operation_contracts.py`、`tests/test_workflows.py` 三个无关文件格式差异。
+
+## Fix round 2（2026-09-01）
+
+- 修复 `plan_archive` 先应用 `maximum_roots`、再做 history/capability 过滤的最后缺口：结构筛选不设 ceiling，根资格过滤完成后再按 policy 截断；hydration 路径保持既有先过滤后 ceiling。
+- TDD RED：`test_archive_planner_filters_blocked_roots_before_root_ceiling` 在旧实现下为 `1 failed, 21 deselected`，结果为空 targets；GREEN：direct planner 与既有 hydration 回归 `4 passed, 18 deselected`。
+- dirty checkout focused suite：inventory/cleanup/workflows/lifecycle/hooks（`-k 'not purge'`）`63 passed`；trim/import `23 passed`；目标文件 `ruff format --check` 通过，cleanup mypy 通过。
+- dirty checkout `ruff check` 仍被用户未提交 purge-retirement hunk 删除后遗留的 `csv`/`os`/`subprocess`/`ThreadStatus` 未使用导入阻塞；未修改或暂存该 hunk。index 仅含本轮 cleanup.py 与 direct test，报告随后纳入。
+- 未运行真实账号归档/反归档、真实用户输入、bundle、签名、公证或发布验收。
+
+### Fix round 2 提交后 clean archive HEAD 验证
+
+- `git archive HEAD` 解包至 `/private/tmp/csm-task3fix2-3bGAfv` 后，direct planner 回归 `1 passed, 30 deselected`。
+- 同一快照的 focused suite（inventory/cleanup/workflows/lifecycle/hooks，`-k 'not purge'`）为 `65 passed, 9 deselected`；trim/import 为 `23 passed`。
+- 同一快照目标文件 `ruff format --check`、仓库 `ruff check .` 与 cleanup mypy 均通过；无真实账号、用户输入、bundle、签名、公证或发布验收证据。

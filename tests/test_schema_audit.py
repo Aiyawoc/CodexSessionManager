@@ -14,150 +14,177 @@ from codex_session_manager.acceptance import (
 from codex_session_manager.models import (
     CapabilityMatrix,
     ContractIssue,
+    ContractMethodEvidence,
     OperationCapability,
     OperationName,
 )
 from codex_session_manager.schema_audit import (
     SchemaAuditConclusion,
-    SchemaDifferenceKind,
+    SchemaAuditReport,
     build_schema_audit_report,
 )
 
 
-def _profile_capabilities(
-    *,
-    schema_sha256: str | None = None,
-    stable_methods: tuple[str, ...] | None = None,
-    experimental_methods: tuple[str, ...] | None = None,
-    fork_supports_last_turn_id: bool = False,
-    schema_complete: bool = True,
-    read_only_reason: str | None = None,
-    binary_sha256: str | None = "a" * 64,
-) -> CapabilityMatrix:
-    digest = "b" * 64 if schema_sha256 is None else schema_sha256
-    operation_capabilities = tuple(
-        OperationCapability(
+def _capability(operation: OperationName, *, available: bool = True) -> OperationCapability:
+    methods = {
+        OperationName.INVENTORY_COMMON: (
+            "initialize",
+            "thread/list",
+            "thread/read",
+            "thread/loaded/list",
+        ),
+        OperationName.HISTORY_LEGACY: ("thread/read",),
+        OperationName.HISTORY_PAGINATED: ("thread/turns/list",),
+        OperationName.ARCHIVE: ("thread/archive",),
+        OperationName.UNARCHIVE: ("thread/unarchive",),
+    }[operation]
+    if available:
+        return OperationCapability(
             operation=operation,
             contract_id=f"{operation.value}.v1",
-            available=False,
-            contract_rule_fingerprint="rule",
-            issues=(
-                ContractIssue(
-                    code="test_only",
-                    subject=operation.value,
-                ),
+            available=True,
+            contract_rule_fingerprint=f"rule-{operation.value}",
+            runtime_contract_fingerprint=f"runtime-{operation.value}",
+            required_methods=methods,
+            method_evidence=tuple(
+                ContractMethodEvidence(method=method, stability="stable", negotiated=False)
+                for method in methods
             ),
         )
-        for operation in OperationName
-    )
-    return CapabilityMatrix(
-        codex_version="fixture-codex",
-        codex_binary_path="/private/account/bin/codex",
-        codex_binary_sha256=binary_sha256,
-        initialize_fingerprint="init",
-        schema_sha256=digest,
-        stable_methods=(
-            (
-                "initialize",
-                "thread/list",
-                "thread/read",
-                "thread/loaded/list",
-                "thread/archive",
-            )
-            if stable_methods is None
-            else stable_methods
+    return OperationCapability(
+        operation=operation,
+        contract_id=f"{operation.value}.v1",
+        available=False,
+        contract_rule_fingerprint=f"rule-{operation.value}",
+        required_methods=methods,
+        issues=(
+            ContractIssue(
+                code="missing_method",
+                subject=methods[0],
+                expected="stable",
+                actual="missing",
+            ),
         ),
-        experimental_methods=() if experimental_methods is None else experimental_methods,
-        fork_supports_last_turn_id=fork_supports_last_turn_id,
-        schema_complete=schema_complete,
-        operation_capabilities=operation_capabilities,
     )
 
 
-def test_schema_audit_is_sealed_and_omits_private_paths() -> None:
+def _capabilities(
+    *,
+    codex_version: str = "fixture-codex",
+    schema_sha256: str | None = "b" * 64,
+    available: frozenset[OperationName] | None = None,
+    probe_error: str | None = None,
+) -> CapabilityMatrix:
+    available = available if available is not None else frozenset(OperationName)
+    return CapabilityMatrix(
+        codex_version=codex_version,
+        codex_binary_path="/private/account/bin/codex",
+        codex_binary_sha256="a" * 64,
+        initialize_fingerprint="init",
+        schema_sha256=schema_sha256,
+        stable_methods=("initialize", "thread/list", "thread/read", "thread/loaded/list"),
+        experimental_methods=("thread/turns/list",),
+        schema_complete=probe_error is None,
+        operation_capabilities=tuple(
+            _capability(operation, available=operation in available) for operation in OperationName
+        ),
+        probe_error=probe_error,
+    )
+
+
+def test_schema_audit_is_sealed_v2_and_serializes_five_operations() -> None:
     report = build_schema_audit_report(
-        _profile_capabilities(),
+        _capabilities(),
         generated_at=datetime(2026, 8, 13, tzinfo=UTC),
         platform_name="darwin",
         architecture="arm64",
     )
 
     report.verify()
-    assert report.conclusion is SchemaAuditConclusion.UNKNOWN_SCHEMA_READ_ONLY
-    assert not report.write_enabled
-    assert not report.exact_profile_match
-    assert report.differences
+    assert report.schema_version == 2
+    assert report.conclusion is SchemaAuditConclusion.COMPATIBLE
+    assert {capability.operation for capability in report.operation_capabilities} == set(
+        OperationName
+    )
     encoded = report.model_dump_json()
     assert "/private/account" not in encoded
     assert '"platform":"darwin"' in encoded
     assert '"architecture":"arm64"' in encoded
+    for field in (
+        "compared_profile_version",
+        "compared_profile_schema_sha256",
+        "exact_profile_match",
+        "write_enabled",
+    ):
+        assert field not in encoded
 
 
-def test_schema_audit_classifies_added_removed_stability_and_field_changes() -> None:
-    stable = {
-        "initialize",
-        "thread/list",
-        "thread/read",
-        "thread/loaded/list",
-        "thread/archive",
-    }
-    experimental: set[str] = set()
-    stable.remove("thread/read")
-    experimental.add("thread/read")
-    stable.remove("thread/archive")
-    stable.add("thread/future")
+def test_version_and_full_schema_hash_changes_do_not_change_contract_result() -> None:
+    first = build_schema_audit_report(_capabilities())
+    second = build_schema_audit_report(
+        _capabilities(codex_version="new-codex", schema_sha256="c" * 64)
+    )
+
+    assert first.conclusion is SchemaAuditConclusion.COMPATIBLE
+    assert second.conclusion is SchemaAuditConclusion.COMPATIBLE
+    assert first.operation_capabilities == second.operation_capabilities
+
+
+def test_only_paginated_contract_failure_is_partial_with_structured_issue() -> None:
     report = build_schema_audit_report(
-        _profile_capabilities(
-            schema_sha256="c" * 64,
-            stable_methods=tuple(sorted(stable)),
-            experimental_methods=tuple(sorted(experimental)),
-            fork_supports_last_turn_id=True,
-            read_only_reason="unknown schema",
+        _capabilities(available=frozenset(OperationName) - {OperationName.HISTORY_PAGINATED})
+    )
+
+    assert report.conclusion is SchemaAuditConclusion.PARTIAL
+    paginated = next(
+        capability
+        for capability in report.operation_capabilities
+        if capability.operation is OperationName.HISTORY_PAGINATED
+    )
+    assert not paginated.available
+    assert paginated.issues[0].code == "missing_method"
+    assert "unknown version" not in report.model_dump_json()
+    assert "unknown schema" not in report.model_dump_json()
+
+
+def test_schema_generation_failure_is_unavailable_and_report_remains_verifiable() -> None:
+    report = build_schema_audit_report(
+        _capabilities(
+            schema_sha256=None,
+            available=frozenset(),
+            probe_error="schema generation failed",
         )
     )
 
-    kinds = {difference.kind for difference in report.differences}
-    assert report.conclusion is SchemaAuditConclusion.INCOMPLETE_SCHEMA_READ_ONLY
-    assert not report.write_enabled
-    assert kinds == {SchemaDifferenceKind.UNKNOWN_PROFILE}
+    assert report.conclusion is SchemaAuditConclusion.UNAVAILABLE
+    assert report.probe_error == "schema generation failed"
+    report.verify()
 
 
-def test_same_method_inventory_with_unknown_hash_is_still_an_unknown_profile() -> None:
-    report = build_schema_audit_report(
-        _profile_capabilities(
-            schema_sha256="d" * 64,
-            read_only_reason="schema command failed at /private/account/bin/codex",
-        )
+def test_probe_error_redacts_home_user_and_private_executable_path() -> None:
+    error = (
+        "schema generation failed for /Users/ethen/private/codex/bin/codex "
+        "at /private/account/bin/codex"
     )
+    report = build_schema_audit_report(_capabilities(available=frozenset(), probe_error=error))
 
-    assert report.conclusion is SchemaAuditConclusion.UNKNOWN_SCHEMA_READ_ONLY
-    assert not report.exact_profile_match
-    assert [difference.kind for difference in report.differences] == [
-        SchemaDifferenceKind.UNKNOWN_PROFILE
-    ]
-    assert report.differences[0].actual == "d" * 64
-    assert "/private/account" not in report.model_dump_json()
+    assert report.probe_error is not None
+    assert "/Users/ethen" not in report.probe_error
+    assert "/private/account" not in report.probe_error
+    assert "schema generation failed" in report.probe_error
+    report.verify()
 
 
-def test_unavailable_schema_audit_stays_read_only() -> None:
-    report = build_schema_audit_report(
-        _profile_capabilities(
-            schema_sha256="",
-            stable_methods=(),
-            experimental_methods=(),
-            schema_complete=False,
-            read_only_reason="generation failed",
-            binary_sha256=None,
-        )
-    )
-
-    assert report.conclusion is SchemaAuditConclusion.UNAVAILABLE_READ_ONLY
-    assert not report.write_enabled
-    assert report.missing_required_methods
+def test_schema_audit_rejects_legacy_authorization_fields() -> None:
+    report = build_schema_audit_report(_capabilities())
+    payload = report.model_dump(mode="json")
+    payload["write_enabled"] = True
+    with pytest.raises(ValueError, match="extra_forbidden"):
+        SchemaAuditReport.model_validate(payload)
 
 
 def test_acceptance_report_hashes_ids_and_cannot_claim_production() -> None:
-    schema_report = build_schema_audit_report(_profile_capabilities())
+    schema_report = build_schema_audit_report(_capabilities())
     raw_thread_id = "019ff-secret-thread-id"
     report = create_acceptance_report(
         scope=AcceptanceScope.MACOS_REAL_ACCOUNT,
@@ -187,7 +214,7 @@ def test_acceptance_report_hashes_ids_and_cannot_claim_production() -> None:
 
 
 def test_acceptance_report_rejects_duplicate_stages() -> None:
-    schema_report = build_schema_audit_report(_profile_capabilities())
+    schema_report = build_schema_audit_report(_capabilities())
     duplicate = AcceptanceStage(
         name=AcceptanceStageName.DOCTOR,
         result=AcceptanceStageResult.PASSED,

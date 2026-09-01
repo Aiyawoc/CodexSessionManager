@@ -536,7 +536,8 @@ def schema_audit(
             "output_name": output.name,
             "report_sha256": report.report_sha256,
             "conclusion": report.conclusion,
-            "write_enabled": report.write_enabled,
+            "operation_capabilities": report.operation_capabilities,
+            "probe_error": report.probe_error,
         }
     )
 

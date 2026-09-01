@@ -28,6 +28,7 @@ from codex_session_manager.config import (
     standalone_root,
 )
 from codex_session_manager.hashing import hash_file
+from codex_session_manager.models import OperationCapability, OperationName
 
 EXPECTED_PYTHON = (3, 13, 14)
 EXPECTED_PYSIDE = "6.11.1"
@@ -97,6 +98,13 @@ def _architecture_supported() -> bool:
     if sys.platform == "darwin":
         return machine == "arm64"
     return bool(machine)
+
+
+def _operation_detail(capability: OperationCapability) -> str:
+    if capability.available:
+        return f"{capability.contract_id} available"
+    issues = "; ".join(f"{issue.code}: {issue.subject}" for issue in capability.issues)
+    return issues or f"{capability.contract_id} unavailable"
 
 
 def _age_tool_checks(
@@ -185,28 +193,25 @@ def run_doctor(paths: AppPaths, *, probe_app_server: bool = True) -> dict[str, A
             try:
                 capability_data = capabilities.model_dump(mode="json") | {
                     "fingerprint": capabilities.fingerprint,
-                    "write_enabled": capabilities.write_enabled,
                     "purge_execution_enabled": PURGE_EXECUTION_ENABLED,
                 }
+                common = capabilities.operation(OperationName.INVENTORY_COMMON)
                 checks.append(
                     Check(
                         "Codex App Server",
-                        capabilities.schema_complete,
-                        capabilities.read_only_reason
-                        or f"codex {capabilities.codex_version}; exact schema established",
+                        common.available,
+                        _operation_detail(common),
                     )
                 )
-                checks.append(
+                checks.extend(
                     Check(
-                        "Codex App Server writes",
-                        capabilities.write_enabled,
-                        (
-                            "audited schema allowlist matched"
-                            if capabilities.write_enabled
-                            else capabilities.read_only_reason or "write capability unavailable"
-                        ),
+                        capability.operation.value,
+                        capability.available,
+                        _operation_detail(capability),
                         required=False,
                     )
+                    for capability in capabilities.operation_capabilities
+                    if capability.operation is not OperationName.INVENTORY_COMMON
                 )
                 checks.append(
                     Check(

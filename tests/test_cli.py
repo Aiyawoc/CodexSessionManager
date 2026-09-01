@@ -289,6 +289,10 @@ def test_schema_and_acceptance_cli_write_redacted_non_overwriting_evidence(
     assert audited.exit_code == 0, audited.output
     audited_payload = json.loads(audited.stdout)
     assert audited_payload["output_name"] == schema_path.name
+    assert audited_payload["conclusion"] == "compatible"
+    assert len(audited_payload["operation_capabilities"]) == 5
+    assert "write_enabled" not in audited.stdout
+    assert "exact_profile_match" not in audited.stdout
     assert str(tmp_path) not in audited.stdout
     persisted_schema = SchemaAuditReport.model_validate_json(schema_path.read_bytes())
     persisted_schema.verify()

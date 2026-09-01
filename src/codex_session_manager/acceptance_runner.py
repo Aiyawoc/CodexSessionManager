@@ -188,6 +188,9 @@ def _pending_lifecycle_check(paths: AppPaths) -> str:
     from codex_session_manager.hashing import utc_now
     from codex_session_manager.models import (
         CapabilityMatrix,
+        ContractMethodEvidence,
+        OperationCapability,
+        OperationName,
         ThreadSnapshot,
         ThreadStatus,
         TrimAction,
@@ -205,13 +208,46 @@ def _pending_lifecycle_check(paths: AppPaths) -> str:
         turns=(turn,),
         content_complete=True,
     )
+    operation_methods = {
+        OperationName.INVENTORY_COMMON: (
+            "initialize",
+            "thread/list",
+            "thread/read",
+            "thread/loaded/list",
+        ),
+        OperationName.HISTORY_LEGACY: ("thread/read",),
+        OperationName.HISTORY_PAGINATED: ("thread/turns/list",),
+        OperationName.ARCHIVE: ("thread/archive",),
+        OperationName.UNARCHIVE: ("thread/unarchive",),
+    }
     capabilities = CapabilityMatrix(
         codex_version="acceptance",
         codex_binary_sha256="a" * 64,
         initialize_fingerprint="acceptance",
         schema_sha256="b" * 64,
-        stable_methods=("thread/read", "thread/start"),
+        stable_methods=tuple(
+            sorted({method for methods in operation_methods.values() for method in methods})
+        ),
         schema_complete=True,
+        operation_capabilities=tuple(
+            OperationCapability(
+                operation=operation,
+                contract_id=f"{operation.value}.v1",
+                available=True,
+                contract_rule_fingerprint=f"fixture-rule-{operation.value}",
+                runtime_contract_fingerprint=f"fixture-runtime-{operation.value}",
+                required_methods=methods,
+                method_evidence=tuple(
+                    ContractMethodEvidence(
+                        method=method,
+                        stability="stable",
+                        negotiated=False,
+                    )
+                    for method in methods
+                ),
+            )
+            for operation, methods in operation_methods.items()
+        ),
     )
     plan = TrimPlan.create(
         source_thread=snapshot,
@@ -249,7 +285,7 @@ def _pending_lifecycle_check(paths: AppPaths) -> str:
     cancelled = service.cancel(ready)
     if cancelled.status.value != "cancelled":
         raise ValueError("pending plan cancellation was not persisted")
-    return "waiting, safety check, ready, and cancelled lifecycle persisted"
+    return "fixture synthetic five-operation capabilities; waiting, safety check, ready, and cancelled lifecycle persisted"
 
 
 def _gui_memory_check(paths: AppPaths) -> str:
@@ -287,7 +323,7 @@ def _gui_memory_check(paths: AppPaths) -> str:
             raise ValueError("original GUI did not select the second memory rail button")
     finally:
         window.close()
-    return "original GUI memory mode loaded the registered source and segment model"
+    return "offscreen fixture GUI memory mode loaded the registered source and segment model"
 
 
 def _age_check(_paths: AppPaths) -> str:

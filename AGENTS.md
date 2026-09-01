@@ -6,11 +6,15 @@
 
 - 项目固定使用 CPython `3.13.14` 和 uv 管理环境；禁止使用 `/usr/bin/python3`、系统 Python、全局 pip 或 `sudo pip install`。
 - Codex 任务在线读取和写入只能通过官方 App Server；禁止直接修改 Codex JSONL、SQLite、认证文件或 Codex 配置。
-- 归档、恢复、导入、清理和受支持的上下文应用写操作必须先生成不可变计划，并在执行前复核 SHA-256、能力指纹、状态、内容指纹、计划有效期和后代闭包；上下文审查与投影计划本身不写入 Codex。
-- App Server 协议未知、不完整、版本未审计或映射不稳定时，只开放读取、备份、验证和生成计划；禁止写入。
+- 归档与反归档必须先生成不可变计划，并在执行前复核 SHA-256、能力指纹、状态、内容指纹、计划有效期、账号根、已验证备份和后代闭包；读取、备份和生成计划默认可用。
+- 当前边界是版本无关、契约敏感：五项最小操作契约由静态规则定义并人工复核，运行时不自动学习或扩大写入语义。
+- 当前 Codex 版本、二进制散列和全量 schema 散列是诊断与计划失效证据，不是归档授权条件。
+- 归档与反归档由静态、人工复核的最小操作契约逐项评估。
+- 无关变化自动兼容；相关方法/字段/关键枚举不兼容时只关闭受影响操作。
+- App Server 协议或某项契约未知、不完整或映射不稳定时，只关闭受影响操作并输出具体原因；其它读取、备份、验证和计划能力继续可用。
 - 当前上下文能力仅限审查与投影计划；原任务应用不可用，派生投影在完整真实 round-trip probe 通过前保持阻塞。未来若重新开放执行，只能创建受支持的派生任务并保持原任务不变；不得通过编辑原始 JSONL 或 SQLite 伪造裁剪结果。
-- 父任务归档、恢复或删除前必须展开并备份全部 spawned descendants；发现缺失父节点、环、闭包重叠或内容不完整时停止写入。
-- 自动操作最多归档。永久删除不设置固定等待期，但只允许用户对单个已归档根主动触发；必须通过独立 purge 计划、CSM 可信归档证据、与该归档事件绑定的当前有效备份、运行进程/loaded/后台终端复核和精确确认短语。只有完整备份而没有 CSM 可信归档证据时仍拒绝删除。当前 2.5 已因 App Server 版本/状态迁移不兼容和 descendant 删除闭包失败按 `CLOSED_WITH_UPSTREAM_BLOCKER` 关闭；只保留资格盘点、计划和审查，GUI/CLI 不得执行永久删除。
+- 父任务归档或恢复前必须展开并备份全部 spawned descendants；发现缺失父节点、环、闭包重叠或内容不完整时停止写入。
+- 第一版任务管理只提供盘点、备份、批量归档和反归档；不提供永久删除的资格盘点、计划、GUI、CLI、Skill、MCP 或执行器。上游 schema 中存在删除方法不构成 CSM 能力授权。
 - 写入超时后先查询实际状态，禁止盲目重试；任何不确定结果都按“可能已完成”处理。
 - 备份使用 age 加密和原子发布，不包含 Codex 认证、项目源码或未授权配置；口令不得进入模型上下文、参数、环境变量、日志或提交。
 - `CSM_CODEX_HOME` 与 `CODEX_HOME` 同时设置时必须解析到同一数据根；否则所有入口拒绝继续。
@@ -30,8 +34,9 @@
 ## 文档与模块入口
 
 - 领域语言与关系：`CONTEXT.md`；长期架构决策：`docs/adr/`。
+- 版本无关操作契约：`docs/adr/0011-version-independent-operation-contracts.md`；ADR 0001 仅在精确画像授权部分被局部取代。
 - 用户工作流、安装和安全说明：`README-cn.md`；英文说明：`README.md`。
-- App Server 新画像人工批准：`docs/acceptance/app-server-schema-approval.md`。
+- App Server 操作契约人工审查：`docs/acceptance/app-server-schema-approval.md`。
 - v1.0.1 历史真实账号人工验收：`docs/acceptance/macos-real-account-v1.0.1.md`。
 - v1.1.0 首次交付验收：`docs/acceptance/first-delivery-v1.1.0.md`。
 - Python 版本、依赖组和锁文件：`.python-version`、`pyproject.toml`、`uv.lock`。
@@ -39,12 +44,12 @@
 - Skill 安全不变量：`skills/manage-codex-sessions/references/safety.md`。
 - Skill 命令工作流：`skills/manage-codex-sessions/references/commands.md`。
 - App Server 客户端和能力门禁：`src/codex_session_manager/app_server.py`。
-- 人工批准协议画像与只读差异报告：`protocol_profiles.py`、`protocol_profiles.json`、`schema_audit.py`。
+- 人工批准协议规则与只读差异报告：`protocol_profiles.py`、`protocol_profiles.json`、`schema_audit.py`。
 - 不可变模型、指纹和计划：`models.py`、`hashing.py`、`plans.py`。
 - 盘点、清理、备份、导入和裁剪：`inventory.py`、`cleanup.py`、`backup.py`、`importing.py`、`trim.py`。
 - CLI/GUI/Hook 共用编排边界：`workflows.py`；脱敏人工验收证据：`acceptance.py`。
 - Hook 和 standalone 分发入口：`hooks.py`、`dispatcher.py`、`config.py`。
-- 审查请求与 MCP 只读编排边界：`review_requests.py`、`mcp_bridge.py`、`mcp_server.py`；MCP 不暴露归档、永久删除、裁剪应用或记忆写入执行器。
+- 审查请求与 MCP 只读编排边界：`review_requests.py`、`mcp_bridge.py`、`mcp_server.py`；MCP 不暴露归档/反归档执行器、永久删除、裁剪应用或记忆写入执行器。
 - PySide6 GUI：`src/codex_session_manager/gui/`；测试：`tests/`；构建、安装和验收：`scripts/`。
 
 保持模块边界：App Server 客户端只负责协议和能力探测；领域服务不依赖 Qt；GUI、CLI、Skill 和 Hook 共用模型、计划、指纹和安全校验；任何入口都不得绕过计划层直接写入 Codex 数据。
@@ -95,7 +100,7 @@
 - `manage-codex-sessions` 只在用户显式调用 Skill 或明确要求使用时运行；普通代码任务不得自动触发清理、恢复、导入、裁剪或 Hook 安装。
 - Hook 必须指向平台稳定安装路径：macOS 为 `~/Applications/CodexSessionManager.app`，Windows 为 `%LOCALAPPDATA%\CodexSessionManager`；禁止指向源码、`.venv` 或 uv。stdout 只能输出最终 JSON，日志写入独立文件。
 - Hook 使用 `session_id + turn_id + trigger` 去重，总超时 600 秒、内部截止 540 秒；Hook 模式只保存计划，不在进行中的 turn 内创建派生任务。
-- Hook、恢复、导入、归档和裁剪前先运行 `doctor`，再执行 dry-run/plan；不得把用户确认隐含为授权。
+- Hook、归档/反归档和裁剪计划前先运行 `doctor`，再执行 dry-run/plan；恢复/导入仅生成计划，不写入 Codex；不得把用户确认隐含为授权。
 
 ## 测试与验收
 
@@ -138,7 +143,7 @@ scripts/accept_macos_bundle.sh dist/CodexSessionManager.app
 
 Windows bundle 构建还必须执行 `scripts/test_windows_install_workflow.ps1`，覆盖临时 `%LOCALAPPDATA%`、重复安装、中文空格路径、无 Python/uv/age PATH 和 Hook 安装/卸载。Apple Silicon CI 使用 `macos-15` 并显式断言 `arm64`；bundle 验收只接受当前源码的 fresh build。
 
-验收至少覆盖内置 Python、PySide6、Qt 插件、age 校验、无 Python/uv 的运行、中文或空格路径和可写用户目录。隔离测试使用 `scripts/install_test_app.sh`；其复制的 Codex home 可能包含认证信息，结束后只删除脚本打印的精确 `TEST_ROOT`。当前不得执行永久删除；未来只有先关闭 2.5 上游 blocker，并在临时隔离数据根完成完整 round-trip 后，才可重新评估一次由用户明确要求、已复验全数据根回滚快照且 GUI 单选精确已归档根的真实账号例外。
+验收至少覆盖内置 Python、PySide6、Qt 插件、age 校验、无 Python/uv 的运行、中文或空格路径和可写用户目录。隔离测试使用 `scripts/install_test_app.sh`；其复制的 Codex home 可能包含认证信息，结束后只删除脚本打印的精确 `TEST_ROOT`。第一版验收只覆盖明确提供的能力，不得增加永久删除测试或绕过 App Server。
 
 报告结果时区分测试层级：单元测试、假 App Server、offscreen GUI、本机构建和 bundle 验收只能证明对应层级；真实账号联调、真实用户输入、签名公证和生产验收必须单独标明证据。
 

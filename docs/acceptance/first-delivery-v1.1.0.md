@@ -50,6 +50,8 @@ production_ready: false
 failed_required_checks: []
 ```
 
+本 Runbook 采用版本无关、契约敏感的边界：当前 Codex 版本、二进制散列和全量 schema 散列只作为诊断与计划失效证据，不是归档授权条件。归档与反归档由静态、人工复核的五项最小操作契约逐项评估；无关变化自动兼容，相关方法、字段或关键枚举不兼容时只关闭受影响操作。
+
 ## 3. 构建 fresh macOS App
 
 测试版构建使用 ad-hoc 签名，并跳过真实 App Server 写入验收：
@@ -122,8 +124,8 @@ csm cleanup review --older-than-days 1 --project /absolute/test/project
 - 建议根和后代按项目显示；
 - 用户取消的根不进入最终范围；
 - 安全补选默认不选中；
-- 永久删除资格只读且不可混入归档；
-- “备份并归档”首次确认生成本机托管的单一 age identity，后续只选择输出路径，不再输入 recipient 或手工选择 identity；
+- 永久删除不可用且不可混入归档；
+- “备份”首次确认生成本机托管的单一 age identity，后续只选择输出路径，不再输入 recipient 或手工选择 identity；
 - 备份完整复验后才归档；
 - 备份后人为制造状态或内容漂移时归档被拒绝；
 - 审计链包含备份、最终计划和归档结果。
@@ -141,7 +143,7 @@ csm cleanup review --older-than-days 1 --project /absolute/test/project
 5. 在“待处理计划”中点击“检查状态”；
 6. active 时保持 WAITING，idle/notLoaded 且指纹一致时进入 READY；
 7. 打开复核，确认加载的是原密封计划；
-8. 修改源内容或能力画像后旧计划进入 INVALIDATED；
+8. 修改源内容或相关操作契约后旧计划进入 INVALIDATED；
 9. 记录 `thread/inject_items` 派生投影 round-trip 失败为 `blocked_upstream`，不运行 `trim apply`、不盲目重试、不把目标创建或 `{}` 响应标记为成功。
 
 2.4 的上下文应用执行层已按 [`2.4 收口记录`](v1.1.0-phase-2.4-context-projection-closure.md) 关闭。本节只验收审查、投影计划、Pending 状态和源任务保护；不得要求或声称派生任务 `APPLIED`。
@@ -214,7 +216,7 @@ get_pending_review_status
 open_review_demo
 ```
 
-不得出现归档、永久删除、裁剪应用、恢复应用或记忆写入执行器。
+不得出现 archive/unarchive executor、永久删除、裁剪应用、恢复应用或记忆写入执行器。
 
 依次用测试数据验证：
 

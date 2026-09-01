@@ -5,7 +5,7 @@
 
 1. 只读盘点、协议审计和 MCP/GUI 请求链检查；
 2. 在停止 Codex、完成并复验排除认证文件的 .codex 数据加密回滚快照后，只对已经确认属于本项目的
-   少量任务执行真实归档、对话标题修改和记忆文件修改；上下文只验收审查、投影计划和源任务保护，永久删除与上下文应用均跳过执行。
+   少量任务执行真实归档/反归档；上下文只验收审查、投影计划和源任务保护。永久删除、重命名、restore/import 写入、上下文应用和 MCP 写入均跳过执行。
 
 本计划不是生产发布，也不是把 .codex 打包给其他机器。.codex 快照仍可能包含真实对话
 和其他敏感数据，但脚本会排除根目录认证文件（`auth.json`、`credentials*.json`、
@@ -39,8 +39,9 @@ CSM_INSTALL_SKIP_APP_SERVER=1 \
 test -x "$HOME/.local/bin/csm"
 ~~~
 
-不限制 Codex CLI 的版本用于读取、备份和生成计划。但真实写入仍必须命中 CSM 人工
-批准的精确 App Server schema 画像；不能用版本范围、跳过检查或环境变量绕过这一门禁。
+Codex CLI 的版本、二进制和全量 schema 散列可随运行时变化；它们是诊断与计划失效证据，
+不是归档授权条件。真实归档/反归档写入仍必须分别通过 CSM 静态、人工复核的最小操作契约，
+不能用跳过检查或环境变量绕过计划、备份、状态、内容指纹和后代闭包门禁。
 
 ## 第一步：只读基线和请求链
 
@@ -64,12 +65,12 @@ git -C "$CSM_REPO_ROOT" status --short > "$CSM_EVIDENCE_DIR/worktree-status.txt"
 
 - Python、PySide6、Qt、Qt 插件、age、age-keygen、可写 CSM 私有目录和 App Server 检查通过；
 - schema 完整；
-- exact_profile_match、conclusion、write_enabled 与实际批准状态一致；
-- unknown 或 incomplete schema 时，记录报告并停止所有 Codex 写入；
+- 五项 `operation_capabilities` 与实际契约评估一致，并记录具体阻塞原因；
+- 相关契约未知或 incomplete 时，只关闭受影响操作；其它读取、备份、验证和计划继续可用；
 - 当前候选的 production_ready 永远为 false。
 
-如果当前 Codex 版本没有对应的精确人工批准画像，第一步仍可继续读取和备份，但第二步
-只能做到备份和生成计划，不能进入真实归档、删除或对话修改。
+如果某项归档/反归档契约不兼容，第一步仍可继续读取、备份和生成计划，但第二步
+只能执行仍通过契约和其它安全门禁的操作；不得执行永久删除、重命名或其它当前不可用写入。
 
 ### 1.2 只读盘点并锁定项目范围
 
@@ -81,8 +82,8 @@ git -C "$CSM_REPO_ROOT" status --short > "$CSM_EVIDENCE_DIR/worktree-status.txt"
   > "$CSM_EVIDENCE_DIR/memory-sources.json"
 ~~~
 
-从 project-threads.json 中人工选择最多三个任务 ID，分别作为后续的
-ARCHIVE_THREAD_ID、EDIT_THREAD_ID、TRIM_THREAD_ID。每个 ID 都必须满足：
+从 project-threads.json 中人工选择一个任务 ID 作为后续的
+ARCHIVE_THREAD_ID。该 ID 必须满足：
 
 - cwd 与 CSM_PROJECT_ROOT 完全一致；
 - 不是 pinned、ephemeral 或 active；
@@ -93,13 +94,10 @@ ARCHIVE_THREAD_ID、EDIT_THREAD_ID、TRIM_THREAD_ID。每个 ID 都必须满足�
 
 ~~~bash
 export ARCHIVE_THREAD_ID="从 project-threads.json 手工复制的精确 ID"
-export EDIT_THREAD_ID="从 project-threads.json 手工复制的精确 ID"
 export TRIM_THREAD_ID="从 project-threads.json 手工复制的精确 ID"
 
 "$CSM_CLI" threads show "$ARCHIVE_THREAD_ID" \
   > "$CSM_EVIDENCE_DIR/archive-thread-before.json"
-"$CSM_CLI" threads show "$EDIT_THREAD_ID" \
-  > "$CSM_EVIDENCE_DIR/edit-thread-before.json"
 "$CSM_CLI" threads show "$TRIM_THREAD_ID" \
   > "$CSM_EVIDENCE_DIR/trim-thread-before.json"
 ~~~
@@ -180,7 +178,7 @@ open_review_demo
 
 - CSM 版本、候选 SHA、doctor 和 schema audit 已保存；
 - project-threads.json 中的所有后续任务均人工确认属于本项目；
-- MCP 工具恰好十个，没有 archive、delete、purge、apply 或 memory-write 工具；
+- MCP 工具恰好十个，没有 archive/unarchive executor、永久删除、上下文应用或 memory-write 工具；
 - inspect/status 返回不含正文、token 或认证信息；
 - 未发生 Codex 对话、记忆文件或 .codex 的改变。
 
@@ -188,7 +186,7 @@ open_review_demo
 
 第二步的“受控”不是把整个账号锁成项目沙箱；官方 App Server 仍连接当前账号，
 因此安全边界由“停止其它客户端 + 精确项目 cwd + 精确任务 ID + 单根操作 + 计划复核”
-共同构成。只要范围、能力画像、状态、内容指纹或后代闭包有任何漂移，就停止。
+共同构成。只要范围、相关操作契约、状态、内容指纹或后代闭包有任何漂移，就停止受影响操作。
 
 ### 2.1 停止进程并创建本机 .codex 数据回滚快照
 
@@ -256,9 +254,9 @@ test -d "$CSM_LOCAL_BACKUP_ROOT/restored-codex-home"
   > "$CSM_EVIDENCE_DIR/archive-thread-before-write.json"
 ~~~
 
-只有当 doctor 报告中的 write_enabled 为 true、schema audit 为 trusted_write 且
-exact_profile_match 为 true、differences 为空时，才可继续真实 Codex 写入。当前
-版本未知或 schema 指纹变化时必须停止；不要修改 protocol_profiles.json 来临时放行。
+只有当 `archive` 或 `unarchive` 对应契约可用，且计划、备份、状态、内容指纹和完整闭包
+均通过复核时，才可继续真实 Codex 写入。版本、二进制或全量 schema 指纹变化本身不阻塞；
+相关契约变化必须报告具体原因，不得修改规则或报告来临时放行。
 
 再次人工确认 ARCHIVE_THREAD_ID 的 cwd 是 CSM_PROJECT_ROOT，且它的完整 descendants
 闭包仍只属于该项目。一次只处理一个根；不使用没有项目过滤的全局批量清理。
@@ -277,9 +275,9 @@ exact_profile_match 为 true、differences 为空时，才可继续真实 Codex 
 
 1. 初始列表不选中任何候选；手工选择且只选择 ARCHIVE_THREAD_ID；
 2. 展开根和 descendants，核对 cwd、状态、标题和数量；
-3. 不选择永久删除候选分组；
-4. 点击“备份并归档”并选择 `.csmbackup` 输出路径；首次使用时确认创建本机托管的单一 age identity，不手工输入 recipient 或选择 identity 文件；
-5. 展开完整 diff/范围，确认备份复验成功后再确认归档；
+3. 点击“备份”并选择 `.csmbackup` 输出路径；首次使用时确认创建本机托管的单一 age identity，不手工输入 recipient 或选择 identity 文件；
+4. 复验备份后点击“归档”，展开完整范围并确认；
+5. 切换到“已归档”筛选，确认同一选择的按钮显示“反归档”；完成反归档后再次归档，以保留预期最终状态；
 6. 保存最终 plan_id、backup manifest SHA-256 和完成结果，不保存正文。
 
 随后验证：
@@ -294,20 +292,10 @@ exact_profile_match 为 true、differences 为空时，才可继续真实 Codex 
 最终计划和归档结果。任何备份复验失败、状态/内容/能力/闭包漂移都必须拒绝归档。
 本节的 GUI 托管密钥与 2.2 用于整体 `.codex` 回滚快照的 `age-test-identity` 相互独立；不删除、覆盖或迁移后者。
 
-### 2.4 真实修改：对话标题、上下文审查与投影计划和本地记忆文件
+### 2.4 上下文审查与投影计划和本地记忆文件
 
-对话本身不能通过编辑原始 JSONL/SQLite 直接修改。当前可验收的真实写入是标题修改和本地记忆文件修改；上下文只验收计划层。
-
-#### 对话标题修改（可逆 App Server 写入）
-
-~~~bash
-"$CSM_CLI" gui open --thread "$EDIT_THREAD_ID"
-~~~
-
-在任务列表中只选 EDIT_THREAD_ID，右键选择“更名”，改成
-CSM v1.1.0 controlled test title，确认精确 plan_id 后应用。用 threads show 核对
-标题已改变；再用同一界面把标题改回原值，验证第二次计划和写入也通过。active、
-pinned、ephemeral 或闭包不完整时不得更名。
+对话本身不能通过编辑原始 JSONL/SQLite 直接修改。第一版不提供任务重命名、restore/import
+写入或上下文应用；本节只验收上下文计划层和本地记忆文件的独立安全流程。
 
 #### 上下文审查与投影计划（不应用到 Codex）
 
@@ -322,7 +310,7 @@ pinned、ephemeral 或闭包不完整时不得更名。
 3. 点击“保存方案”，记录 plan_id、plan SHA-256 和 projection SHA-256；
 4. 对比计划保存前后的原任务摘要，确认原任务未变化；
 5. 若通过 Hook 生成 PendingTrimPlan，验证 WAITING → READY → CANCELLED；
-6. 改变源内容或能力画像后，确认旧计划变成 INVALIDATED，不能回退到 READY；
+6. 改变源内容或相关操作契约后，确认旧计划变成 INVALIDATED，不能回退到 READY；
 7. 将 `thread/inject_items` 派生投影的既有真实 round-trip 失败记录为 `blocked_upstream`，不运行 `trim apply`、不盲目重试、不把目标创建或 `{}` 响应标记为成功。
 
 本步骤不创建派生任务。2.4 已按 [`2.4 收口记录`](v1.1.0-phase-2.4-context-projection-closure.md) 关闭：上下文审查与投影计划可用，原任务应用不可用，派生投影当前真实 round-trip 失败。
@@ -387,42 +375,9 @@ Codex desktop 只能准备建议：
 不要调用不存在的写入工具，也不要声称已经写入记忆文件。
 ~~~
 
-### 2.5 永久删除：`CLOSED_WITH_UPSTREAM_BLOCKER`
+### 已退役流程的历史证据
 
-固定 14 天等待期已取消，但本轮真实写入发生部分提交，当前不得再执行永久删除。以下条件保留为未来重新开放门禁，而不是当前操作步骤：
-
-- 根和完整 descendants 已归档、inactive、非 pinned/ephemeral；
-- 每个受影响任务都有 archive-bound 的已验证加密逻辑备份；
-- 每个受影响任务都有 CSM 自有可信归档审计记录，且记录绑定的 manifest 与当前有效备份完全一致；
-- 写入前重新通过 doctor、schema、状态、内容指纹、能力指纹和闭包复核；
-- 没有其它 Codex 进程、loaded thread 或 background terminal；
-- 只选择一个已经确认属于 CSM_PROJECT_ROOT 的根；
-- 计划 ID 只读展示，人工只需单次精确输入“确认删除”。
-
-未来只有在批准与当前状态迁移匹配的 App Server，并先于临时隔离数据根完成完整 round-trip 后，才能重新编写实体操作步骤。重新开放验收仍必须确认：
-
-1. 计划只有这个根及其完整 descendants；
-2. CSM 可信归档记录和 archive-bound 当前 backup evidence 均满足；
-3. 对话 cwd 仍为 CSM_PROJECT_ROOT；
-4. 计划 ID 与单根/完整 descendants 范围只读显示正确；
-5. 唯一一处确认输入精确短语“确认删除”。
-
-重新开放后的删除必须运行 `threads show` 和 `audit verify`，同时保存根和全部 descendants 均不存在的回读结果、purge plan SHA-256、审计事件和备份 manifest SHA-256；不保存正文。只证明根不存在不再构成通过证据，fixture、offscreen GUI 或只有计划的结果也不能替代。
-
-当前 GUI/CLI 应用均失败关闭。不得用 App Server 原始方法、MCP 工具、脚本或直接文件删除绕过 blocker 或 purge 计划。
-
-#### 2026-09-01 本轮门禁记录
-
-- 实现层证据：`scripts/check.sh`、`scripts/test_source_workflow.sh` 均通过；Ruff、严格 mypy、UI 生成一致性、Skill 校验和 `255 passed` 全部通过。大文本敏感筛查曾重复触发 Qt 心跳超时，定位为 macOS `sleep(0)` 不能保证主线程调度；改为每个 256 KiB 扫描块让出 1 ms 后，完整 GUI 套件和全套测试通过。
-- bundle 层证据：从当前源码 fresh 构建 arm64 standalone；`accept_macos_bundle.sh`、ad-hoc `codesign --verify --deep --strict`、中文空格路径、内置 CPython/PySide6/Qt/age 和 bundled Skill 工作流通过。
-- 真实 App Server 写入与回读证据：显式使用已批准的 Codex CLI `0.142.1`，精确 schema SHA-256 `3e07fdc39d62bb0afaa1509863bebee96178572372a8eeaa7e95bddb2b2f24ad`，`write_enabled=true`。用户指定根 ID 的 SHA-256 为 `e1c2bddbdd61d18259e51fc19192c3d118f8c5e13601e9812a718862eae501af`；托管 age 备份覆盖根与一个 descendant，manifest SHA-256 为 `96d26c9fb91ee7f6e18a1c9064a2ad5b3320b1f8ef052c1fa9a34454bad5584e`；归档计划 ID 仅记录 SHA-256 `ea3adc42650ff38a4819035efb4466851cfe3caefea1471e5b15b8451b24696c`。归档列表回读确认两者均为 `archived=true`、`notLoaded`、非 pinned。
-- 首次实体 GUI 永久删除尝试在任何 `thread/delete` 之前被 `thread/backgroundTerminals/list` 的 `-32600 thread not found` 停止。根因是该接口无法寻址 `archived + notLoaded` 任务；实现仅对同一任务的这一精确错误组合归一化为空终端结果，其它状态、错误码或 ID 继续失败关闭。
-- 第二次实体 GUI 尝试通过后台终端复核后，又在任何 `thread/delete` 之前被进程门禁停止。只读复现确认 `SubprocessAppServer.pid` 是 Codex JavaScript 启动包装器，而 `ps` 同时显示它拉起的原生 `codex app-server` 子进程；旧门禁只排除包装器 PID，因而把同一受控 App Server 的子进程误判为“其它 Codex”。修复改为只排除该精确受控 PID 的完整后代进程树，任何无关 Codex 进程仍失败关闭。失败后官方 App Server 再次确认闭包 2 个任务均存在、已归档且为 `notLoaded`，因此两次尝试都不能记为真实永久删除通过。
-- 等待时间定位：真实账号只读计时中，连接与协议探测为 0.821 秒；1127 个任务的完整谱系摘要复核为 8.555 秒；目标根和一个 descendant 的内容深读为 0.029 秒。旧删除执行会在初次检查和最终复核中各把全账号 1127 个任务的完整内容深读一遍；修复复用现有 `list_for_targets`，两轮仍各自重建完整摘要谱系、复核闭包并深读目标内容，但不再深读无关任务。
-- 第三次实体 GUI 尝试首次真正调用 `thread/delete`，App Server 返回 `-32603` 和 `no such table: agent_jobs`。写后回读确认根已不存在，但一个 descendant 仍存在、已归档、`notLoaded` 且完整历史可读，因此这是部分提交而不是失败前零写入。审计中只有这一次 purge 写入事件。
-- 用户第二次点击删除时，GUI 仍持有陈旧根并在新计划阶段报“任务已不存在”；没有再次调用 `thread/delete`。CSM 现改为任何写错误后自动刷新任务列表，且不重试可能已提交的 JSON-RPC 写错误。
-- 上游根因：批准的全局 Codex `0.142.1` 删除实现仍访问 `agent_jobs`，而本机较新 bundled Codex `0.151.0-alpha.7.2` 包含删除该表的迁移；0.142.1 又会先删 rollout、后清理状态库。官方删除闭包同时没有覆盖 CSM 从 `thread/read` 恢复出的 descendant。未直接读取 SQLite；结论来自官方源码、二进制静态字符串、错误和写后 App Server 回读。
-- 阶段结论：2.5 按 [`CLOSED_WITH_UPSTREAM_BLOCKER`](v1.1.0-phase-2.5-permanent-purge-closure.md) 关闭。当前只保留永久删除资格盘点、计划和审查，GUI/CLI 应用失败关闭；残留 descendant 不重试、不直接修补 Codex 存储。重新开放前必须批准与当前数据迁移匹配的 App Server，并在隔离数据根完成根和 descendant 的重启后完整 round-trip。
+永久删除不属于第一版能力或本 Runbook。曾经的设计与真实部分提交证据已移至 [`docs/archive/2026-09-01-purge-retirement/`](../archive/2026-09-01-purge-retirement/)，并标记为 `SUPERSEDED`；不得把归档记录当作当前操作步骤。
 
 ## 3. 回滚和收尾
 

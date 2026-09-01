@@ -16,7 +16,7 @@ uv run --locked csm doctor
 
 Hook 中禁止使用 `uv`、`.venv`、网络下载或依赖安装。
 
-## 盘点、归档和删除
+## 盘点、备份与归档管理
 
 ```text
 csm threads list --project /absolute/project/path
@@ -31,17 +31,15 @@ csm cleanup plan --action archive --older-than-days 90
 csm backup create OUT.csmbackup --thread TASK_ID --recipient AGE_RECIPIENT --identity IDENTITY_FILE
 csm cleanup apply PLAN.json --confirm PLAN_ID
 csm cleanup reconcile PLAN.json --confirm PLAN_ID
-csm purge plan
-csm purge apply PLAN.json --confirm "确认删除"
 ```
 
-固定归档等待期已取消，但永久删除仍不能由备份直接解锁。目标必须先由 CSM 完成归档并留下绑定同一备份 manifest 的可信归档证据。当前 `csm purge apply` 和 GUI 删除按钮因真实部分提交证据按 `CLOSED_WITH_UPSTREAM_BLOCKER` 关闭；只能使用 `csm purge plan` 审查资格和范围。MCP、Hook 和自动清理没有永久删除入口。
+`csm cleanup plan/apply` 只处理批量归档或反归档。归档前必须存在覆盖完整后代闭包的已验证备份；计划绑定目标状态、内容、契约和运行时指纹，执行前漂移即失效。永久删除、重命名、restore/import 写入和上下文应用不属于当前能力，MCP、Hook 和自动清理没有 Codex 写入器。
 
 `reconcile` 只在 Codex App 原生任务工具已完成归档后使用；它不执行 Codex 写入。
 
 选择根任务创建备份时，CSM 会自动展开其完整派生后代；输出中的 `covered_thread_ids` 必须与随后归档计划的 affected IDs 对齐。
 `cleanup review` 只生成结构化建议和桌面审查请求，不创建归档 ActionPlan，也不满足备份或执行授权。
-清理请求会把候选灌入原有项目/任务列表并预选；用户在同一 GUI 中调整最终选择。“备份并归档”只要求选择输出路径；首次确认创建本机托管的 age identity，后续自动复用。程序先完整复验备份，再重读状态和建议指纹、重建最终 ActionPlan 并执行；失败时不会继续归档。CLI 命令仍提供显式 recipient/identity 的分步路径。上下文请求会把本地绑定指纹后的 turn/item 建议灌入原时间线与动作面板；它只准备审查和投影计划，不执行 Codex 上下文应用。
+清理请求会把候选灌入原有项目/任务列表但不预选；用户在同一 GUI 中决定最终选择。“备份”与“归档”分为两个明确步骤；首次备份确认创建本机托管的 age identity，后续自动复用。归档前程序重读状态、建议指纹、契约和后代闭包并生成最终 ActionPlan；失败时不会继续。所选内容全部已归档时同一按钮执行反归档，混合选择时禁用。CLI 命令仍提供显式 recipient/identity 的分步路径。上下文请求会把本地绑定指纹后的 turn/item 建议灌入原时间线与动作面板；它只准备审查和投影计划，不执行 Codex 上下文应用。
 
 ## 备份、恢复与导入
 
@@ -77,7 +75,7 @@ csm audit show
 
 `cleanup`、`context` 和 `memory` 三种 `--page` 值复用原有审查 GUI；记忆模式由左侧第二按钮切换。`pending` 与 `backup_restore` 使用辅助入口。
 
-当前基线不运行 `csm trim apply`：原任务应用不可用，派生投影的真实 round-trip 失败。`thread/inject_items` 返回 `{}`、目标 ID 已创建或方法存在，都不能视为投影写入成功；只有完整 probe 通过并重新批准能力后才可恢复研究。
+当前基线不运行 `csm trim apply`：原任务应用不可用，派生投影的真实 round-trip 失败。`thread/inject_items` 返回 `{}`、目标 ID 已创建或方法存在，都不能视为投影写入成功；只有完整 probe 通过并重新批准契约后才可恢复研究。
 
 CLI 仍保留以下兼容命令路径供版本契约检查，但它不是当前可交付写能力，禁止在本基线上运行：
 

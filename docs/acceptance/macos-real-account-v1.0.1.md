@@ -1,5 +1,7 @@
 # v1.0.1 macOS 真实账号与 Cocoa GUI 验收 Runbook
 
+> **SUPERSEDED IN PART（2026-09-01）**：本文是历史验收流程；其中精确版本/全量 schema 授权和永久删除相关边界不描述当前产品。第一版现行任务管理只提供盘点、备份、批量归档和反归档；现行契约见 [`ADR 0011：版本无关、契约敏感的 App Server 操作边界`](../adr/0011-version-independent-operation-contracts.md)。正文结论保持不变。
+
 本流程必须由维护者在真实 Apple Silicon macOS 上逐阶段执行。它不会被 CI 或“一键脚本”替代，也不授权永久删除、恢复、导入、真实 Hook 安装、发布、签名或公证。
 
 ## 1. 范围和前置条件

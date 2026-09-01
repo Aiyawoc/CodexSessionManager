@@ -4,10 +4,10 @@
 
 ## 当前 v1.1 状态
 
-- 当前基线：`main` 当前提交；单项历史收口文档各自保留当时的精确基线。
+- 当前基线：`main` 当前提交；历史文档各自保留当时的精确基线，精确版本与全量 schema 散列仅作为诊断和计划失效证据。
 - 当前阶段：继续完成 v1.1 其它功能验收；2.4 上下文应用执行层不再强行推进。
 - 2.4 判定：`CLOSED_WITH_UPSTREAM_BLOCKER`
-- 2.5 判定：`CLOSED_WITH_UPSTREAM_BLOCKER`
+- 第一版 Codex 写能力：仅批量归档和反归档；永久删除、重命名、restore/import 写入、上下文应用和 MCP 写入不可用。
 - 已证明：上下文审查与投影计划可生成；源任务在失败后保持完整。
 - 未证明：派生投影可以持久化；人工投影可以安装回原任务；敏感信息已经从 Codex 历史或活动上下文中删除。
 - 后续顺序：先完成 v1.1 其它验收；再优先实现敏感信息修改计划与受支持目标；最后研究其它官方上下文应用方向。
@@ -18,7 +18,6 @@
 - 应用到原任务：不可用；
 - 派生投影：当前真实 round-trip 失败，保持 `blocked_upstream`；
 - 敏感信息确定性 `Replace/Redact/Protect`：v1.1 其它验收完成后的下一优先级；
-- 2.5 永久删除：真实 `thread/delete` 出现根已删除但 descendant 保留的部分提交；资格盘点、不可变计划和审查可用，GUI/CLI 应用保持 `blocked_upstream`。原有单根、可信归档、archive-bound 当前备份、进程和确认门禁不降低。
 
 ## 现行入口
 
@@ -26,7 +25,7 @@
 
 - [`local-controlled-v1.1.0.md`](local-controlled-v1.1.0.md)：v1.1.0 本机两步受控验收主 Runbook。
 - [`v1.1.0-phase-2.4-context-projection-closure.md`](v1.1.0-phase-2.4-context-projection-closure.md)：2.4 上下文投影的正式结论、真实证据和停止边界。对 2.4 的冲突表述以该文件为准。
-- [`v1.1.0-phase-2.5-permanent-purge-closure.md`](v1.1.0-phase-2.5-permanent-purge-closure.md)：2.5 永久删除的部分提交证据、上游根因、执行停止边界和重新开放门禁。对 2.5 的冲突表述以该文件为准。
+- [`v1.1.0-phase-2.5-permanent-purge-closure.md`](v1.1.0-phase-2.5-permanent-purge-closure.md)：已退役的永久删除历史证据与上游根因；当前不提供其资格盘点、计划、GUI、CLI、Skill、MCP 或执行器。
 
 ### 首次交付与正式发布
 
@@ -36,6 +35,8 @@
 ### 协议画像与历史验收
 
 - [`app-server-schema-approval.md`](app-server-schema-approval.md)：App Server 精确画像人工批准流程。
+- [`../adr/0011-version-independent-operation-contracts.md`](../adr/0011-version-independent-operation-contracts.md)：版本无关、契约敏感的五项操作边界；归档/反归档逐项评估。
+- [`app-server-schema-0.151.0-alpha.7.2.md`](app-server-schema-0.151.0-alpha.7.2.md)：历史精确画像证据，仅用于诊断和计划失效。
 - [`macos-real-account-v1.0.1.md`](macos-real-account-v1.0.1.md)：v1.0.1 历史真实账号验收。
 
 ## 规范性补充
@@ -43,7 +44,7 @@
 - [`../CodexSessionManager-v1.1-context-projection-and-sensitive-data-plan.md`](../CodexSessionManager-v1.1-context-projection-and-sensitive-data-plan.md)：v1.1 收口、敏感信息修改优先级和后续研究计划。
 - [`../adr/0009-defer-context-projection-application.md`](../adr/0009-defer-context-projection-application.md)：延期上下文投影应用的架构决策。
 
-在 README、Skill、旧 Runbook 和二期计划完成统一修订前，上述两个文件以及 2.4 收口记录对以下内容具有优先级：
+在 README、Skill、旧 Runbook 和二期计划完成统一修订前，上述文件以及 2.4 收口记录对以下内容具有优先级：
 
 - 2.4 是否通过；
 - 当前是否支持上下文应用；

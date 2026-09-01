@@ -17,11 +17,25 @@ env UV_CACHE_DIR=/private/tmp/csm-uv-cache QT_QPA_PLATFORM=offscreen uv run --lo
 
 失败集中在 GUI 仍访问已删除的全局 `write_enabled`、列表结果丢弃能力矩阵和新增契约回归未满足。
 
-GREEN：
+GREEN（attempt 1，dirty-tree evidence）：
 
 ```text
 env UV_CACHE_DIR=/private/tmp/csm-uv-cache QT_QPA_PLATFORM=offscreen uv run --locked pytest tests/test_gui.py tests/test_review_mode_gui.py -q
 52 passed
+```
+
+该次 52 passed 来自 attempt-1 的 dirty working tree，仅记录为实现过程证据，不能证明 Task 5 提交自包含。
+
+attempt 2（clean temporary checkout + fresh archive evidence）：
+
+```text
+env UV_CACHE_DIR=/private/tmp/csm-uv-cache QT_QPA_PLATFORM=offscreen uv run --locked pytest tests/test_gui.py tests/test_review_mode_gui.py -q
+48 passed
+```
+
+```text
+env UV_CACHE_DIR=/private/tmp/csm-uv-cache uv run --locked ruff format --check src/codex_session_manager/gui/controller.py src/codex_session_manager/gui/i18n.py tests/test_gui.py tests/test_review_mode_gui.py
+All files already formatted!
 ```
 
 ```text

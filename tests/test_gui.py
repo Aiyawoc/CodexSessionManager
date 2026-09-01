@@ -1274,7 +1274,7 @@ def test_designer_generated_modules_are_reproducible(tmp_path: Path) -> None:
             capture_output=True,
             text=True,
         )
-    assert generated.read_bytes() == committed.read_bytes()
+        assert generated.read_bytes() == committed.read_bytes()
 
 
 def test_task_inventory_keeps_capabilities_for_archive_eligibility(

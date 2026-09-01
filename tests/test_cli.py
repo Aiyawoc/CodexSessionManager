@@ -12,7 +12,6 @@ from codex_session_manager.acceptance import AcceptanceReport
 from codex_session_manager.cli import _aware_datetime, _jsonable, app
 from codex_session_manager.doctor import _qt_plugin_directory
 from codex_session_manager.models import CapabilityMatrix
-from codex_session_manager.protocol_profiles import AUDITED_PROTOCOL_PROFILES
 from codex_session_manager.schema_audit import SchemaAuditReport, build_schema_audit_report
 from codex_session_manager.workflows import InventoryResult
 
@@ -251,25 +250,37 @@ def test_doctor_resolves_nuitka_qt_plugin_layout(tmp_path) -> None:
     assert result == bundled_plugins
 
 
-def _trusted_schema_report() -> SchemaAuditReport:
-    profile = next(iter(AUDITED_PROTOCOL_PROFILES.values()))
+def _schema_report(operation_capabilities) -> SchemaAuditReport:
     return build_schema_audit_report(
         CapabilityMatrix(
-            codex_version=profile.codex_version,
+            codex_version="cli-test",
             codex_binary_sha256="a" * 64,
             initialize_fingerprint="cli-test",
-            schema_sha256=profile.schema_sha256,
-            stable_methods=tuple(sorted(profile.stable_methods)),
-            experimental_methods=tuple(sorted(profile.experimental_methods)),
+            schema_sha256="b" * 64,
+            stable_methods=tuple(
+                sorted(
+                    {
+                        "initialize",
+                        "thread/archive",
+                        "thread/loaded/list",
+                        "thread/read",
+                        "thread/turns/list",
+                        "thread/list",
+                        "thread/unarchive",
+                    }
+                )
+            ),
+            experimental_methods=(),
             schema_complete=True,
+            operation_capabilities=operation_capabilities,
         )
     )
 
 
 def test_schema_and_acceptance_cli_write_redacted_non_overwriting_evidence(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, operation_capabilities
 ) -> None:
-    report = _trusted_schema_report()
+    report = _schema_report(operation_capabilities)
     monkeypatch.setattr("codex_session_manager.cli.audit_local_schema", lambda: report)
     schema_path = tmp_path / "schema-audit.json"
     runner = CliRunner()

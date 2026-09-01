@@ -99,3 +99,62 @@ Success: no issues found in 3 source files
 本轮未运行完整 `scripts/check.sh`、真实账号写入、bundle 或发布验收；工作树其它任务修改保持未暂存，报告路径保持为本文件。
 
 补充：本轮相关五组聚焦测试已完整收集并通过；全量 `pytest -q` 仍在 collection 阶段被未授权路径 `tests/test_cli.py` 对已删除 `codex_session_manager.protocol_profiles` 的旧 import 阻断。本轮不扩大到该路径，避免越过 route 写入边界。
+
+## 修复轮次 2：独立复核 Important
+
+基线：`9f48dd8`。本轮只处理响应 union enum、非法字符串 type、布尔组合分支、allOf 可选字段冲突、CLI profile 依赖和运行时指纹分支顺序六项问题；保留轮次 1 已通过的 required fingerprint、derived-trim 零写入和 profile 退役行为。
+
+### TDD 证据
+
+RED（先于实现）：
+
+```text
+env UV_CACHE_DIR=/private/tmp/csm-uv-cache uv run --locked pytest tests/test_operation_contracts.py -q
+..............FFFFF
+5 failed, 14 passed in 0.28s
+```
+
+初次测试包中的 response 缺 enum 用例占用了 `None` 占位值，随后在实现前修正为合法的缺 enum schema；其余失败直接复现本轮非法 type、布尔分支、可选冲突和 required-set 顺序问题。修正后的 5 类回归均在 GREEN 中覆盖，响应 enum 另覆盖完整、缺失、空、仅未知和已知加未知分支。
+
+GREEN：
+
+```text
+env UV_CACHE_DIR=/private/tmp/csm-uv-cache uv run --locked pytest \
+  tests/test_operation_contracts.py \
+  tests/test_app_server.py \
+  tests/test_app_server_process.py \
+  tests/test_hashing_models_plans.py \
+  tests/test_schema_audit.py \
+  tests/test_cli.py -q
+66 passed in 32.86s
+```
+
+```text
+env UV_CACHE_DIR=/private/tmp/csm-uv-cache uv run --locked pytest tests/test_cli.py --collect-only -q
+11 tests collected in 0.05s
+```
+
+聚焦静态检查：
+
+```text
+env UV_CACHE_DIR=/private/tmp/csm-uv-cache uv run --locked ruff check \
+  src/codex_session_manager/operation_contracts.py \
+  tests/test_operation_contracts.py tests/test_cli.py
+All checks passed!
+
+env UV_CACHE_DIR=/private/tmp/csm-uv-cache uv run --locked mypy \
+  src/codex_session_manager/operation_contracts.py
+Success: no issues found in 1 source file
+```
+
+另以当前本机 Codex `0.142.1` 生成 schema 运行真实 probe 回归：`test_local_codex_schema_probe_reports_operation_contracts` 通过；其状态 `oneOf` 的合法单值 enum 分支保持可用。
+
+### 修复映射
+
+1. `_direct_shape()` 校验字符串 `type`；response enum 改为逐 `_SchemaShape` 检查，要求分支有 enum 且至少包含一个已知值，允许已知值与新增未知值共存；request 仍要求 exact CSM 值命中一个完整分支。
+2. 组合器允许合法 `true`/`false` 分支：`true` 作为无约束 identity，`false` 作为不可满足分支；非法 branch 继续结构化失败，allOf 仍求交，anyOf/oneOf 仍按响应全分支、请求一可用分支处理。
+3. allOf 合并时，冲突的非 required 可选 property 从父投影省略；若 property 被 required 或被契约字段读取，后续字段/required 校验失败关闭；不可满足的根 schema 仍产生结构化 issue。
+4. shape、enum、items、field variants、document variants 和完整 required_sets 在 runtime projection 中规范排序，交换语义等价 schema 分支不改变 runtime fingerprint。
+5. `tests/test_cli.py` 改用独立 `OperationCapability`/`CapabilityMatrix` fixture，移除已删除 profile import；既有 purge-removal hunk 原样保留。
+
+`scripts/check.sh` 已运行，但在全仓 `ruff format --check .` 阶段因基线 `tests/test_operation_contracts.py` 的 4 个既有格式 hunk 失败，未进入完整 pytest；未运行真实账号写入、bundle 或发布验收。当前工作树仍包含其它任务修改，未触碰或暂存这些路径。

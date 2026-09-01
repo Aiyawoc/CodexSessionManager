@@ -7,7 +7,7 @@ from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, replace
 from typing import Any, Final
 
-from codex_session_manager.hashing import fingerprint
+from codex_session_manager.hashing import canonical_json_bytes, fingerprint
 from codex_session_manager.models import (
     ContractIssue,
     ContractMethodEvidence,
@@ -77,6 +77,30 @@ class _SchemaShape:
 class _PathResult:
     shape: _SchemaShape | None
     required: bool = False
+
+
+def _shape_sort_key(shape: _SchemaShape) -> bytes:
+    return canonical_json_bytes(shape)
+
+
+def _path_result_sort_key(result: _PathResult) -> bytes:
+    return canonical_json_bytes(result)
+
+
+def _sorted_shapes(
+    shapes: tuple[_SchemaShape, ...] | list[_SchemaShape],
+) -> tuple[_SchemaShape, ...]:
+    return tuple(sorted(shapes, key=_shape_sort_key))
+
+
+def _sorted_enum_values(values: tuple[Any, ...]) -> tuple[Any, ...]:
+    return tuple(sorted(values, key=canonical_json_bytes))
+
+
+def _string_enum_values(values: tuple[Any, ...] | None) -> tuple[str, ...]:
+    if values is None:
+        return ()
+    return tuple(sorted(value for value in values if isinstance(value, str)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -561,7 +585,7 @@ class _Evaluation:
             types = left.types or right.types
         enum: tuple[Any, ...] | None
         if left.enum is not None and right.enum is not None:
-            enum = tuple(value for value in left.enum if value in right.enum)
+            enum = _sorted_enum_values(tuple(value for value in left.enum if value in right.enum))
             if not enum:
                 return None
         else:
@@ -572,23 +596,32 @@ class _Evaluation:
         for name in sorted(left_properties.keys() | right_properties.keys()):
             variants = left_properties.get(name) or right_properties.get(name)
             if name in left_properties and name in right_properties:
-                variants = tuple(
+                merged_variants = tuple(
                     merged
                     for left_variant in left_properties[name]
                     for right_variant in right_properties[name]
                     if (merged := self._intersect(left_variant, right_variant, subject)) is not None
                 )
-                if not variants:
-                    return None
-            assert variants is not None
+                if not merged_variants:
+                    if name in left.required or name in right.required:
+                        return None
+                    # An optional property may be omitted when allOf branches
+                    # impose incompatible constraints; its consumer still
+                    # validates the field if the contract actually reads it.
+                    continue
+                variants = _sorted_shapes(merged_variants)
+            if variants is None:
+                continue
             properties.append((name, tuple(variants)))
         items: tuple[_SchemaShape, ...] | None
         if left.items is not None and right.items is not None:
-            items = tuple(
-                merged
-                for left_item in left.items
-                for right_item in right.items
-                if (merged := self._intersect(left_item, right_item, subject)) is not None
+            items = _sorted_shapes(
+                tuple(
+                    merged
+                    for left_item in left.items
+                    for right_item in right.items
+                    if (merged := self._intersect(left_item, right_item, subject)) is not None
+                )
             )
             if not items:
                 return None
@@ -612,9 +645,19 @@ class _Evaluation:
     ) -> _SchemaShape | None:
         raw_type = node.get("type")
         if isinstance(raw_type, str):
+            if raw_type not in _SCHEMA_TYPES:
+                self.issue(
+                    "schema_type",
+                    subject,
+                    expected="JSON Schema type or non-empty type array",
+                    actual=raw_type,
+                )
+                return None
             types = {raw_type}
-        elif isinstance(raw_type, list) and raw_type and all(
-            isinstance(value, str) and value in _SCHEMA_TYPES for value in raw_type
+        elif (
+            isinstance(raw_type, list)
+            and raw_type
+            and all(isinstance(value, str) and value in _SCHEMA_TYPES for value in raw_type)
         ):
             types = set(raw_type)
         elif raw_type is None:
@@ -638,7 +681,7 @@ class _Evaluation:
                     actual=raw_enum,
                 )
                 return None
-            enum = tuple(raw_enum)
+            enum = _sorted_enum_values(tuple(raw_enum))
         raw_required = node.get("required")
         required: frozenset[str]
         if raw_required is None:
@@ -668,24 +711,30 @@ class _Evaluation:
                 return None
             for name, value in raw_properties.items():
                 if not isinstance(name, str):
-                    self.issue("schema_properties", subject, expected="string field name", actual=name)
+                    self.issue(
+                        "schema_properties", subject, expected="string field name", actual=name
+                    )
                     return None
                 variants = self.expand(value, document, f"{subject}.{name}", ref_stack, depth + 1)
                 if variants:
-                    properties.append((name, tuple(variants)))
+                    properties.append((name, _sorted_shapes(variants)))
         items: tuple[_SchemaShape, ...] | None = None
         if "items" in node:
             raw_items = node["items"]
             if not isinstance(raw_items, (Mapping, bool)):
-                self.issue("schema_branch", f"{subject}.items", expected="JSON object", actual=raw_items)
+                self.issue(
+                    "schema_branch", f"{subject}.items", expected="JSON object", actual=raw_items
+                )
                 return None
-            items = tuple(self.expand(raw_items, document, f"{subject}.items", ref_stack, depth + 1))
+            items = _sorted_shapes(
+                self.expand(raw_items, document, f"{subject}.items", ref_stack, depth + 1)
+            )
         if not types and (properties or required):
             types.add("object")
         return _SchemaShape(
             types=frozenset(types),
             enum=enum,
-            properties=tuple(properties),
+            properties=tuple(sorted(properties)),
             required=required,
             items=items,
         )
@@ -699,7 +748,9 @@ class _Evaluation:
         depth: int = 0,
     ) -> list[_SchemaShape]:
         if depth > _MAX_SCHEMA_DEPTH:
-            self.issue("schema_depth", subject, expected=f"depth <= {_MAX_SCHEMA_DEPTH}", actual=depth)
+            self.issue(
+                "schema_depth", subject, expected=f"depth <= {_MAX_SCHEMA_DEPTH}", actual=depth
+            )
             return []
         if isinstance(node, bool):
             return [_SchemaShape()] if node else []
@@ -718,11 +769,13 @@ class _Evaluation:
                 return []
             name = reference.removeprefix("#/definitions/")
             if not name or name in ref_stack:
-                self.issue("reference_cycle", subject, expected="acyclic local reference", actual=reference)
+                self.issue(
+                    "reference_cycle", subject, expected="acyclic local reference", actual=reference
+                )
                 return []
             definitions = document.get("definitions")
             target = definitions.get(name) if isinstance(definitions, Mapping) else None
-            if not isinstance(target, Mapping):
+            if not isinstance(target, (Mapping, bool)):
                 self.issue("reference_unresolved", subject, expected=reference, actual=reference)
                 return []
             resolved = self.expand(target, document, subject, (*ref_stack, name), depth + 1)
@@ -730,19 +783,22 @@ class _Evaluation:
             if not siblings:
                 return resolved
             local = self.expand(siblings, document, subject, ref_stack, depth + 1)
-            return [
-                merged
-                for resolved_shape in resolved
-                for local_shape in local
-                if (merged := self._intersect(resolved_shape, local_shape, subject)) is not None
-            ]
+            return list(
+                _sorted_shapes(
+                    tuple(
+                        merged
+                        for resolved_shape in resolved
+                        for local_shape in local
+                        if (merged := self._intersect(resolved_shape, local_shape, subject))
+                        is not None
+                    )
+                )
+            )
 
         direct_node = {
             key: value for key, value in node.items() if key not in {"allOf", "anyOf", "oneOf"}
         }
-        direct_shape = self._direct_shape(
-            direct_node, document, subject, ref_stack, depth + 1
-        )
+        direct_shape = self._direct_shape(direct_node, document, subject, ref_stack, depth + 1)
         variants = [direct_shape] if direct_shape is not None else []
         for keyword in ("allOf", "anyOf", "oneOf"):
             if keyword not in node:
@@ -760,7 +816,7 @@ class _Evaluation:
             if keyword == "allOf":
                 combined = variants or [_SchemaShape()]
                 for index, value in enumerate(values):
-                    if not isinstance(value, Mapping):
+                    if not isinstance(value, (Mapping, bool)):
                         self.issue(
                             "schema_branch",
                             f"{subject}.{keyword}[{index}]",
@@ -781,7 +837,7 @@ class _Evaluation:
             else:
                 branch_variants = []
                 for index, value in enumerate(values):
-                    if not isinstance(value, Mapping):
+                    if not isinstance(value, (Mapping, bool)):
                         self.issue(
                             "schema_branch",
                             f"{subject}.{keyword}[{index}]",
@@ -807,9 +863,7 @@ class _Evaluation:
                     for right in branch_variants
                     if (merged := self._intersect(left, right, subject)) is not None
                 ]
-            if not variants:
-                self.issue("schema_combiner", subject, expected="compatible schema branches", actual=keyword)
-        return variants
+        return list(_sorted_shapes(variants))
 
     @staticmethod
     def _properties(shape: _SchemaShape) -> dict[str, tuple[_SchemaShape, ...]]:
@@ -822,11 +876,7 @@ class _Evaluation:
         if step == "[]":
             if shape.items is None:
                 return []
-            return [
-                result
-                for item in shape.items
-                for result in self._walk(item, tuple(rest))
-            ]
+            return [result for item in shape.items for result in self._walk(item, tuple(rest))]
         children = self._properties(shape).get(step)
         if children is None:
             return []
@@ -851,15 +901,18 @@ class _Evaluation:
         shapes = tuple(result.shape for result in variants if result.shape is not None)
         types = frozenset(value for shape in shapes for value in shape.types)
         enums = frozenset(
-            value for shape in shapes if shape.enum is not None for value in shape.enum if isinstance(value, str)
-        )
-        item_types = frozenset(
             value
             for shape in shapes
-            for item in (shape.items or ())
-            for value in item.types
+            if shape.enum is not None
+            for value in shape.enum
+            if isinstance(value, str)
         )
-        return _Projection(types, enums, item_types, any(shape.enum is not None for shape in shapes))
+        item_types = frozenset(
+            value for shape in shapes for item in (shape.items or ()) for value in item.types
+        )
+        return _Projection(
+            types, enums, item_types, any(shape.enum is not None for shape in shapes)
+        )
 
     def field(self, rule: _FieldRule) -> _FieldResult:
         document = self.document(rule.document)
@@ -870,7 +923,7 @@ class _Evaluation:
         for root in self.expand(document, document, rule.document):
             found = self._walk(root, rule.path)
             variants.extend(found or [_PathResult(None)])
-        result_variants = tuple(variants)
+        result_variants = tuple(sorted(variants, key=_path_result_sort_key))
         result = self._projection(result_variants)
         self.projection.append(
             {
@@ -882,7 +935,11 @@ class _Evaluation:
                         "present": value.shape is not None,
                         "required": value.required,
                         "types": sorted(value.shape.types) if value.shape is not None else [],
-                        "enums": sorted(result.enums) if value.shape is not None else [],
+                        "enums": (
+                            list(_string_enum_values(value.shape.enum))
+                            if value.shape is not None
+                            else []
+                        ),
                         "item_types": sorted(result.item_types) if value.shape is not None else [],
                     }
                     for value in result_variants
@@ -901,14 +958,14 @@ class _Evaluation:
         if document is None:
             return
         variants = self.expand(document, document, request.document)
-        required_sets = tuple(tuple(sorted(variant.required)) for variant in variants)
-        self.projection.append(
-            {"document": request.document, "required_sets": required_sets}
-        )
+        required_sets = tuple(sorted(tuple(sorted(variant.required)) for variant in variants))
+        self.projection.append({"document": request.document, "required_sets": required_sets})
         known = set(request.supported_required_fields)
         if any(set(required) <= known for required in required_sets):
             return
-        for name in sorted({name for required in required_sets for name in required if name not in known}):
+        for name in sorted(
+            {name for required in required_sets for name in required if name not in known}
+        ):
             self.issue(
                 "requiredness",
                 f"{request.document}.required.{name}",
@@ -920,14 +977,19 @@ class _Evaluation:
         shape = result.shape
         if shape is None or (rule.required is True and not result.required):
             return False
-        if rule.types and not shape.types.intersection(rule.types):
+        if rule.types and shape.types and not shape.types.intersection(rule.types):
             return False
         if rule.required_types and not set(rule.required_types).issubset(shape.types):
             return False
         if rule.item_types:
-            item_types = self._shape_item_types(shape)
-            if not item_types or not item_types.intersection(rule.item_types):
+            if shape.types and "array" not in shape.types:
                 return False
+            if shape.items is not None:
+                if not shape.items:
+                    return False
+                item_types = self._shape_item_types(shape)
+                if item_types and not item_types.intersection(rule.item_types):
+                    return False
         return not (
             shape.enum is not None
             and (
@@ -1009,7 +1071,9 @@ def _validate_field(
             evaluation.issue("field_missing", subject, expected="field present", actual=None)
         return
     if any(value.shape is None for value in result.variants) and not rule.allow_missing:
-        evaluation.issue("field_missing", subject, expected="field present in every response branch", actual=None)
+        evaluation.issue(
+            "field_missing", subject, expected="field present in every response branch", actual=None
+        )
     for value in result.variants:
         shape = value.shape
         if shape is None:
@@ -1045,15 +1109,26 @@ def _validate_field(
                 expected=str(rule.required).lower(),
                 actual=str(value.required).lower(),
             )
-    if rule.enum_contains and result.projection.enum_present:
-        missing = set(rule.enum_contains) - result.projection.enums
-        if missing:
-            evaluation.issue(
-                "enum_value",
-                subject,
-                expected="contains " + ",".join(rule.enum_contains),
-                actual="|".join(sorted(result.projection.enums)) or None,
-            )
+    if rule.enum_contains:
+        for value in result.variants:
+            shape = value.shape
+            if shape is None:
+                continue
+            if shape.enum is None:
+                evaluation.issue(
+                    "enum_value",
+                    subject,
+                    expected="contains " + ",".join(rule.enum_contains),
+                    actual=None,
+                )
+                continue
+            if not set(rule.enum_contains).intersection(_string_enum_values(shape.enum)):
+                evaluation.issue(
+                    "enum_value",
+                    subject,
+                    expected="contains " + ",".join(rule.enum_contains),
+                    actual="|".join(_string_enum_values(shape.enum)) or None,
+                )
 
 
 def _evaluate_rule(
@@ -1083,14 +1158,14 @@ def _evaluate_rule(
                 expected="one complete request branch satisfiable by CSM",
                 actual="no matching branch",
             )
-    request_fields = {
-        field_rule for request in rule.request_rules for field_rule in request.fields
-    }
+    request_fields = {field_rule for request in rule.request_rules for field_rule in request.fields}
     for document_rule in rule.document_rules:
         document = evaluation.document(document_rule.document)
         if document is None:
             continue
-        document_shapes = evaluation.expand(document, document, document_rule.document)
+        document_shapes = _sorted_shapes(
+            evaluation.expand(document, document, document_rule.document)
+        )
         for shape in document_shapes:
             document_projection = evaluation._projection((_PathResult(shape),))
             evaluation.projection.append(
@@ -1110,6 +1185,13 @@ def _evaluate_rule(
                     expected="|".join(document_rule.types),
                     actual="|".join(sorted(document_projection.types)) or None,
                 )
+        if not document_shapes:
+            evaluation.issue(
+                "schema_combiner",
+                document_rule.document,
+                expected="satisfiable schema",
+                actual=None,
+            )
     groups: dict[str, bool] = {}
     for field_rule in rule.fields:
         if field_rule in request_fields:

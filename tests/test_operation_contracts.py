@@ -466,3 +466,113 @@ def test_required_set_changes_runtime_fingerprint_but_not_order() -> None:
     second = _by_name(_evaluate(reordered))[OperationName.INVENTORY_COMMON]
     assert first.available and second.available
     assert first.runtime_contract_fingerprint == second.runtime_contract_fingerprint
+
+
+def test_response_enum_is_checked_for_each_union_variant() -> None:
+    known = ["notLoaded", "idle", "active", "systemError"]
+    cases = (
+        ({"type": "string"}, False),
+        ({"type": "string", "enum": []}, False),
+        ({"type": "string", "enum": known}, True),
+        ({"type": "string", "enum": ["idle"]}, True),
+        ({"type": "string", "enum": ["future"]}, False),
+        ({"type": "string", "enum": [*known, "future"]}, True),
+    )
+    for second_branch, available in cases:
+        changed = deepcopy(_baseline_documents())
+        status_type = changed["v2/ThreadListResponse.json"]["definitions"]["Thread"]["properties"][
+            "status"
+        ]["properties"]["type"]
+        first_branch = {"type": "string", "enum": known}
+        status_type.clear()
+        status_type.update({"anyOf": [first_branch, second_branch]})
+
+        capability = _by_name(_evaluate(changed))[OperationName.INVENTORY_COMMON]
+
+        assert capability.available is available
+        if not available:
+            assert any(issue.code == "enum_value" for issue in capability.issues)
+
+
+def test_invalid_string_type_in_request_union_is_not_ignored() -> None:
+    changed = deepcopy(_baseline_documents())
+    changed["v2/ThreadArchiveParams.json"]["properties"]["threadId"] = {
+        "anyOf": [{"type": "future"}, {"type": "string"}]
+    }
+
+    capability = _by_name(_evaluate(changed))[OperationName.ARCHIVE]
+
+    assert not capability.available
+    assert any(issue.code == "schema_type" for issue in capability.issues)
+
+
+def test_boolean_schema_branches_follow_json_schema_direction() -> None:
+    cases = (
+        ("anyOf", [False, None], True),
+        ("allOf", [True, None], True),
+        ("oneOf", [False, None], True),
+        ("anyOf", [True, None], False),
+    )
+    for keyword, branches, available in cases:
+        changed = deepcopy(_baseline_documents())
+        valid = changed["v2/ThreadListResponse.json"]["properties"]["data"]
+        branches[1] = valid
+        changed["v2/ThreadListResponse.json"]["properties"]["data"] = {keyword: branches}
+
+        capability = _by_name(_evaluate(changed))[OperationName.INVENTORY_COMMON]
+
+        assert capability.available is available
+
+
+def test_boolean_request_branches_can_prove_the_exact_csm_value() -> None:
+    for keyword in ("anyOf", "oneOf"):
+        changed = deepcopy(_baseline_documents())
+        changed["v2/ThreadArchiveParams.json"]["properties"]["threadId"] = {keyword: [False, True]}
+
+        capability = _by_name(_evaluate(changed))[OperationName.ARCHIVE]
+
+        assert capability.available
+
+
+def test_unused_optional_all_of_conflict_does_not_block_parent_contract() -> None:
+    changed = deepcopy(_baseline_documents())
+    changed["v2/ThreadListParams.json"]["properties"]["futureOptional"] = {
+        "allOf": [{"type": "string"}, {"type": "integer"}]
+    }
+
+    capability = _by_name(_evaluate(changed))[OperationName.INVENTORY_COMMON]
+
+    assert capability.available
+
+    required = deepcopy(changed)
+    required["v2/ThreadListParams.json"]["required"] = ["futureOptional"]
+    required_capability = _by_name(_evaluate(required))[OperationName.INVENTORY_COMMON]
+    assert not required_capability.available
+
+    used = deepcopy(_baseline_documents())
+    used["v2/ThreadReadParams.json"]["properties"]["includeTurns"] = {
+        "allOf": [{"type": "boolean"}, {"type": "string"}]
+    }
+    used_capability = _by_name(_evaluate(used))[OperationName.INVENTORY_COMMON]
+    assert not used_capability.available
+
+
+def test_runtime_fingerprint_normalizes_union_and_required_set_order() -> None:
+    def with_reordered_branches(reverse: bool) -> dict[str, dict[str, Any]]:
+        changed = deepcopy(_baseline_documents())
+        params = changed["v2/ThreadListParams.json"]
+        first = deepcopy(params)
+        first["required"] = ["archived"]
+        second = deepcopy(params)
+        second["required"] = ["limit"]
+        branches = [first, second]
+        if reverse:
+            branches.reverse()
+        changed["v2/ThreadListParams.json"] = {"anyOf": branches}
+        return changed
+
+    first = _by_name(_evaluate(with_reordered_branches(False)))[OperationName.INVENTORY_COMMON]
+    second = _by_name(_evaluate(with_reordered_branches(True)))[OperationName.INVENTORY_COMMON]
+
+    assert first.available and second.available
+    assert first.runtime_contract_fingerprint == second.runtime_contract_fingerprint

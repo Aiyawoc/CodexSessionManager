@@ -576,3 +576,47 @@ def test_runtime_fingerprint_normalizes_union_and_required_set_order() -> None:
 
     assert first.available and second.available
     assert first.runtime_contract_fingerprint == second.runtime_contract_fingerprint
+
+
+def test_unsatisfiable_combiner_cannot_be_revived_by_a_later_union() -> None:
+    for schema in (
+        {"allOf": [False], "anyOf": [{"type": "string"}]},
+        {"anyOf": [{"type": "string"}], "allOf": [False]},
+        {"allOf": [False], "oneOf": [{"type": "string"}]},
+    ):
+        changed = deepcopy(_baseline_documents())
+        changed["v2/ThreadArchiveParams.json"]["properties"]["threadId"] = schema
+
+        capability = _by_name(_evaluate(changed))[OperationName.ARCHIVE]
+
+        assert not capability.available
+
+    pure_union = deepcopy(_baseline_documents())
+    pure_union["v2/ThreadArchiveParams.json"]["properties"]["threadId"] = {
+        "anyOf": [{"type": "integer"}, {"type": "string"}]
+    }
+    assert _by_name(_evaluate(pure_union))[OperationName.ARCHIVE].available
+
+
+def test_declared_unsatisfiable_optional_field_is_not_treated_as_missing() -> None:
+    changed = deepcopy(_baseline_documents())
+    changed["v2/ThreadListResponse.json"]["definitions"]["Thread"]["properties"][
+        "historyMode"
+    ] = {"allOf": [{"type": "string"}, {"type": "integer"}]}
+
+    capability = _by_name(_evaluate(changed))[OperationName.INVENTORY_COMMON]
+
+    assert not capability.available
+    assert any("historyMode" in issue.subject for issue in capability.issues)
+
+    missing = deepcopy(_baseline_documents())
+    del missing["v2/ThreadListResponse.json"]["definitions"]["Thread"]["properties"][
+        "historyMode"
+    ]
+    assert _by_name(_evaluate(missing))[OperationName.INVENTORY_COMMON].available
+
+    unrelated = deepcopy(_baseline_documents())
+    unrelated["v2/ThreadListParams.json"]["properties"]["optionalMeta"] = {
+        "allOf": [{"type": "string"}, {"type": "integer"}]
+    }
+    assert _by_name(_evaluate(unrelated))[OperationName.INVENTORY_COMMON].available

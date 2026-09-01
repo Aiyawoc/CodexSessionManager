@@ -71,12 +71,14 @@ class _SchemaShape:
     properties: tuple[tuple[str, tuple[_SchemaShape, ...]], ...] = ()
     required: frozenset[str] = frozenset()
     items: tuple[_SchemaShape, ...] | None = None
+    unsatisfiable: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class _PathResult:
     shape: _SchemaShape | None
     required: bool = False
+    declared: bool = False
 
 
 def _shape_sort_key(shape: _SchemaShape) -> bytes:
@@ -577,6 +579,8 @@ class _Evaluation:
     def _intersect(
         self, left: _SchemaShape, right: _SchemaShape, subject: str
     ) -> _SchemaShape | None:
+        if left.unsatisfiable or right.unsatisfiable:
+            return None
         if left.types and right.types:
             types = left.types & right.types
             if not types:
@@ -594,12 +598,18 @@ class _Evaluation:
         right_properties = dict(right.properties)
         properties: list[tuple[str, tuple[_SchemaShape, ...]]] = []
         for name in sorted(left_properties.keys() | right_properties.keys()):
-            variants = left_properties.get(name) or right_properties.get(name)
             if name in left_properties and name in right_properties:
+                left_variants = left_properties[name]
+                right_variants = right_properties[name]
+                if not left_variants or not right_variants:
+                    if name in left.required or name in right.required:
+                        return None
+                    properties.append((name, ()))
+                    continue
                 merged_variants = tuple(
                     merged
-                    for left_variant in left_properties[name]
-                    for right_variant in right_properties[name]
+                    for left_variant in left_variants
+                    for right_variant in right_variants
                     if (merged := self._intersect(left_variant, right_variant, subject)) is not None
                 )
                 if not merged_variants:
@@ -608,10 +618,13 @@ class _Evaluation:
                     # An optional property may be omitted when allOf branches
                     # impose incompatible constraints; its consumer still
                     # validates the field if the contract actually reads it.
+                    properties.append((name, ()))
                     continue
                 variants = _sorted_shapes(merged_variants)
-            if variants is None:
-                continue
+            elif name in left_properties:
+                variants = left_properties[name]
+            else:
+                variants = right_properties[name]
             properties.append((name, tuple(variants)))
         items: tuple[_SchemaShape, ...] | None
         if left.items is not None and right.items is not None:
@@ -717,7 +730,10 @@ class _Evaluation:
                     return None
                 variants = self.expand(value, document, f"{subject}.{name}", ref_stack, depth + 1)
                 if variants:
-                    properties.append((name, _sorted_shapes(variants)))
+                    satisfiable = tuple(shape for shape in variants if not shape.unsatisfiable)
+                    properties.append((name, _sorted_shapes(satisfiable)))
+                else:
+                    properties.append((name, ()))
         items: tuple[_SchemaShape, ...] | None = None
         if "items" in node:
             raw_items = node["items"]
@@ -751,12 +767,12 @@ class _Evaluation:
             self.issue(
                 "schema_depth", subject, expected=f"depth <= {_MAX_SCHEMA_DEPTH}", actual=depth
             )
-            return []
+            return [_SchemaShape(unsatisfiable=True)]
         if isinstance(node, bool):
-            return [_SchemaShape()] if node else []
+            return [_SchemaShape()] if node else [_SchemaShape(unsatisfiable=True)]
         if not isinstance(node, Mapping):
             self.issue("schema_branch", subject, expected="JSON object", actual=node)
-            return []
+            return [_SchemaShape(unsatisfiable=True)]
         reference = node.get("$ref")
         if reference is not None:
             if not isinstance(reference, str) or not reference.startswith("#/definitions/"):
@@ -766,18 +782,18 @@ class _Evaluation:
                     expected="#/definitions/<name>",
                     actual=reference,
                 )
-                return []
+                return [_SchemaShape(unsatisfiable=True)]
             name = reference.removeprefix("#/definitions/")
             if not name or name in ref_stack:
                 self.issue(
                     "reference_cycle", subject, expected="acyclic local reference", actual=reference
                 )
-                return []
+                return [_SchemaShape(unsatisfiable=True)]
             definitions = document.get("definitions")
             target = definitions.get(name) if isinstance(definitions, Mapping) else None
             if not isinstance(target, (Mapping, bool)):
                 self.issue("reference_unresolved", subject, expected=reference, actual=reference)
-                return []
+                return [_SchemaShape(unsatisfiable=True)]
             resolved = self.expand(target, document, subject, (*ref_stack, name), depth + 1)
             siblings = {key: value for key, value in node.items() if key != "$ref"}
             if not siblings:
@@ -793,13 +809,15 @@ class _Evaluation:
                         is not None
                     )
                 )
-            )
+            ) or [_SchemaShape(unsatisfiable=True)]
 
         direct_node = {
             key: value for key, value in node.items() if key not in {"allOf", "anyOf", "oneOf"}
         }
         direct_shape = self._direct_shape(direct_node, document, subject, ref_stack, depth + 1)
-        variants = [direct_shape] if direct_shape is not None else []
+        variants = [direct_shape] if direct_shape is not None else [
+            _SchemaShape(unsatisfiable=True)
+        ]
         for keyword in ("allOf", "anyOf", "oneOf"):
             if keyword not in node:
                 continue
@@ -811,10 +829,10 @@ class _Evaluation:
                     expected=f"{keyword} non-empty array",
                     actual=values,
                 )
-                variants = []
+                variants = [_SchemaShape(unsatisfiable=True)]
                 continue
             if keyword == "allOf":
-                combined = variants or [_SchemaShape()]
+                combined = variants
                 for index, value in enumerate(values):
                     if not isinstance(value, (Mapping, bool)):
                         self.issue(
@@ -833,6 +851,8 @@ class _Evaluation:
                         for right in branch_variants
                         if (merged := self._intersect(left, right, subject)) is not None
                     ]
+                    if not combined:
+                        combined = [_SchemaShape(unsatisfiable=True)]
                 variants = combined
             else:
                 branch_variants = []
@@ -855,14 +875,16 @@ class _Evaluation:
                         )
                     )
                 if not branch_variants:
-                    variants = []
+                    variants = [_SchemaShape(unsatisfiable=True)]
                     continue
                 variants = [
                     merged
-                    for left in variants or [_SchemaShape()]
+                    for left in variants
                     for right in branch_variants
                     if (merged := self._intersect(left, right, subject)) is not None
                 ]
+                if not variants:
+                    variants = [_SchemaShape(unsatisfiable=True)]
         return list(_sorted_shapes(variants))
 
     @staticmethod
@@ -870,6 +892,8 @@ class _Evaluation:
         return dict(shape.properties)
 
     def _walk(self, shape: _SchemaShape, path: tuple[str, ...]) -> list[_PathResult]:
+        if shape.unsatisfiable:
+            return [_PathResult(None, declared=True)]
         if not path:
             return [_PathResult(shape)]
         step, *rest = path
@@ -880,12 +904,15 @@ class _Evaluation:
         children = self._properties(shape).get(step)
         if children is None:
             return []
+        if not children:
+            return [_PathResult(None, step in shape.required, True)]
         results: list[_PathResult] = []
         for child in children:
             child_results = self._walk(child, tuple(rest))
             if not rest:
                 results.extend(
-                    _PathResult(result.shape, step in shape.required) for result in child_results
+                    _PathResult(result.shape, step in shape.required, result.declared)
+                    for result in child_results
                 )
             else:
                 results.extend(child_results)
@@ -934,6 +961,7 @@ class _Evaluation:
                     {
                         "present": value.shape is not None,
                         "required": value.required,
+                        "declared": value.declared,
                         "types": sorted(value.shape.types) if value.shape is not None else [],
                         "enums": (
                             list(_string_enum_values(value.shape.enum))
@@ -1067,8 +1095,17 @@ def _validate_field(
             )
         return
     if not result.present:
-        if not rule.allow_missing:
-            evaluation.issue("field_missing", subject, expected="field present", actual=None)
+        if not rule.allow_missing or any(value.declared for value in result.variants):
+            evaluation.issue(
+                "field_missing",
+                subject,
+                expected="field present with satisfiable schema",
+                actual=(
+                    "declared but unsatisfiable"
+                    if any(value.declared for value in result.variants)
+                    else None
+                ),
+            )
         return
     if any(value.shape is None for value in result.variants) and not rule.allow_missing:
         evaluation.issue(

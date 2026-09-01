@@ -158,3 +158,51 @@ Success: no issues found in 1 source file
 5. `tests/test_cli.py` 改用独立 `OperationCapability`/`CapabilityMatrix` fixture，移除已删除 profile import；既有 purge-removal hunk 原样保留。
 
 `scripts/check.sh` 已运行，但在全仓 `ruff format --check .` 阶段因基线 `tests/test_operation_contracts.py` 的 4 个既有格式 hunk 失败，未进入完整 pytest；未运行真实账号写入、bundle 或发布验收。当前工作树仍包含其它任务修改，未触碰或暂存这些路径。
+
+## 修复轮次 3：独立复核剩余 fail-open
+
+基线：`04cb593`。本轮只处理混合组合器复活不可满足 schema，以及实际契约字段的 declared-but-unsatisfiable optional property 被 `allow_missing` 放行两项问题。
+
+### TDD 证据
+
+RED（先于实现）：
+
+```text
+env UV_CACHE_DIR=/private/tmp/csm-uv-cache uv run --locked pytest tests/test_operation_contracts.py -q
+....................FF                                                   [100%]
+2 failed, 20 passed in 6.91s
+```
+
+失败分别复现 `allOf: [false]` 后接 `anyOf/oneOf` 错误开放 `archive.v1`，以及 `Thread.historyMode` 的 `allOf: [string, integer]` 被丢弃后错误开放 `inventory.common.v1`。
+
+GREEN：
+
+```text
+env UV_CACHE_DIR=/private/tmp/csm-uv-cache uv run --locked pytest \
+  tests/test_operation_contracts.py \
+  tests/test_app_server.py \
+  tests/test_app_server_process.py \
+  tests/test_hashing_models_plans.py \
+  tests/test_schema_audit.py \
+  tests/test_cli.py -q
+68 passed in 36.03s
+```
+
+```text
+env UV_CACHE_DIR=/private/tmp/csm-uv-cache uv run --locked ruff check \
+  src/codex_session_manager/operation_contracts.py \
+  tests/test_operation_contracts.py
+All checks passed!
+
+env UV_CACHE_DIR=/private/tmp/csm-uv-cache uv run --locked mypy \
+  src/codex_session_manager/operation_contracts.py
+Success: no issues found in 1 source file
+```
+
+### 修复映射
+
+1. `_SchemaShape.unsatisfiable` 作为最小状态 marker：`false`、组合交集为空、非法/循环 schema 均保留不可满足状态；后续 `anyOf/oneOf` 只与已有状态求交，不再以空 variants 注入 identity。纯 union 和合法 `true` identity 仍按原方向规则工作。
+2. `_SchemaShape` 的声明属性保留空 variant；`_PathResult.declared` 将声明但无可满足 shape 与真正不存在区分。实际投影字段即使 `allow_missing=True` 也失败关闭，无关 optional 冲突仍不读取、不阻塞。
+3. 新增回归覆盖混合 `allOf/anyOf/oneOf` 顺序、纯 union、`historyMode` 冲突、真正缺失和无关 `optionalMeta` 冲突。
+
+本轮未运行完整 `scripts/check.sh`、真实账号写入、bundle 或发布验收；其它工作树改动保持未暂存。提交只包含本轮三个所有权路径。

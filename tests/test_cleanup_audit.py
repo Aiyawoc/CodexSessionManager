@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -7,7 +8,7 @@ import pytest
 
 from codex_session_manager.app_server import RequestError, RequestTimeout
 from codex_session_manager.audit import AuditStore
-from codex_session_manager.cleanup import CleanupExecutor, CleanupPlanner
+from codex_session_manager.cleanup import CleanupExecutor, CleanupPlanner, ProcessGuard
 from codex_session_manager.hashing import hash_file
 from codex_session_manager.inventory import InventoryFilter, attach_descendant_closures
 from codex_session_manager.models import (
@@ -475,8 +476,19 @@ def test_archived_not_loaded_purge_accepts_terminal_thread_not_found(
     client = Client()
 
     class Inventory:
-        def list(self, **_kwargs):
+        def __init__(self) -> None:
+            self.target_reads = 0
+
+        def list_for_targets(self, target_ids, **_kwargs):
+            assert target_ids == (snapshot.id,)
+            self.target_reads += 1
             return () if client.deleted else (snapshot,)
+
+        def list(self, **_kwargs):
+            assert not _kwargs.get("include_turns")
+            return () if client.deleted else (snapshot,)
+
+    inventory = Inventory()
 
     with AuditStore(app_paths) as audit:
         manifest = _record_backup(audit, snapshot, tmp_path / "root.csmbackup")
@@ -495,7 +507,7 @@ def test_archived_not_loaded_purge_accepts_terminal_thread_not_found(
 
         completed = CleanupExecutor(
             client=client,  # type: ignore[arg-type]
-            inventory=Inventory(),  # type: ignore[arg-type]
+            inventory=inventory,  # type: ignore[arg-type]
             capabilities=capabilities,
             audit=audit,
         ).apply(
@@ -506,6 +518,30 @@ def test_archived_not_loaded_purge_accepts_terminal_thread_not_found(
     assert completed == (snapshot.id,)
     assert client.deleted
     assert client.background_terminal_checks == 2
+    assert inventory.target_reads == 2
+
+
+def test_process_guard_ignores_controlled_app_server_descendant_but_blocks_other_codex(
+    monkeypatch,
+) -> None:
+    output = "\n".join(
+        (
+            "100 1 /usr/local/bin/node codex.js app-server --listen stdio://",
+            "101 100 /vendor/bin/codex app-server --listen stdio://",
+            "200 1 /usr/local/bin/codex app-server --listen stdio://",
+        )
+    )
+    monkeypatch.setattr(
+        "codex_session_manager.cleanup.subprocess.run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=output, stderr=""
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="200") as error:
+        ProcessGuard.assert_no_other_codex_processes(controlled_pid=100)
+
+    assert "101 " not in str(error.value)
 
 
 @pytest.mark.parametrize(

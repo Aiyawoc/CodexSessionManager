@@ -420,10 +420,12 @@ Codex desktop 只能准备建议：
 
 #### 2026-09-01 本轮门禁记录
 
-- 实现层证据：`scripts/check.sh`、`scripts/test_source_workflow.sh` 均通过；Ruff、严格 mypy、UI 生成一致性、Skill 校验和 `254 passed` 全部通过。大文本敏感筛查曾重复触发 Qt 心跳超时，定位为 macOS `sleep(0)` 不能保证主线程调度；改为每个 256 KiB 扫描块让出 1 ms 后，完整 GUI 套件和全套测试通过。
+- 实现层证据：`scripts/check.sh`、`scripts/test_source_workflow.sh` 均通过；Ruff、严格 mypy、UI 生成一致性、Skill 校验和 `255 passed` 全部通过。大文本敏感筛查曾重复触发 Qt 心跳超时，定位为 macOS `sleep(0)` 不能保证主线程调度；改为每个 256 KiB 扫描块让出 1 ms 后，完整 GUI 套件和全套测试通过。
 - bundle 层证据：从当前源码 fresh 构建 arm64 standalone；`accept_macos_bundle.sh`、ad-hoc `codesign --verify --deep --strict`、中文空格路径、内置 CPython/PySide6/Qt/age 和 bundled Skill 工作流通过。
 - 真实 App Server 写入与回读证据：显式使用已批准的 Codex CLI `0.142.1`，精确 schema SHA-256 `3e07fdc39d62bb0afaa1509863bebee96178572372a8eeaa7e95bddb2b2f24ad`，`write_enabled=true`。用户指定根 ID 的 SHA-256 为 `e1c2bddbdd61d18259e51fc19192c3d118f8c5e13601e9812a718862eae501af`；托管 age 备份覆盖根与一个 descendant，manifest SHA-256 为 `96d26c9fb91ee7f6e18a1c9064a2ad5b3320b1f8ef052c1fa9a34454bad5584e`；归档计划 ID 仅记录 SHA-256 `ea3adc42650ff38a4819035efb4466851cfe3caefea1471e5b15b8451b24696c`。归档列表回读确认两者均为 `archived=true`、`notLoaded`、非 pinned。
-- 当前阻塞：首次实体 GUI 永久删除尝试在任何 `thread/delete` 之前被 `thread/backgroundTerminals/list` 的 `-32600 thread not found` 停止；失败后官方 App Server 归档列表再次确认根与 descendant 仍完整归档，故不能记为真实永久删除通过。根因是该接口无法寻址 `archived + notLoaded` 任务；实现仅对同一任务的这一精确错误组合归一化为空终端结果，其它状态、错误码或 ID 继续失败关闭。
+- 首次实体 GUI 永久删除尝试在任何 `thread/delete` 之前被 `thread/backgroundTerminals/list` 的 `-32600 thread not found` 停止。根因是该接口无法寻址 `archived + notLoaded` 任务；实现仅对同一任务的这一精确错误组合归一化为空终端结果，其它状态、错误码或 ID 继续失败关闭。
+- 第二次实体 GUI 尝试通过后台终端复核后，又在任何 `thread/delete` 之前被进程门禁停止。只读复现确认 `SubprocessAppServer.pid` 是 Codex JavaScript 启动包装器，而 `ps` 同时显示它拉起的原生 `codex app-server` 子进程；旧门禁只排除包装器 PID，因而把同一受控 App Server 的子进程误判为“其它 Codex”。修复改为只排除该精确受控 PID 的完整后代进程树，任何无关 Codex 进程仍失败关闭。失败后官方 App Server 再次确认闭包 2 个任务均存在、已归档且为 `notLoaded`，因此两次尝试都不能记为真实永久删除通过。
+- 等待时间定位：真实账号只读计时中，连接与协议探测为 0.821 秒；1127 个任务的完整谱系摘要复核为 8.555 秒；目标根和一个 descendant 的内容深读为 0.029 秒。旧删除执行会在初次检查和最终复核中各把全账号 1127 个任务的完整内容深读一遍；修复复用现有 `list_for_targets`，两轮仍各自重建完整摘要谱系、复核闭包并深读目标内容，但不再深读无关任务。
 - 下一步：完成本次回归、fresh bundle 验收后，在实体 GUI 中再次单选该已归档根，确认只出现一次输入并精确填写“确认删除”；随后回读目标不存在状态、purge 审计事件和既有备份证据。
 
 ## 3. 回滚和收尾

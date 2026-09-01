@@ -60,6 +60,9 @@ class _LifecycleInventory:
             return ()
         return (self.snapshot.model_copy(update={"archived": self.client.archived}),)
 
+    def list_for_targets(self, _target_ids, **kwargs):
+        return self.list(**kwargs)
+
 
 def _age_executable() -> Path | None:
     override = os.environ.get("CSM_TEST_AGE_BIN")

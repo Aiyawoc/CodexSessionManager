@@ -690,23 +690,34 @@ class ProcessGuard:
             ProcessGuard._assert_no_other_windows_codex_processes(controlled_pid)
             return
         completed = subprocess.run(
-            ["ps", "-axo", "pid=,command="],
+            ["ps", "-axo", "pid=,ppid=,command="],
             check=True,
             capture_output=True,
             text=True,
             timeout=10,
         )
-        blockers: list[str] = []
+        processes: list[tuple[int, int, str]] = []
         for line in completed.stdout.splitlines():
-            stripped = line.strip()
-            if not stripped:
+            fields = line.strip().split(maxsplit=2)
+            if len(fields) != 3:
                 continue
-            pid_text, _, command = stripped.partition(" ")
             try:
-                pid = int(pid_text)
+                pid, parent_pid = int(fields[0]), int(fields[1])
             except ValueError:
                 continue
-            if controlled_pid is not None and pid == controlled_pid:
+            processes.append((pid, parent_pid, fields[2]))
+
+        controlled_processes = {controlled_pid} if controlled_pid is not None else set()
+        while descendants := {
+            pid
+            for pid, parent_pid, _command in processes
+            if parent_pid in controlled_processes and pid not in controlled_processes
+        }:
+            controlled_processes.update(descendants)
+
+        blockers: list[str] = []
+        for pid, _parent_pid, command in processes:
+            if pid in controlled_processes:
                 continue
             lowered = command.casefold()
             is_codex = (
@@ -785,8 +796,14 @@ class CleanupExecutor:
         if method is None:
             raise ValueError(f"CleanupExecutor cannot apply {plan.action.value}")
         self.capabilities.require_write(method)
-        current = self.inventory.list(
-            include_active=True, include_archived=True, include_turns=True
+        current = (
+            self.inventory.list_for_targets(
+                tuple(target.root_thread_id for target in plan.targets),
+                include_active=True,
+                include_archived=True,
+            )
+            if plan.action is PlanAction.PURGE
+            else self.inventory.list(include_active=True, include_archived=True, include_turns=True)
         )
         current_by_id = self._verify_snapshot_drift(plan, current)
         if plan.action in {PlanAction.ARCHIVE, PlanAction.PURGE}:
@@ -837,8 +854,10 @@ class CleanupExecutor:
                     )
             for target in plan.targets:
                 if plan.action is PlanAction.PURGE:
-                    fresh = self.inventory.list(
-                        include_active=True, include_archived=True, include_turns=True
+                    fresh = self.inventory.list_for_targets(
+                        (target.root_thread_id,),
+                        include_active=True,
+                        include_archived=True,
                     )
                     fresh_by_id = {snapshot.id: snapshot for snapshot in fresh}
                     self._verify_target_drift(plan, target, fresh_by_id)

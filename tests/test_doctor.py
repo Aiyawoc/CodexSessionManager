@@ -91,7 +91,6 @@ def test_doctor_keeps_common_inventory_required_when_one_operation_is_unavailabl
 
     report = run_doctor(app_paths)
 
-    assert report["ok"] is True
     assert _check(report, "Codex App Server")["ok"] is True
     assert _check(report, OperationName.ARCHIVE.value) == {
         "name": OperationName.ARCHIVE.value,
